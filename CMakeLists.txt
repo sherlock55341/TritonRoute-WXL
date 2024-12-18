@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.1)
 
 project(TritonRoute
-  LANGUAGES CXX
+  LANGUAGES CXX CUDA
 )
 
 set(CMAKE_CXX_STANDARD 17)
@@ -41,6 +41,7 @@ find_package(BISON REQUIRED)
 find_package(Boost 1.68.0 REQUIRED)
 find_package(OpenMP REQUIRED)
 find_package(Threads REQUIRED)
+find_package(CUDA)
 
 set (FLEXROUTE_SRC
   ${FLEXROUTE_HOME}/src/gr/FlexGRCMap.cpp
@@ -53,6 +54,9 @@ set (FLEXROUTE_SRC
   ${FLEXROUTE_HOME}/src/gr/FlexGR_rq.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR_topo.cpp
   ${FLEXROUTE_HOME}/src/gr/flute/flute.cpp
+  ${FLEXROUTE_HOME}/src/gta/GTA.cpp
+  ${FLEXROUTE_HOME}/src/gta/GTAExtractor.cpp
+  ${FLEXROUTE_HOME}/src/gta/GTAAssign.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexDR_conn.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexDR_init.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexDR.cpp
@@ -114,6 +118,7 @@ set (FLEXROUTE_HEADER
   ${FLEXROUTE_HOME}/src/dr/FlexGridGraph.h
   ${FLEXROUTE_HOME}/src/dr/FlexMazeTypes.h
   ${FLEXROUTE_HOME}/src/dr/FlexDR.h
+  ${FLEXROUTE_HOME}/src/gta/GTA.hpp
   ${FLEXROUTE_HOME}/src/frBaseTypes.h
   ${FLEXROUTE_HOME}/src/ta/FlexTA.h
   ${FLEXROUTE_HOME}/src/FlexRoute.h

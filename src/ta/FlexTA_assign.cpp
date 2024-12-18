@@ -557,9 +557,13 @@ void FlexTAWorker::modCost(taPinFig* fig, bool isAddCost, set<taPin*, frBlockObj
     frBox box;
     obj->getBBox(box);
     modMinSpacingCostPlanar(box, layerNum, obj, isAddCost, pinS); // must be current TA layer
-    modMinSpacingCostVia(box, layerNum, obj, isAddCost, true, true, pinS);
-    modMinSpacingCostVia(box, layerNum, obj, isAddCost, false, true, pinS);
+    if(ENABLE_TA_VIA_DRC){
+        modMinSpacingCostVia(box, layerNum, obj, isAddCost, true, true, pinS);
+        modMinSpacingCostVia(box, layerNum, obj, isAddCost, false, true, pinS);
+    }
   } else if (fig->typeId() == tacVia) {
+    if(ENABLE_TA_VIA_DRC == false)
+        return ;
     auto obj = static_cast<taVia*>(fig);
     frBox box;
     obj->getLayer1BBox(box); // assumes enclosure for via is always rectangle
@@ -757,6 +761,8 @@ frUInt4 FlexTAWorker::assignIroute_getDRCCost(taPin* iroute, frCoord trackLoc) {
       //}
       cost += wireCost;
     } else if (uPinFig->typeId() == tacVia) {
+      if(ENABLE_TA_VIA_DRC == false)
+        continue ;
       auto obj = static_cast<taVia*>(uPinFig.get());
       obj->getOrigin(bp);
       if (isH) {
