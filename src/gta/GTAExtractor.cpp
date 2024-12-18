@@ -258,10 +258,6 @@ void GTA::extractIrInfo() {
     data.ir_gcell_end = (short *)malloc(sizeof(short) * data.num_guides);
     data.ir_begin = (int *)malloc(sizeof(int) * data.num_guides);
     data.ir_end = (int *)malloc(sizeof(int) * data.num_guides);
-    data.ir_begin_width = (short *)malloc(sizeof(short) * data.num_guides);
-    data.ir_end_width = (short *)malloc(sizeof(short) * data.num_guides);
-    data.ir_begin_length = (short *)malloc(sizeof(short) * data.num_guides);
-    data.ir_end_length = (short *)malloc(sizeof(short) * data.num_guides);
     data.ir_track = (int *)malloc(sizeof(int) * data.num_guides);
     data.ir_track_low = (int *)malloc(sizeof(int) * data.num_guides);
     data.ir_track_high = (int *)malloc(sizeof(int) * data.num_guides);
@@ -389,8 +385,6 @@ void GTA::extractIrInfo() {
         data.ir_wl_weight[i] = 0;
         data.ir_has_ap[i] = false;
         data.ir_has_proj_ap[i] = false;
-        data.ir_begin_length[i] = data.layer_width[data.ir_layer[i]] / 2;
-        data.ir_end_length[i] = data.layer_width[data.ir_layer[i]] / 2;
         for (auto j = data.ir_nbr_start[i]; j < data.ir_nbr_start[i + 1]; j++) {
             auto nbr = data.ir_nbr_list[j];
             auto nbr_layer = data.ir_layer[nbr];

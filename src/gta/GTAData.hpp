@@ -48,10 +48,6 @@ struct GTAData {
     short *ir_gcell_end = nullptr;
     int *ir_begin = nullptr;
     int *ir_end = nullptr;
-    short *ir_begin_width = nullptr;
-    short *ir_end_width = nullptr;
-    short *ir_begin_length = nullptr;
-    short *ir_end_length = nullptr;
     int *ir_track = nullptr;
     int *ir_track_low = nullptr;
     int *ir_track_high = nullptr;

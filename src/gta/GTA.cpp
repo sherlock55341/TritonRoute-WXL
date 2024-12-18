@@ -76,10 +76,6 @@ GTA::~GTA() {
     my_free(data.ir_gcell_end);
     my_free(data.ir_begin);
     my_free(data.ir_end);
-    my_free(data.ir_begin_width);
-    my_free(data.ir_end_width);
-    my_free(data.ir_begin_length);
-    my_free(data.ir_end_length);
     my_free(data.ir_track);
     my_free(data.ir_track_low);
     my_free(data.ir_track_high);

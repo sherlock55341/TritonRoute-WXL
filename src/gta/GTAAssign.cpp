@@ -68,8 +68,6 @@ void GTA::init(int iter, int d_0) {
         auto is_v = data.layer_direction[l];
         if (is_v != d_0)
             continue;
-        data.ir_begin_width[i] = data.layer_width[l];
-        data.ir_end_width[i] = data.layer_width[l];
         for (auto vio_i = data.ir_vio_cost_start[i];
              vio_i < data.ir_vio_cost_start[i + 1]; vio_i++) {
             data.ir_vio_cost_list[vio_i] = 0;
@@ -140,12 +138,14 @@ void GTA::assignInitial(int d_0) {
 void GTA::assignRefinement(int iter, int d_0) {
     int counter = 0;
     int panel_num = (d_0 ? data.num_gcells_x : data.num_gcells_y);
-    std::vector<std::vector<int>> ir_groups(panel_num);
+    constexpr int group_panel_width = 1;
+    auto group_num = (panel_num + group_panel_width - 1) / group_panel_width;
+    std::vector<std::vector<int>> ir_groups(group_num);
     for (auto i = 0; i < data.num_guides; i++) {
         auto l = data.ir_layer[i];
         auto is_v = data.layer_direction[l];
         if (is_v == d_0)
-            ir_groups[data.ir_panel[i]].push_back(i);
+            ir_groups[data.ir_panel[i] / group_panel_width].push_back(i);
     }
     std::function<bool(int, int)> cmp = [&](int lhs, int rhs) {
         if (data.ir_key_cost[lhs] != data.ir_key_cost[rhs])
@@ -156,46 +156,51 @@ void GTA::assignRefinement(int iter, int d_0) {
             return l_lhs < l_rhs;
         return lhs < rhs;
     };
+    for (auto d = 0; d < 2; d++) {
 #pragma omp parallel for
-    for (auto &ir_group : ir_groups) {
-        int local_counter = 0;
-        std::set<int, std::function<bool(int, int)>> S(cmp);
-        auto collect_set = std::make_unique<std::set<int>>();
-        for (auto ir : ir_group)
-            apply(ir, 1);
-        for (auto ir : ir_group) {
-            data.ir_key_cost[ir] =
-                data.ir_vio_cost_list[data.ir_vio_cost_start[ir] +
-                                      (data.ir_track[ir] -
-                                       data.ir_track_low[ir])];
-            if (data.ir_key_cost[ir] > 0)
-                S.insert(ir);
-            data.ir_reassign[ir] = 0;
-        }
-        while (S.empty() == false) {
-            auto ir = *S.begin();
-            local_counter++;
-            data.ir_reassign[ir]++;
-            S.erase(ir);
-            collect_set->clear();
-            collect_set->insert(ir);
-            assign(iter, ir, collect_set.get());
-            for (auto it : *collect_set) {
-                if (S.find(it) != S.end())
-                    S.erase(it);
-                data.ir_key_cost[it] =
-                    data.ir_vio_cost_list[data.ir_vio_cost_start[it] +
-                                          (data.ir_track[it] -
-                                           data.ir_track_low[it])];
-                if (data.ir_reassign[it] < 1 && data.ir_key_cost[it] > 0)
-                    S.insert(it);
+        for (auto i = 0; i < ir_groups.size(); i++) {
+            if (i % 2 != d)
+                continue;
+            auto &ir_group = ir_groups[i];
+            int local_counter = 0;
+            std::set<int, std::function<bool(int, int)>> S(cmp);
+            auto collect_set = std::make_unique<std::set<int>>();
+            for (auto ir : ir_group)
+                apply(ir, 1, ENABLE_TA_VIA_DRC);
+            for (auto ir : ir_group) {
+                data.ir_key_cost[ir] =
+                    data.ir_vio_cost_list[data.ir_vio_cost_start[ir] +
+                                          (data.ir_track[ir] -
+                                           data.ir_track_low[ir])];
+                if (data.ir_key_cost[ir] > 0)
+                    S.insert(ir);
+                data.ir_reassign[ir] = 0;
             }
-            collect_set->clear();
-        }
+            while (S.empty() == false) {
+                auto ir = *S.begin();
+                local_counter++;
+                data.ir_reassign[ir]++;
+                S.erase(ir);
+                collect_set->clear();
+                collect_set->insert(ir);
+                assign(iter, ir, collect_set.get());
+                for (auto it : *collect_set) {
+                    if (S.find(it) != S.end())
+                        S.erase(it);
+                    data.ir_key_cost[it] =
+                        data.ir_vio_cost_list[data.ir_vio_cost_start[it] +
+                                              (data.ir_track[it] -
+                                               data.ir_track_low[it])];
+                    if (data.ir_reassign[it] < 1 && data.ir_key_cost[it] > 0)
+                        S.insert(it);
+                }
+                collect_set->clear();
+            }
 #pragma omp critical
-        { counter += local_counter; }
-    }
+            { counter += local_counter; }
+        }
 #pragma omp barrier
+    }
     std::cout << "assign : " << counter << " iroutes " << d_0 << " "
               << ir_groups.size() << std::endl;
 }
@@ -230,18 +235,23 @@ void GTA::assign(int iter, int i, std::set<int> *S) {
         }
     }
     assert(bestChoice != -1);
-    apply(i, -1, S);
+    apply(i, -1, iter > 0 ? ENABLE_TA_VIA_DRC : false, S);
     data.ir_track[i] = bestChoice + data.ir_track_low[i];
-    apply(i, 1, S);
+    apply(i, 1, iter > 0 ? ENABLE_TA_VIA_DRC : false, S);
 }
 
-void GTA::apply(int i, int coef, std::set<int> *S) {
+void GTA::apply(int i, int coef, bool enable_via, std::set<int> *S) {
     if (data.ir_track[i] == -1)
         return;
     auto p = data.ir_panel[i];
     auto l = data.ir_layer[i];
-    auto begin = data.ir_begin[i] - data.ir_begin_length[i];
-    auto end = data.ir_end[i] + data.ir_end_length[i];
+    auto w = data.layer_width[l];
+    auto begin = data.ir_begin[i] - w / 2;
+    auto end = data.ir_end[i] + w / 2;
+    if (w < data.layer_eol_width[l]) {
+        begin -= data.layer_eol_spacing[l];
+        end += data.layer_eol_spacing[l];
+    }
     auto gb = std::max(0, data.ir_gcell_begin[i] - 1);
     auto ge =
         std::min(data.layer_panel_length[l] - 1, data.ir_gcell_end[i] + 1);
@@ -260,20 +270,9 @@ void GTA::apply(int i, int coef, std::set<int> *S) {
                                        data.ir_track[i] -
                                        data.ir_track_low[i]] += coef;
                 } else {
-                    int begin_extension = 0;
-                    int end_extension = 0;
-                    if (std::min(data.ir_end_width[i], data.ir_begin_width[j]) <
-                        data.layer_eol_width[l])
-                        end_extension = data.layer_eol_spacing[l];
-                    if (std::min(data.ir_begin_width[i], data.ir_end_width[j]) <
-                        data.layer_eol_width[l])
-                        begin_extension = data.layer_eol_spacing[l];
                     auto overlap = std::max(
-                        0, std::min(end + end_extension,
-                                    data.ir_end[j] + data.ir_end_length[j]) -
-                               std::max(begin - begin_extension,
-                                        data.ir_begin[j] -
-                                            data.ir_begin_length[j]));
+                        0, std::min(end, data.ir_end[j] + w / 2) -
+                               std::max(begin, data.ir_begin[j] - w / 2));
                     data.ir_vio_cost_list[data.ir_vio_cost_start[j] +
                                           data.ir_track[i] -
                                           data.ir_track_low[i]] +=
@@ -294,19 +293,9 @@ void GTA::apply(int i, int coef, std::set<int> *S) {
             data.ir_align_list[data.ir_vio_cost_start[j] + data.ir_track[i] -
                                data.ir_track_low[i]] += coef;
         } else {
-            int begin_extension = 0;
-            int end_extension = 0;
-            if (std::min(data.ir_end_width[i], data.ir_begin_width[j]) <
-                data.layer_eol_width[l])
-                end_extension = data.layer_eol_spacing[l];
-            if (std::min(data.ir_begin_width[i], data.ir_end_width[j]) <
-                data.layer_eol_width[l])
-                begin_extension = data.layer_eol_spacing[l];
-            auto overlap = std::max(
-                0, std::min(end + end_extension,
-                            data.ir_end[j] + data.ir_end_length[j]) -
-                       std::max(begin - begin_extension,
-                                data.ir_begin[j] - data.ir_begin_length[j]));
+            auto overlap =
+                std::max(0, std::min(end, data.ir_end[j] + w / 2) -
+                                std::max(begin, data.ir_begin[j] - w / 2));
             data.ir_vio_cost_list[data.ir_vio_cost_start[j] + data.ir_track[i] -
                                   data.ir_track_low[i]] += overlap * coef;
         }
@@ -321,8 +310,8 @@ void GTA::getBlkVio(int i, int j) {
         return;
     auto l = data.ir_layer[i];
     auto is_v = data.layer_direction[l];
-    auto begin = data.ir_begin[i] - data.ir_begin_length[i];
-    auto end = data.ir_end[i] + data.ir_end_length[i];
+    auto begin = data.ir_begin[i] - data.layer_width[l] / 2;
+    auto end = data.ir_end[i] + data.layer_width[l] / 2;
     auto d =
         (data.b_top[j] - data.b_bottom[j] > data.b_right[j] - data.b_left[j]);
     if (data.b_top[j] - data.b_bottom[j] == data.b_right[j] - data.b_left[j])

@@ -33,7 +33,7 @@ class GTA {
     void assignInitial(int d_0);
     void assignRefinement(int iter, int d_0);
     void assign(int iter, int i, std::set<int> *S = nullptr);
-    void apply(int i, int coef, std::set<int> *S = nullptr);
+    void apply(int i, int coef, bool enable_via, std::set<int> *S = nullptr);
 
     // ir i, blk j
     void getBlkVio(int i, int j);
