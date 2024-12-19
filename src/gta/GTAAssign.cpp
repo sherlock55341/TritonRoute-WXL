@@ -138,7 +138,7 @@ void GTA::assignInitial(int d_0) {
 void GTA::assignRefinement(int iter, int d_0) {
     int counter = 0;
     int panel_num = (d_0 ? data.num_gcells_x : data.num_gcells_y);
-    constexpr int group_panel_width = 1;
+    constexpr int group_panel_width = 20;
     auto group_num = (panel_num + group_panel_width - 1) / group_panel_width;
     std::vector<std::vector<int>> ir_groups(group_num);
     for (auto i = 0; i < data.num_guides; i++) {
@@ -303,6 +303,100 @@ void GTA::apply(int i, int coef, bool enable_via, std::set<int> *S) {
             data.ir_reassign[j] < 1)
             S->insert(j);
     }
+    if (enable_via && data.layer_enable_via_nbr_drc[l]) {
+        auto pitch = data.layer_pitch[l];
+        if (data.ir_gcell_begin_via_offset[i] > 0) {
+            int p_delta_low = 0;
+            int p_delta_high = 0;
+            if (data.ir_track[i] - data.ir_gcell_begin_via_offset[i] <
+                data.ir_track_low[i])
+                p_delta_low = -1;
+            if (data.ir_track[i] + data.ir_gcell_begin_via_offset[i] >
+                data.ir_track_high[i])
+                p_delta_high = 1;
+            for (auto p_delta = p_delta_low; p_delta <= p_delta_high;
+                 p_delta++) {
+                auto p = data.ir_panel[i] + p_delta;
+                if (p < 0 || p >= data.layer_panel_start[l + 1] -
+                                      data.layer_panel_start[l])
+                    continue;
+                auto g = data.ir_gcell_begin[i];
+                auto idx = data.layer_gcell_start[l] +
+                           data.layer_panel_length[l] * p + g;
+                for (auto cross_idx = data.gcell_cross_ir_start[idx];
+                     cross_idx < data.gcell_cross_ir_start[idx + 1];
+                     cross_idx++) {
+                    auto j = data.gcell_cross_ir_list[cross_idx];
+                    if (i == j)
+                        continue;
+                    if (data.ir_net[i] == data.ir_net[j])
+                        continue;
+                    for (auto delta = -data.ir_gcell_begin_via_offset[i];
+                         delta <= data.ir_gcell_begin_via_offset[i]; delta++) {
+                        if (delta == 0)
+                            continue;
+                        auto t = data.ir_track[i] + delta;
+                        if (t < data.ir_track_low[j] ||
+                            t > data.ir_track_high[j])
+                            continue;
+                        data.ir_vio_cost_list[data.ir_vio_cost_start[j] + t -
+                                              data.ir_track_low[j]] +=
+                            pitch * coef;
+                        if (S && data.ir_track[j] == t &&
+                            data.ir_reassign[j] < 1)
+                            S->insert(j);
+                    }
+                }
+            }
+        }
+        if (data.ir_gcell_begin[i] != data.ir_gcell_end[i] &&
+            data.ir_gcell_end_via_offset[i] > 0) {
+            int p_delta_low = 0;
+            int p_delta_high = 0;
+            if (data.ir_track[i] - data.ir_gcell_end_via_offset[i] <
+                data.ir_track_low[i])
+                p_delta_low = -1;
+            if (data.ir_track[i] + data.ir_gcell_end_via_offset[i] >
+                data.ir_track_high[i])
+                p_delta_high = 1;
+            for (auto p_delta = p_delta_low; p_delta <= p_delta_high;
+                 p_delta++) {
+                auto p = data.ir_panel[i] + p_delta;
+                if (p < 0 || p >= data.layer_panel_start[l + 1] -
+                                      data.layer_panel_start[l])
+                    continue;
+                auto g = data.ir_gcell_end[i];
+                auto idx = data.layer_gcell_start[l] +
+                           data.layer_panel_length[l] * p + g;
+                for (auto cross_idx = data.gcell_cross_ir_start[idx];
+                     cross_idx < data.gcell_cross_ir_start[idx + 1];
+                     cross_idx++) {
+                    auto j = data.gcell_cross_ir_list[cross_idx];
+                    if (i == j)
+                        continue;
+                    if (data.ir_net[i] == data.ir_net[j])
+                        continue;
+                    if (data.ir_gcell_begin[j] < data.ir_gcell_begin[i])
+                        continue;
+                    for (auto delta = -data.ir_gcell_begin_via_offset[i];
+                         delta <= data.ir_gcell_begin_via_offset[i]; delta++) {
+                        if (delta == 0)
+                            continue;
+                        auto t = data.ir_track[i] + delta;
+                        if (t < data.ir_track_low[j] ||
+                            t > data.ir_track_high[j])
+                            continue;
+                        data.ir_vio_cost_list[data.ir_vio_cost_start[j] + t -
+                                              data.ir_track_low[j]] +=
+                            pitch * coef;
+                        if (S && data.ir_track[j] == t &&
+                            data.ir_reassign[j] < 1)
+                            S->insert(j);
+                    }
+                }
+            }
+        }
+    }
 }
 
 void GTA::getBlkVio(int i, int j) {
@@ -320,6 +414,8 @@ void GTA::getBlkVio(int i, int j) {
                                     std::max(data.b_bottom[j], begin))
                                  : (std::min(data.b_right[j], end) -
                                     std::max(data.b_left[j], begin))));
+    if(data.ir_gcell_begin[i] == data.ir_gcell_end[i])
+        prl = 0;
     auto vio_begin = (is_v ? data.b_left[j] : data.b_bottom[j]) -
                      data.layer_width[l] / 2 + 1;
     auto vio_end =

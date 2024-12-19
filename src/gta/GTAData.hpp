@@ -46,6 +46,8 @@ struct GTAData {
     short *ir_panel = nullptr;
     short *ir_gcell_begin = nullptr;
     short *ir_gcell_end = nullptr;
+    short *ir_gcell_begin_via_offset = nullptr;
+    short *ir_gcell_end_via_offset = nullptr;
     int *ir_begin = nullptr;
     int *ir_end = nullptr;
     int *ir_track = nullptr;
@@ -74,6 +76,8 @@ struct GTAData {
     int *gcell_end_point_ir_list = nullptr;
     int *gcell_end_point_blk_start = nullptr;
     int *gcell_end_point_blk_list = nullptr;
+    int *gcell_cross_ir_start = nullptr;
+    int *gcell_cross_ir_list = nullptr;
     int *ir_super_set_start = nullptr;
     int *ir_super_set_list = nullptr;
     int *blk_super_set_start = nullptr;

@@ -410,6 +410,46 @@ void GTA::extractIrInfo() {
 #pragma omp barrier
     // std::cout << __FILE__ << ":" << __LINE__ << std::endl;
     free(net_guide_offset);
+    if (ENABLE_TA_VIA_DRC) {
+        data.ir_gcell_begin_via_offset =
+            (short *)malloc(sizeof(short) * data.num_guides);
+        data.ir_gcell_end_via_offset =
+            (short *)malloc(sizeof(short) * data.num_guides);
+#pragma omp parallel for
+        for (auto i = 0; i < data.num_guides; i++) {
+            auto l = data.ir_layer[i];
+            data.ir_gcell_begin_via_offset[i] = 0;
+            data.ir_gcell_end_via_offset[i] = 0;
+            if (data.layer_enable_via_nbr_drc[i] == false)
+                continue;
+            for (auto nbr_idx = data.ir_nbr_start[i];
+                 nbr_idx < data.ir_nbr_start[i + 1]; nbr_idx++) {
+                auto nbr = data.ir_nbr_list[nbr_idx];
+                auto nbr_layer = data.ir_layer[nbr];
+                auto via_layer = (l + nbr_layer) / 2;
+                assert(data.layer_type[via_layer] == 1);
+                auto width =
+                    (nbr_layer < l ? data.layer_via_upper_width[via_layer]
+                                   : data.layer_via_lower_width[via_layer]);
+                auto length =
+                    (nbr_layer < l ? data.layer_via_upper_length[via_layer]
+                                   : data.layer_via_lower_length[via_layer]);
+                auto s = findPRLSpacing(l, std::max(width, data.layer_width[l]),
+                                        length);
+                auto gap = s + width / 2 + data.layer_width[l] / 2;
+                short delta = gap / data.layer_track_step[l];
+                if (data.layer_track_step[l] * delta == gap)
+                    delta--;
+                if (data.ir_panel[nbr] == data.ir_gcell_begin[i])
+                    data.ir_gcell_begin_via_offset[i] =
+                        std::max(data.ir_gcell_begin_via_offset[i], delta);
+                if (data.ir_panel[nbr] == data.ir_gcell_end[i])
+                    data.ir_gcell_end_via_offset[i] =
+                        std::max(data.ir_gcell_end_via_offset[i], delta);
+            }
+        }
+#pragma omp barrier
+    }
     auto tp1 = std::chrono::high_resolution_clock::now();
     std::cout << "extractIrInfo : "
               << std::chrono::duration_cast<std::chrono::microseconds>(tp1 -
@@ -600,6 +640,36 @@ void GTA::extractGCellInfo() {
             if (data.b_gcell_begin[b] != data.b_gcell_end[b]) {
                 idx += data.b_gcell_end[b] - data.b_gcell_begin[b];
                 data.gcell_end_point_blk_list[offset[idx]] = b;
+                offset[idx]++;
+            }
+        }
+    }
+    if (ENABLE_TA_VIA_DRC) {
+        data.gcell_cross_ir_start = (int *)calloc(
+            sizeof(int), data.layer_gcell_start[data.num_layers] + 1);
+        for (auto i = 0; i < data.num_guides; i++) {
+            auto l = data.ir_layer[i];
+            for (auto g = data.ir_gcell_begin[i] + 1; g < data.ir_gcell_end[i];
+                 g++) {
+                auto idx = data.layer_gcell_start[l] +
+                           data.ir_panel[i] * data.layer_panel_length[l] + g;
+                data.gcell_cross_ir_start[idx + 1]++;
+            }
+        }
+        for (auto i = 0; i < data.layer_gcell_start[data.num_layers]; i++)
+            data.gcell_cross_ir_start[i + 1] += data.gcell_cross_ir_start[i];
+        data.gcell_cross_ir_list = (int *)malloc(
+            sizeof(int) * (data.gcell_cross_ir_start
+                               [data.layer_gcell_start[data.num_layers]]));
+        memcpy(offset, data.gcell_cross_ir_start,
+               sizeof(int) * (data.layer_gcell_start[data.num_layers] + 1));
+        for (auto i = 0; i < data.num_guides; i++) {
+            auto l = data.ir_layer[i];
+            for (auto g = data.ir_gcell_begin[i] + 1; g < data.ir_gcell_end[i];
+                 g++) {
+                auto idx = data.layer_gcell_start[l] +
+                           data.ir_panel[i] * data.layer_panel_length[l] + g;
+                data.gcell_cross_ir_list[offset[idx]] = i;
                 offset[idx]++;
             }
         }

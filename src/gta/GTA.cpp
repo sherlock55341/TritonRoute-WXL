@@ -74,6 +74,10 @@ GTA::~GTA() {
     my_free(data.ir_panel);
     my_free(data.ir_gcell_begin);
     my_free(data.ir_gcell_end);
+    if (data.ir_gcell_begin_via_offset)
+        my_free(data.ir_gcell_begin_via_offset);
+    if (data.ir_gcell_end_via_offset)
+        my_free(data.ir_gcell_end_via_offset);
     my_free(data.ir_begin);
     my_free(data.ir_end);
     my_free(data.ir_track);
@@ -102,6 +106,10 @@ GTA::~GTA() {
     my_free(data.gcell_end_point_ir_list);
     my_free(data.gcell_end_point_blk_start);
     my_free(data.gcell_end_point_blk_list);
+    if(data.gcell_cross_ir_start)
+        my_free(data.gcell_cross_ir_start);
+    if(data.gcell_cross_ir_list)
+        my_free(data.gcell_cross_ir_list);
     my_free(data.ir_super_set_start);
     my_free(data.ir_super_set_list);
     my_free(data.blk_super_set_start);
