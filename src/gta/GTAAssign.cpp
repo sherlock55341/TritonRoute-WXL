@@ -414,19 +414,18 @@ void GTA::getBlkVio(int i, int j) {
                                     std::max(data.b_bottom[j], begin))
                                  : (std::min(data.b_right[j], end) -
                                     std::max(data.b_left[j], begin))));
-    if(data.ir_gcell_begin[i] == data.ir_gcell_end[i])
+    if (data.ir_gcell_begin[i] == data.ir_gcell_end[i])
         prl = 0;
     auto vio_begin = (is_v ? data.b_left[j] : data.b_bottom[j]) -
                      data.layer_width[l] / 2 + 1;
     auto vio_end =
         (is_v ? data.b_right[j] : data.b_top[j]) + data.layer_width[l] / 2 - 1;
     if (d == is_v) { // consider prl spacing constraint
-        auto s =
-            findPRLSpacing(l,
-                           std::max((is_v ? (data.b_right[j] - data.b_left[j])
-                                          : (data.b_top[j] - data.b_bottom[j])),
-                                    data.layer_width[l]),
-                           prl);
+        auto width = (is_v ? (data.b_right[j] - data.b_left[j])
+                           : (data.b_top[j] - data.b_bottom[j]));
+        if(data.b_use_min_width[j])
+            width = data.layer_width[l];
+        auto s = findPRLSpacing(l, std::max(width, data.layer_width[l]), prl);
         vio_begin -= s;
         vio_end += s;
     }

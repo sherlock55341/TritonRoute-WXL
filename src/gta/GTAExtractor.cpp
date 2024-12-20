@@ -485,6 +485,7 @@ void GTA::extractBlkInfo() {
     data.b_top = (int *)malloc(sizeof(int) * data.num_blks);
     data.b_net = (int *)malloc(sizeof(int) * data.num_blks);
     data.b_layer = (short *)malloc(sizeof(int) * data.num_blks);
+    data.b_use_min_width = (bool *)malloc(sizeof(bool) * data.num_blks);
     int *offset = (int *)calloc(sizeof(int), data.num_layers + 1);
     for (auto i = 0; i < data.num_layers; i++)
         offset[i + 1] = offset[i] + results[i].size();
@@ -498,6 +499,7 @@ void GTA::extractBlkInfo() {
             data.b_right[b] = box.max_corner().x();
             data.b_top[b] = box.max_corner().y();
             data.b_layer[b] = i;
+            data.b_use_min_width[b] = false;
             fr::frNet *netPtr = nullptr;
             if (obj->typeId() == fr::frcTerm)
                 netPtr = static_cast<fr::frTerm *>(obj)->getNet();
@@ -508,9 +510,10 @@ void GTA::extractBlkInfo() {
             else if (obj->typeId() == fr::frcVia)
                 netPtr = static_cast<fr::frVia *>(obj)->getNet();
             else if (obj->typeId() == fr::frcBlockage ||
-                     obj->typeId() == fr::frcInstBlockage)
+                     obj->typeId() == fr::frcInstBlockage) {
+                data.b_use_min_width[b] = USEMINSPACING_OBS;
                 netPtr = nullptr;
-            else
+            } else
                 std::cout << __FILE__ << ":" << __LINE__ << " UNKNOWN TYPE"
                           << std::endl;
             data.b_net[b] = (netPtr ? netPtr->getId() : -1);

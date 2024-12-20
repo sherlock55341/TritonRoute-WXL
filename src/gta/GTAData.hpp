@@ -66,6 +66,7 @@ struct GTAData {
     int *b_right = nullptr;
     int *b_top = nullptr;
     int *b_net = nullptr;
+    bool *b_use_min_width = nullptr;
     short *b_layer = nullptr;
     short *b_panel_begin = nullptr;
     short *b_panel_end = nullptr;
