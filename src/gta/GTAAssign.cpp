@@ -420,12 +420,15 @@ void GTA::getBlkVio(int i, int j) {
                      data.layer_width[l] / 2 + 1;
     auto vio_end =
         (is_v ? data.b_right[j] : data.b_top[j]) + data.layer_width[l] / 2 - 1;
-    if (d == is_v) { // consider prl spacing constraint
+    int s = 0;
+    if (d == is_v ||
+        data.layer_enable_corner_spacing[l]) { // consider prl spacing
+                                               // constraint
         auto width = (is_v ? (data.b_right[j] - data.b_left[j])
                            : (data.b_top[j] - data.b_bottom[j]));
-        if(data.b_use_min_width[j])
+        if (data.b_use_min_width[j])
             width = data.layer_width[l];
-        auto s = findPRLSpacing(l, std::max(width, data.layer_width[l]), prl);
+        s = findPRLSpacing(l, std::max(width, data.layer_width[l]), prl);
         vio_begin -= s;
         vio_end += s;
     }
@@ -453,6 +456,8 @@ void GTA::getBlkVio(int i, int j) {
             if (overlap > 0)
                 extension = data.layer_eol_spacing[l];
         }
+        if (data.layer_enable_corner_spacing[l] == true) 
+            extension = std::max(extension, s);
         auto overlap = std::max(
             0,
             std::min((is_v ? data.b_top[j] : data.b_right[j]) + extension,
@@ -462,78 +467,5 @@ void GTA::getBlkVio(int i, int j) {
         data.ir_vio_cost_list[data.ir_vio_cost_start[i] + t -
                               data.ir_track_low[i]] += overlap;
     }
-    // consider via vio
-    // if (enable_via) {
-    //     for (auto via_idx = data.ir_via_start[i];
-    //          via_idx < data.ir_via_start[i + 1]; via_idx++) {
-    //         int via_width = data.ir_via_list_width[via_idx];
-    //         int via_begin = data.ir_via_list_begin[via_idx];
-    //         int via_end = data.ir_via_list_end[via_idx];
-    //         prl = std::max(0, (is_v ? (std::min(data.b_top[j], via_end) -
-    //                                    std::max(data.b_bottom[j], via_begin))
-    //                                 : (std::min(data.b_right[j], via_end) -
-    //                                    std::max(data.b_left[j],
-    //                                    via_begin))));
-    //         auto new_vio_begin =
-    //             (is_v ? data.b_left[j] : data.b_bottom[j]) - via_width / 2 +
-    //             1;
-    //         auto new_vio_end =
-    //             (is_v ? data.b_right[j] : data.b_top[j]) + via_width / 2 - 1;
-    //         if (d == is_v) { // consider prl spacing constraint
-    //             auto s = findPRLSpacing(
-    //                 l,
-    //                 std::max((is_v ? (data.b_right[j] - data.b_left[j])
-    //                                : (data.b_top[j] - data.b_bottom[j])),
-    //                          via_width),
-    //                 prl);
-    //             new_vio_begin -= s;
-    //             new_vio_end += s;
-    //         }
-    //         int new_vio_track_begin =
-    //             std::ceil(1.0 * (vio_begin - data.layer_track_start[l]) /
-    //                       data.layer_track_step[l]);
-    //         int new_vio_track_end =
-    //             std::floor(1.0 * (vio_end - data.layer_track_start[l]) /
-    //                        data.layer_track_step[l]);
-    //         new_vio_track_begin =
-    //             std::max(new_vio_track_begin, data.ir_track_low[i]);
-    //         new_vio_track_end =
-    //             std::min(new_vio_track_end, data.ir_track_high[i]);
-    //         for (auto t = new_vio_track_begin; t <= new_vio_track_end; t++) {
-    //             if (t >= vio_track_begin && t <= vio_track_end)
-    //                 continue;
-    //             auto coor =
-    //                 data.layer_track_start[l] + data.layer_track_step[l] * t;
-    //             int extension = 0;
-    //             if (via_width < data.layer_eol_width[l]) { // consider eol
-    //                                                        // spacing
-    //                                                        constraint
-    //                 auto upperEdge =
-    //                     coor + via_width / 2 + data.layer_eol_within[l];
-    //                 auto lowerEdge =
-    //                     coor - via_width / 2 - data.layer_eol_within[l];
-    //                 auto overlap = std::max(
-    //                     0, std::min(upperEdge,
-    //                                 (is_v ? data.b_right[j] : data.b_top[j]))
-    //                                 -
-    //                            std::max(lowerEdge, (is_v ? data.b_left[j]
-    //                                                      :
-    //                                                      data.b_bottom[j])));
-    //                 if (overlap > 0)
-    //                     extension = data.layer_eol_spacing[l];
-    //             }
-    //             auto overlap = std::max(
-    //                 0, std::min((is_v ? data.b_top[j] : data.b_right[j]) +
-    //                                 extension,
-    //                             via_end) -
-    //                        std::max((is_v ? data.b_bottom[j] :
-    //                        data.b_left[j]) -
-    //                                     extension,
-    //                                 via_begin));
-    //             data.ir_vio_cost_list[data.ir_vio_cost_start[i] + t -
-    //                                   data.ir_track_low[i]] += overlap;
-    //         }
-    //     }
-    // }
 }
 } // namespace gta

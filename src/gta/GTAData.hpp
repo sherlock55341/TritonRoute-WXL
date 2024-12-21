@@ -40,6 +40,7 @@ struct GTAData {
     int *layer_via_upper_width = nullptr;
     int *layer_via_upper_length = nullptr;
     bool *layer_enable_via_nbr_drc = nullptr;
+    bool *layer_enable_corner_spacing = nullptr;
 
     short *ir_layer = nullptr;
     int *ir_net = nullptr;

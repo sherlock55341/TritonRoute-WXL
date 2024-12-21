@@ -59,6 +59,8 @@ void GTA::extractTechDesignBasicInfo() {
     data.layer_via_upper_length = (int *)malloc(sizeof(int) * data.num_layers);
     data.layer_enable_via_nbr_drc =
         (bool *)malloc(sizeof(bool) * data.num_layers);
+    data.layer_enable_corner_spacing =
+        (bool *)malloc(sizeof(bool) * data.num_layers);
     // for (auto i = 0; i < tech->getLayers().size(); i++){
     //     std::cout << i << " " << tech->getLayer(i)->getName() << std::endl;
     // }
@@ -82,6 +84,7 @@ void GTA::extractTechDesignBasicInfo() {
         data.layer_via_upper_width[i] = -1;
         data.layer_via_upper_length[i] = -1;
         data.layer_enable_via_nbr_drc[i] = false;
+        data.layer_enable_corner_spacing[i] = false;
         if (l->getType() == fr::frLayerTypeEnum::ROUTING) {
             data.layer_type[i] = 0;
             data.layer_direction[i] =
@@ -126,6 +129,8 @@ void GTA::extractTechDesignBasicInfo() {
             data.layer_spacing_table_prl_start[i + 1] = col.size();
             data.layer_spacing_table_spacing_start[i + 1] =
                 row.size() * col.size();
+            if(l->getLef58CornerSpacingConstraints().size() > 0)
+                data.layer_enable_corner_spacing[i] = true;
 
         } else if (l->getType() == fr::frLayerTypeEnum::CUT) {
             data.layer_type[i] = 1;
