@@ -36,6 +36,6 @@ class GTA {
     void apply(int i, int coef, bool enable_via, std::set<int> *S = nullptr);
 
     // ir i, blk j
-    void getBlkVio(int i, int j);
+    void getBlkVio(int i, int j, bool enable_via);
 };
 } // namespace gta

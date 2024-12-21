@@ -13,6 +13,10 @@ void GTA::init(int iter, int d_0) {
             bool hasEnd = false;
             int begin = std::numeric_limits<int>::max();
             int end = std::numeric_limits<int>::min();
+            data.ir_begin_via_length[i] = -1;
+            data.ir_begin_via_width[i] = -1;
+            data.ir_end_via_length[i] = -1;
+            data.ir_end_via_width[i] = -1;
             for (auto idx = data.ir_nbr_start[i];
                  idx < data.ir_nbr_start[i + 1]; idx++) {
                 auto j = data.ir_nbr_list[idx];
@@ -23,12 +27,55 @@ void GTA::init(int iter, int d_0) {
                     auto coor =
                         data.layer_track_start[nbr_layer] +
                         data.layer_track_step[nbr_layer] * data.ir_track[j];
+                    auto via_layer = (nbr_layer + l) / 2;
                     if (data.ir_panel[j] == data.ir_gcell_begin[i]) {
                         hasBegin = true;
+                        if (begin == coor) {
+                            data.ir_begin_via_length[i] = std::max(
+                                (int)data.ir_begin_via_length[i],
+                                (via_layer < l
+                                     ? data.layer_via_upper_length[via_layer]
+                                     : data.layer_via_lower_length[via_layer]));
+                            data.ir_begin_via_width[i] = std::max(
+                                (int)data.ir_begin_via_width[i],
+                                (via_layer < l
+                                     ? data.layer_via_upper_width[via_layer]
+                                     : data.layer_via_lower_width[via_layer]));
+                        } else if (coor < begin) {
+                            data.ir_begin_via_length[i] =
+                                (via_layer < l
+                                     ? data.layer_via_upper_length[via_layer]
+                                     : data.layer_via_lower_length[via_layer]);
+                            data.ir_begin_via_width[i] =
+                                (via_layer < l
+                                     ? data.layer_via_upper_width[via_layer]
+                                     : data.layer_via_lower_width[via_layer]);
+                        }
                         begin = std::min(begin, coor);
                     }
                     if (data.ir_panel[j] == data.ir_gcell_end[i]) {
                         hasEnd = true;
+                        if (end == coor) {
+                            data.ir_end_via_length[i] = std::max(
+                                (int)data.ir_end_via_length[i],
+                                (via_layer < l
+                                     ? data.layer_via_upper_length[via_layer]
+                                     : data.layer_via_lower_length[via_layer]));
+                            data.ir_begin_via_width[i] = std::max(
+                                (int)data.ir_begin_via_width[i],
+                                (via_layer < l
+                                     ? data.layer_via_upper_width[via_layer]
+                                     : data.layer_via_lower_width[via_layer]));
+                        } else if (coor > end) {
+                            data.ir_end_via_length[i] =
+                                (via_layer < l
+                                     ? data.layer_via_upper_length[via_layer]
+                                     : data.layer_via_lower_length[via_layer]);
+                            data.ir_end_via_width[i] =
+                                (via_layer < l
+                                     ? data.layer_via_upper_width[via_layer]
+                                     : data.layer_via_lower_width[via_layer]);
+                        }
                         end = std::max(end, coor);
                     }
                 }
@@ -86,14 +133,14 @@ void GTA::init(int iter, int d_0) {
                 auto j = data.gcell_end_point_blk_list[list_idx];
                 if (data.b_gcell_begin[j] == g ||
                     (data.b_gcell_end[j] == g && data.b_gcell_begin[j] < gb)) {
-                    getBlkVio(i, j);
+                    getBlkVio(i, j, (iter > 0 && ENABLE_TA_VIA_DRC));
                 }
             }
         }
         for (auto idx = data.blk_super_set_start[i];
              idx < data.blk_super_set_start[i + 1]; idx++) {
             auto j = data.blk_super_set_list[idx];
-            getBlkVio(i, j);
+            getBlkVio(i, j, (iter > 0 && ENABLE_TA_VIA_DRC));
         }
     }
 #pragma omp barrier
@@ -399,7 +446,7 @@ void GTA::apply(int i, int coef, bool enable_via, std::set<int> *S) {
     }
 }
 
-void GTA::getBlkVio(int i, int j) {
+void GTA::getBlkVio(int i, int j, bool enable_via) {
     if (data.ir_net[i] == data.b_net[j])
         return;
     auto l = data.ir_layer[i];
@@ -456,7 +503,7 @@ void GTA::getBlkVio(int i, int j) {
             if (overlap > 0)
                 extension = data.layer_eol_spacing[l];
         }
-        if (data.layer_enable_corner_spacing[l] == true) 
+        if (data.layer_enable_corner_spacing[l] == true)
             extension = std::max(extension, s);
         auto overlap = std::max(
             0,

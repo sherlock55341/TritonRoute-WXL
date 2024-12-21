@@ -129,7 +129,7 @@ void GTA::extractTechDesignBasicInfo() {
             data.layer_spacing_table_prl_start[i + 1] = col.size();
             data.layer_spacing_table_spacing_start[i + 1] =
                 row.size() * col.size();
-            if(l->getLef58CornerSpacingConstraints().size() > 0)
+            if (l->getLef58CornerSpacingConstraints().size() > 0)
                 data.layer_enable_corner_spacing[i] = true;
 
         } else if (l->getType() == fr::frLayerTypeEnum::CUT) {
@@ -263,6 +263,10 @@ void GTA::extractIrInfo() {
     data.ir_gcell_end = (short *)malloc(sizeof(short) * data.num_guides);
     data.ir_begin = (int *)malloc(sizeof(int) * data.num_guides);
     data.ir_end = (int *)malloc(sizeof(int) * data.num_guides);
+    data.ir_begin_via_length = (short *)malloc(sizeof(short) * data.num_guides);
+    data.ir_begin_via_width = (short *)malloc(sizeof(short) * data.num_guides);
+    data.ir_end_via_length = (short *)malloc(sizeof(short) * data.num_guides);
+    data.ir_end_via_width = (short *)malloc(sizeof(short) * data.num_guides);
     data.ir_track = (int *)malloc(sizeof(int) * data.num_guides);
     data.ir_track_low = (int *)malloc(sizeof(int) * data.num_guides);
     data.ir_track_high = (int *)malloc(sizeof(int) * data.num_guides);
