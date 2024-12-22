@@ -320,6 +320,8 @@ void GTA::apply(int i, int coef, bool enable_via, std::set<int> *S) {
                     auto overlap = std::max(
                         0, std::min(end, data.ir_end[j] + w / 2) -
                                std::max(begin, data.ir_begin[j] - w / 2));
+                    if (overlap > 0)
+                        overlap = std::max(overlap, data.layer_pitch[l]);
                     data.ir_vio_cost_list[data.ir_vio_cost_start[j] +
                                           data.ir_track[i] -
                                           data.ir_track_low[i]] +=
@@ -343,6 +345,8 @@ void GTA::apply(int i, int coef, bool enable_via, std::set<int> *S) {
             auto overlap =
                 std::max(0, std::min(end, data.ir_end[j] + w / 2) -
                                 std::max(begin, data.ir_begin[j] - w / 2));
+            if (overlap > 0)
+                overlap = std::max(overlap, data.layer_pitch[l]);
             data.ir_vio_cost_list[data.ir_vio_cost_start[j] + data.ir_track[i] -
                                   data.ir_track_low[i]] += overlap * coef;
         }
@@ -511,6 +515,8 @@ void GTA::getBlkVio(int i, int j, bool enable_via) {
                      end) -
                 std::max((is_v ? data.b_bottom[j] : data.b_left[j]) - extension,
                          begin));
+        if(overlap > 0)
+            overlap = std::max(overlap, data.layer_pitch[l]);
         data.ir_vio_cost_list[data.ir_vio_cost_start[i] + t -
                               data.ir_track_low[i]] += overlap;
     }

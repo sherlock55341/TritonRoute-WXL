@@ -136,6 +136,7 @@ void GTA::extractTechDesignBasicInfo() {
             data.layer_type[i] = 1;
             auto viaDef = l->getDefaultViaDef();
             assert(viaDef != nullptr);
+            std::cout << "CUT " << i << " "; 
             for (auto delta = -1; delta < 2; delta += 2) {
                 fr::frVia via(viaDef);
                 fr::frBox box(0, 0, 0, 0);
@@ -145,6 +146,7 @@ void GTA::extractTechDesignBasicInfo() {
                     via.getLayer2BBox(box);
                 auto width = box.width();
                 auto length = box.length();
+                std::cout << "(" << length << ", " << width << ") ";  
                 if (delta > 0) {
                     data.layer_via_upper_length[i] = length;
                     data.layer_via_upper_width[i] = width;
@@ -153,6 +155,7 @@ void GTA::extractTechDesignBasicInfo() {
                     data.layer_via_lower_width[i] = width;
                 }
             }
+            std::cout << std::endl;
         } else
             data.layer_type[i] = -1;
     }
