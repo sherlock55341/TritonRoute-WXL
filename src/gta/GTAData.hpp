@@ -93,6 +93,7 @@ struct GTAData {
     int *ir_vio_cost_list = nullptr;
     int8_t *ir_align_list = nullptr;
     int *ir_key_cost = nullptr;
+    int8_t *via_vio_list = nullptr;
 };
 
 } // namespace gta

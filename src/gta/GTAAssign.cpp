@@ -129,6 +129,11 @@ void GTA::init(int d_0) {
         data.ir_via_list_layer = (short *)realloc(
             data.ir_via_list_layer,
             sizeof(short) * data.ir_via_start[data.num_guides]);
+        data.via_vio_list = (int8_t *)realloc(
+            data.via_vio_list,
+            sizeof(int8_t) * data.ir_via_start[data.num_guides]);
+        memset(data.via_vio_list, 0,
+               sizeof(int8_t) * data.ir_via_start[data.num_guides]);
         for (auto i = 0; i < data.num_guides; i++) {
             auto l = data.ir_layer[i];
             auto is_v = data.layer_direction[l];
@@ -228,14 +233,22 @@ void GTA::assignRefinement(int d_0) {
     for (auto d = 0; d < 2; d++) {
 #pragma omp parallel for
         for (auto i = 0; i < ir_groups.size(); i++) {
+            if (i % 2 == d)
+                continue;
+            for (auto ir : ir_groups[i])
+                apply(ir, 1);
+        }
+#pragma omp barrier
+    }
+    for (auto d = 0; d < 2; d++) {
+#pragma omp parallel for
+        for (auto i = 0; i < ir_groups.size(); i++) {
             if (i % 2 != d)
                 continue;
             auto &ir_group = ir_groups[i];
             int local_counter = 0;
             std::set<int, std::function<bool(int, int)>> S(cmp);
             auto collect_set = std::make_unique<std::set<int>>();
-            for (auto ir : ir_group)
-                apply(ir, 1);
             for (auto ir : ir_group) {
                 data.ir_key_cost[ir] =
                     data.ir_vio_cost_list[data.ir_vio_cost_start[ir] +
