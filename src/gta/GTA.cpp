@@ -67,7 +67,7 @@ GTA::~GTA() {
     my_free(data.layer_via_lower_length);
     my_free(data.layer_via_upper_width);
     my_free(data.layer_via_upper_length);
-    my_free(data.layer_enable_via_nbr_drc);
+    my_free(data.layer_enable_via_wire_drc);
 
     my_free(data.ir_layer);
     my_free(data.ir_net);
@@ -123,20 +123,19 @@ GTA::~GTA() {
 
 void GTA::run(int maxIter) {
     fr::frTime t;
-    for (auto iter = 0; iter < maxIter; iter++) {
+    for (iter = 0; iter < maxIter; iter++) {
         // auto tp_iter_0 = std::chrono::high_resolution_clock::now();
-        bool enable_via = ENABLE_TA_VIA_DRC && (iter > 0);
-        init(iter, data.layer_direction[0]);
+        init(data.layer_direction[0]);
         if (iter == 0)
             assignInitial(data.layer_direction[0]);
         else
-            assignRefinement(iter, data.layer_direction[0]);
+            assignRefinement(data.layer_direction[0]);
         // assignInitial(data.layer_direction[0], 1, 10);
-        init(iter, data.layer_direction[0] ^ 1);
+        init(data.layer_direction[0] ^ 1);
         if (iter == 0)
             assignInitial(data.layer_direction[0] ^ 1);
         else
-            assignRefinement(iter, data.layer_direction[0] ^ 1);
+            assignRefinement(data.layer_direction[0] ^ 1);
         // assignInitial(data.layer_direction[0] ^ 1, 1, 10);
         // auto tp_iter_1 = std::chrono::high_resolution_clock::now();
         // std::cout << "iter " << iter << " "

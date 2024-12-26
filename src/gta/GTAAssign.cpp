@@ -1,7 +1,7 @@
 #include "GTA.hpp"
 
 namespace gta {
-void GTA::init(int iter, int d_0) {
+void GTA::init(int d_0) {
 #pragma omp parallel for
     for (auto i = 0; i < data.num_guides; i++) {
         auto l = data.ir_layer[i];
@@ -13,10 +13,6 @@ void GTA::init(int iter, int d_0) {
             bool hasEnd = false;
             int begin = std::numeric_limits<int>::max();
             int end = std::numeric_limits<int>::min();
-            data.ir_begin_via_length[i] = -1;
-            data.ir_begin_via_width[i] = -1;
-            data.ir_end_via_length[i] = -1;
-            data.ir_end_via_width[i] = -1;
             for (auto idx = data.ir_nbr_start[i];
                  idx < data.ir_nbr_start[i + 1]; idx++) {
                 auto j = data.ir_nbr_list[idx];
@@ -30,52 +26,10 @@ void GTA::init(int iter, int d_0) {
                     auto via_layer = (nbr_layer + l) / 2;
                     if (data.ir_panel[j] == data.ir_gcell_begin[i]) {
                         hasBegin = true;
-                        if (begin == coor) {
-                            data.ir_begin_via_length[i] = std::max(
-                                (int)data.ir_begin_via_length[i],
-                                (via_layer < l
-                                     ? data.layer_via_upper_length[via_layer]
-                                     : data.layer_via_lower_length[via_layer]));
-                            data.ir_begin_via_width[i] = std::max(
-                                (int)data.ir_begin_via_width[i],
-                                (via_layer < l
-                                     ? data.layer_via_upper_width[via_layer]
-                                     : data.layer_via_lower_width[via_layer]));
-                        } else if (coor < begin) {
-                            data.ir_begin_via_length[i] =
-                                (via_layer < l
-                                     ? data.layer_via_upper_length[via_layer]
-                                     : data.layer_via_lower_length[via_layer]);
-                            data.ir_begin_via_width[i] =
-                                (via_layer < l
-                                     ? data.layer_via_upper_width[via_layer]
-                                     : data.layer_via_lower_width[via_layer]);
-                        }
                         begin = std::min(begin, coor);
                     }
                     if (data.ir_panel[j] == data.ir_gcell_end[i]) {
                         hasEnd = true;
-                        if (end == coor) {
-                            data.ir_end_via_length[i] = std::max(
-                                (int)data.ir_end_via_length[i],
-                                (via_layer < l
-                                     ? data.layer_via_upper_length[via_layer]
-                                     : data.layer_via_lower_length[via_layer]));
-                            data.ir_begin_via_width[i] = std::max(
-                                (int)data.ir_begin_via_width[i],
-                                (via_layer < l
-                                     ? data.layer_via_upper_width[via_layer]
-                                     : data.layer_via_lower_width[via_layer]));
-                        } else if (coor > end) {
-                            data.ir_end_via_length[i] =
-                                (via_layer < l
-                                     ? data.layer_via_upper_length[via_layer]
-                                     : data.layer_via_lower_length[via_layer]);
-                            data.ir_end_via_width[i] =
-                                (via_layer < l
-                                     ? data.layer_via_upper_width[via_layer]
-                                     : data.layer_via_lower_width[via_layer]);
-                        }
                         end = std::max(end, coor);
                     }
                 }
@@ -133,17 +87,85 @@ void GTA::init(int iter, int d_0) {
                 auto j = data.gcell_end_point_blk_list[list_idx];
                 if (data.b_gcell_begin[j] == g ||
                     (data.b_gcell_end[j] == g && data.b_gcell_begin[j] < gb)) {
-                    getBlkVio(i, j, (iter > 0 && ENABLE_TA_VIA_DRC));
+                    getBlkVio(i, j);
                 }
             }
         }
         for (auto idx = data.blk_super_set_start[i];
              idx < data.blk_super_set_start[i + 1]; idx++) {
             auto j = data.blk_super_set_list[idx];
-            getBlkVio(i, j, (iter > 0 && ENABLE_TA_VIA_DRC));
+            getBlkVio(i, j);
         }
     }
 #pragma omp barrier
+    if (iter > 0) {
+        memset(data.ir_via_start, 0, sizeof(int) * (data.num_guides + 1));
+        for (auto i = 0; i < data.num_guides; i++) {
+            auto l = data.ir_layer[i];
+            auto is_v = data.layer_direction[l];
+            if (is_v != d_0)
+                continue;
+            for (auto idx = data.ir_nbr_start[i];
+                 idx < data.ir_nbr_start[i + 1]; idx++) {
+                bool duplicate = false;
+                auto j = data.ir_nbr_list[idx];
+                for (auto idx_2 = data.ir_nbr_start[i]; idx_2 < idx; idx_2++) {
+                    auto k = data.ir_nbr_list[idx_2];
+                    if (data.ir_layer[j] == data.ir_layer[k] &&
+                        data.ir_track[j] == data.ir_track[k]) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (duplicate == false)
+                    data.ir_via_start[i + 1]++;
+            }
+        }
+        for (auto i = 0; i < data.num_guides; i++)
+            data.ir_via_start[i + 1] += data.ir_via_start[i];
+        data.ir_via_list_coor =
+            (int *)realloc(data.ir_via_list_coor,
+                           sizeof(int) * data.ir_via_start[data.num_guides]);
+        data.ir_via_list_layer = (short *)realloc(
+            data.ir_via_list_layer,
+            sizeof(short) * data.ir_via_start[data.num_guides]);
+        for (auto i = 0; i < data.num_guides; i++) {
+            auto l = data.ir_layer[i];
+            auto is_v = data.layer_direction[l];
+            if (is_v != d_0)
+                continue;
+            int offset = 0;
+            for (auto idx = data.ir_nbr_start[i];
+                 idx < data.ir_nbr_start[i + 1]; idx++) {
+                bool duplicate = false;
+                auto j = data.ir_nbr_list[idx];
+                for (auto idx_2 = data.ir_nbr_start[i]; idx_2 < idx; idx_2++) {
+                    auto k = data.ir_nbr_list[idx_2];
+                    if (data.ir_layer[j] == data.ir_layer[k] &&
+                        data.ir_track[j] == data.ir_track[k]) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (duplicate == false) {
+                    auto via_idx = data.ir_via_start[i] + offset;
+                    auto j_layer = data.ir_layer[j];
+                    data.ir_via_list_coor[via_idx] =
+                        data.layer_track_start[j_layer] +
+                        data.layer_track_step[j_layer] * data.ir_track[j];
+                    data.ir_via_list_layer[via_idx] = (l + j_layer) / 2;
+                    offset++;
+                }
+            }
+            if (offset != data.ir_via_start[i + 1] - data.ir_via_start[i]) {
+                std::cout << "[ERROR] " << __FILE__ << ":" << __LINE__ << " "
+                          << offset << " "
+                          << data.ir_via_start[i + 1] - data.ir_via_start[i]
+                          << std::endl;
+                exit(0);
+            }
+        }
+    }
 }
 
 void GTA::assignInitial(int d_0) {
@@ -172,7 +194,7 @@ void GTA::assignInitial(int d_0) {
         });
         for (auto ir : ir_group) {
             local_counter++;
-            assign(0, ir);
+            assign(ir);
         }
 #pragma omp critical
         { counter += local_counter; }
@@ -182,7 +204,7 @@ void GTA::assignInitial(int d_0) {
               << ir_groups.size() << std::endl;
 }
 
-void GTA::assignRefinement(int iter, int d_0) {
+void GTA::assignRefinement(int d_0) {
     int counter = 0;
     int panel_num = (d_0 ? data.num_gcells_x : data.num_gcells_y);
     constexpr int group_panel_width = 20;
@@ -213,7 +235,7 @@ void GTA::assignRefinement(int iter, int d_0) {
             std::set<int, std::function<bool(int, int)>> S(cmp);
             auto collect_set = std::make_unique<std::set<int>>();
             for (auto ir : ir_group)
-                apply(ir, 1, ENABLE_TA_VIA_DRC);
+                apply(ir, 1);
             for (auto ir : ir_group) {
                 data.ir_key_cost[ir] =
                     data.ir_vio_cost_list[data.ir_vio_cost_start[ir] +
@@ -230,7 +252,7 @@ void GTA::assignRefinement(int iter, int d_0) {
                 S.erase(ir);
                 collect_set->clear();
                 collect_set->insert(ir);
-                assign(iter, ir, collect_set.get());
+                assign(ir, collect_set.get());
                 for (auto it : *collect_set) {
                     if (S.find(it) != S.end())
                         S.erase(it);
@@ -252,7 +274,7 @@ void GTA::assignRefinement(int iter, int d_0) {
               << ir_groups.size() << std::endl;
 }
 
-void GTA::assign(int iter, int i, std::set<int> *S) {
+void GTA::assign(int i, std::set<int> *S) {
     float bestCost = std::numeric_limits<float>::max();
     int bestChoice = -1;
     auto l = data.ir_layer[i];
@@ -282,12 +304,12 @@ void GTA::assign(int iter, int i, std::set<int> *S) {
         }
     }
     assert(bestChoice != -1);
-    apply(i, -1, iter > 0 ? ENABLE_TA_VIA_DRC : false, S);
+    apply(i, -1, S);
     data.ir_track[i] = bestChoice + data.ir_track_low[i];
-    apply(i, 1, iter > 0 ? ENABLE_TA_VIA_DRC : false, S);
+    apply(i, 1, S);
 }
 
-void GTA::apply(int i, int coef, bool enable_via, std::set<int> *S) {
+void GTA::apply(int i, int coef, std::set<int> *S) {
     if (data.ir_track[i] == -1)
         return;
     auto p = data.ir_panel[i];
@@ -354,7 +376,7 @@ void GTA::apply(int i, int coef, bool enable_via, std::set<int> *S) {
             data.ir_reassign[j] < 1)
             S->insert(j);
     }
-    if (enable_via && data.layer_enable_via_nbr_drc[l]) {
+    if (data.layer_enable_via_wire_drc[l]) {
         auto pitch = data.layer_pitch[l];
         if (data.ir_gcell_begin_via_offset[i] > 0) {
             int p_delta_low = 0;
@@ -450,7 +472,7 @@ void GTA::apply(int i, int coef, bool enable_via, std::set<int> *S) {
     }
 }
 
-void GTA::getBlkVio(int i, int j, bool enable_via) {
+void GTA::getBlkVio(int i, int j) {
     if (data.ir_net[i] == data.b_net[j])
         return;
     auto l = data.ir_layer[i];
@@ -515,7 +537,7 @@ void GTA::getBlkVio(int i, int j, bool enable_via) {
                      end) -
                 std::max((is_v ? data.b_bottom[j] : data.b_left[j]) - extension,
                          begin));
-        if(overlap > 0)
+        if (overlap > 0)
             overlap = std::max(overlap, data.layer_pitch[l]);
         data.ir_vio_cost_list[data.ir_vio_cost_start[i] + t -
                               data.ir_track_low[i]] += overlap;

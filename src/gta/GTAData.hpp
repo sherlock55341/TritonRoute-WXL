@@ -39,7 +39,8 @@ struct GTAData {
     int *layer_via_lower_length = nullptr;
     int *layer_via_upper_width = nullptr;
     int *layer_via_upper_length = nullptr;
-    bool *layer_enable_via_nbr_drc = nullptr;
+    int *layer_cut_spacing = nullptr;
+    bool *layer_enable_via_wire_drc = nullptr;
     bool *layer_enable_corner_spacing = nullptr;
 
     short *ir_layer = nullptr;
@@ -51,10 +52,6 @@ struct GTAData {
     short *ir_gcell_end_via_offset = nullptr;
     int *ir_begin = nullptr;
     int *ir_end = nullptr;
-    short *ir_begin_via_length = nullptr;
-    short *ir_begin_via_width = nullptr;
-    short *ir_end_via_length = nullptr;
-    short *ir_end_via_width = nullptr;
     int *ir_track = nullptr;
     int *ir_track_low = nullptr;
     int *ir_track_high = nullptr;
@@ -65,6 +62,9 @@ struct GTAData {
     int *ir_nbr_start = nullptr;
     int *ir_nbr_list = nullptr;
     int *ir_reassign = nullptr;
+    int *ir_via_start = nullptr;
+    int *ir_via_list_coor = nullptr;
+    short *ir_via_list_layer = nullptr;
 
     int *b_left = nullptr;
     int *b_bottom = nullptr;

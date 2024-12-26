@@ -57,13 +57,11 @@ void GTA::extractTechDesignBasicInfo() {
     data.layer_via_lower_length = (int *)malloc(sizeof(int) * data.num_layers);
     data.layer_via_upper_width = (int *)malloc(sizeof(int) * data.num_layers);
     data.layer_via_upper_length = (int *)malloc(sizeof(int) * data.num_layers);
-    data.layer_enable_via_nbr_drc =
+    data.layer_cut_spacing = (int *)malloc(sizeof(int) * data.num_layers);
+    data.layer_enable_via_wire_drc =
         (bool *)malloc(sizeof(bool) * data.num_layers);
     data.layer_enable_corner_spacing =
         (bool *)malloc(sizeof(bool) * data.num_layers);
-    // for (auto i = 0; i < tech->getLayers().size(); i++){
-    //     std::cout << i << " " << tech->getLayer(i)->getName() << std::endl;
-    // }
     for (auto i = 0; i < data.num_layers; i++) {
         auto l = tech->getLayer(i + 2);
         data.layer_direction[i] = -1;
@@ -83,7 +81,8 @@ void GTA::extractTechDesignBasicInfo() {
         data.layer_via_lower_length[i] = -1;
         data.layer_via_upper_width[i] = -1;
         data.layer_via_upper_length[i] = -1;
-        data.layer_enable_via_nbr_drc[i] = false;
+        data.layer_cut_spacing[i] = -1;
+        data.layer_enable_via_wire_drc[i] = false;
         data.layer_enable_corner_spacing[i] = false;
         if (l->getType() == fr::frLayerTypeEnum::ROUTING) {
             data.layer_type[i] = 0;
@@ -134,9 +133,14 @@ void GTA::extractTechDesignBasicInfo() {
 
         } else if (l->getType() == fr::frLayerTypeEnum::CUT) {
             data.layer_type[i] = 1;
+            assert(l->hasCutSpacing());
+            for (auto con : l->getCutSpacing()) {
+                data.layer_cut_spacing[i] =
+                    std::max(data.layer_cut_spacing[i], con->getCutSpacing());
+            }
             auto viaDef = l->getDefaultViaDef();
             assert(viaDef != nullptr);
-            std::cout << "CUT " << i << " "; 
+            std::cout << "CUT " << i << " ";
             for (auto delta = -1; delta < 2; delta += 2) {
                 fr::frVia via(viaDef);
                 fr::frBox box(0, 0, 0, 0);
@@ -146,7 +150,7 @@ void GTA::extractTechDesignBasicInfo() {
                     via.getLayer2BBox(box);
                 auto width = box.width();
                 auto length = box.length();
-                std::cout << "(" << length << ", " << width << ") ";  
+                std::cout << "(" << length << ", " << width << ") ";
                 if (delta > 0) {
                     data.layer_via_upper_length[i] = length;
                     data.layer_via_upper_width[i] = width;
@@ -183,7 +187,7 @@ void GTA::extractTechDesignBasicInfo() {
             if (s + data.layer_width[i - 1] / 2 +
                     data.layer_via_lower_width[i - 1] / 2 >
                 data.layer_track_step[i - 1])
-                data.layer_enable_via_nbr_drc[i - 1] = true;
+                data.layer_enable_via_wire_drc[i - 1] = true;
 
             assert(i + 3 >= 0 && i + 3 < tech->getLayers().size());
             assert(tech->getLayer(i + 3)->getType() ==
@@ -199,7 +203,7 @@ void GTA::extractTechDesignBasicInfo() {
             if (s + data.layer_width[i + 1] / 2 +
                     data.layer_via_upper_width[i + 1] / 2 >
                 data.layer_track_step[i + 1])
-                data.layer_enable_via_nbr_drc[i + 1] = true;
+                data.layer_enable_via_wire_drc[i + 1] = true;
         }
     }
 
@@ -234,9 +238,13 @@ void GTA::extractTechDesignBasicInfo() {
                          j * col.size() + k] = vals[j][k];
         }
     }
+
     for (auto i = 0; i < data.num_layers; i++)
         if (data.layer_type[i] == 0)
-            std::cout << data.layer_enable_via_nbr_drc[i] << " ";
+            data.layer_type[i] = (data.layer_type[i] & ENABLE_GTA_VIA_WIRE_DRC);
+    for (auto i = 0; i < data.num_layers; i++)
+        if (data.layer_type[i] == 0)
+            std::cout << data.layer_enable_via_wire_drc[i] << " ";
     std::cout << std::endl;
     auto tp1 = std::chrono::high_resolution_clock::now();
     std::cout << "extractTechDesignBasicInfo : "
@@ -266,10 +274,6 @@ void GTA::extractIrInfo() {
     data.ir_gcell_end = (short *)malloc(sizeof(short) * data.num_guides);
     data.ir_begin = (int *)malloc(sizeof(int) * data.num_guides);
     data.ir_end = (int *)malloc(sizeof(int) * data.num_guides);
-    data.ir_begin_via_length = (short *)malloc(sizeof(short) * data.num_guides);
-    data.ir_begin_via_width = (short *)malloc(sizeof(short) * data.num_guides);
-    data.ir_end_via_length = (short *)malloc(sizeof(short) * data.num_guides);
-    data.ir_end_via_width = (short *)malloc(sizeof(short) * data.num_guides);
     data.ir_track = (int *)malloc(sizeof(int) * data.num_guides);
     data.ir_track_low = (int *)malloc(sizeof(int) * data.num_guides);
     data.ir_track_high = (int *)malloc(sizeof(int) * data.num_guides);
@@ -279,6 +283,7 @@ void GTA::extractIrInfo() {
     data.ir_ap = (int *)malloc(sizeof(int) * data.num_guides);
     data.ir_nbr_start = (int *)calloc(sizeof(int), data.num_guides + 1);
     data.ir_reassign = (int *)calloc(sizeof(int), data.num_guides);
+    data.ir_via_start = (int *)malloc(sizeof(int) * data.num_guides);
 #pragma omp parallel for
     for (auto i = 0; i < nets.size(); i++) {
         auto net = nets[i].get();
@@ -422,46 +427,44 @@ void GTA::extractIrInfo() {
 #pragma omp barrier
     // std::cout << __FILE__ << ":" << __LINE__ << std::endl;
     free(net_guide_offset);
-    if (ENABLE_TA_VIA_DRC) {
-        data.ir_gcell_begin_via_offset =
-            (short *)malloc(sizeof(short) * data.num_guides);
-        data.ir_gcell_end_via_offset =
-            (short *)malloc(sizeof(short) * data.num_guides);
+    data.ir_gcell_begin_via_offset =
+        (short *)malloc(sizeof(short) * data.num_guides);
+    data.ir_gcell_end_via_offset =
+        (short *)malloc(sizeof(short) * data.num_guides);
 #pragma omp parallel for
-        for (auto i = 0; i < data.num_guides; i++) {
-            auto l = data.ir_layer[i];
-            data.ir_gcell_begin_via_offset[i] = 0;
-            data.ir_gcell_end_via_offset[i] = 0;
-            if (data.layer_enable_via_nbr_drc[i] == false)
-                continue;
-            for (auto nbr_idx = data.ir_nbr_start[i];
-                 nbr_idx < data.ir_nbr_start[i + 1]; nbr_idx++) {
-                auto nbr = data.ir_nbr_list[nbr_idx];
-                auto nbr_layer = data.ir_layer[nbr];
-                auto via_layer = (l + nbr_layer) / 2;
-                assert(data.layer_type[via_layer] == 1);
-                auto width =
-                    (nbr_layer < l ? data.layer_via_upper_width[via_layer]
-                                   : data.layer_via_lower_width[via_layer]);
-                auto length =
-                    (nbr_layer < l ? data.layer_via_upper_length[via_layer]
-                                   : data.layer_via_lower_length[via_layer]);
-                auto s = findPRLSpacing(l, std::max(width, data.layer_width[l]),
-                                        length);
-                auto gap = s + width / 2 + data.layer_width[l] / 2;
-                short delta = gap / data.layer_track_step[l];
-                if (data.layer_track_step[l] * delta == gap)
-                    delta--;
-                if (data.ir_panel[nbr] == data.ir_gcell_begin[i])
-                    data.ir_gcell_begin_via_offset[i] =
-                        std::max(data.ir_gcell_begin_via_offset[i], delta);
-                if (data.ir_panel[nbr] == data.ir_gcell_end[i])
-                    data.ir_gcell_end_via_offset[i] =
-                        std::max(data.ir_gcell_end_via_offset[i], delta);
-            }
+    for (auto i = 0; i < data.num_guides; i++) {
+        auto l = data.ir_layer[i];
+        data.ir_gcell_begin_via_offset[i] = 0;
+        data.ir_gcell_end_via_offset[i] = 0;
+        if (data.layer_enable_via_wire_drc[i] == false)
+            continue;
+        for (auto nbr_idx = data.ir_nbr_start[i];
+             nbr_idx < data.ir_nbr_start[i + 1]; nbr_idx++) {
+            auto nbr = data.ir_nbr_list[nbr_idx];
+            auto nbr_layer = data.ir_layer[nbr];
+            auto via_layer = (l + nbr_layer) / 2;
+            assert(data.layer_type[via_layer] == 1);
+            auto width =
+                (nbr_layer < l ? data.layer_via_upper_width[via_layer]
+                               : data.layer_via_lower_width[via_layer]);
+            auto length =
+                (nbr_layer < l ? data.layer_via_upper_length[via_layer]
+                               : data.layer_via_lower_length[via_layer]);
+            auto s =
+                findPRLSpacing(l, std::max(width, data.layer_width[l]), length);
+            auto gap = s + width / 2 + data.layer_width[l] / 2;
+            short delta = gap / data.layer_track_step[l];
+            if (data.layer_track_step[l] * delta == gap)
+                delta--;
+            if (data.ir_panel[nbr] == data.ir_gcell_begin[i])
+                data.ir_gcell_begin_via_offset[i] =
+                    std::max(data.ir_gcell_begin_via_offset[i], delta);
+            if (data.ir_panel[nbr] == data.ir_gcell_end[i])
+                data.ir_gcell_end_via_offset[i] =
+                    std::max(data.ir_gcell_end_via_offset[i], delta);
         }
-#pragma omp barrier
     }
+#pragma omp barrier
     auto tp1 = std::chrono::high_resolution_clock::now();
     std::cout << "extractIrInfo : "
               << std::chrono::duration_cast<std::chrono::microseconds>(tp1 -
@@ -595,17 +598,15 @@ void GTA::extractGCellInfo() {
         auto maxWidth = std::max(width, data.layer_width[l]);
         auto maxPRL = length;
         auto s = findPRLSpacing(l, maxWidth, maxPRL);
-        if (ENABLE_TA_VIA_DRC) {
-            if (l - 1 >= 0 && data.layer_type[l - 1] == 1) {
-                maxWidth = std::max(width, data.layer_via_upper_width[l - 1]);
-                maxPRL = std::min(length, data.layer_via_upper_length[l - 1]);
-                s = std::max(s, findPRLSpacing(l, maxWidth, maxPRL));
-            }
-            if (l + 1 < data.num_layers && data.layer_type[l + 1] == 1) {
-                maxWidth = std::max(width, data.layer_via_lower_width[l - 1]);
-                maxPRL = std::min(length, data.layer_via_lower_length[l - 1]);
-                s = std::max(s, findPRLSpacing(l, maxWidth, maxPRL));
-            }
+        if (l - 1 >= 0 && data.layer_type[l - 1] == 1) {
+            maxWidth = std::max(width, data.layer_via_upper_width[l - 1]);
+            maxPRL = std::min(length, data.layer_via_upper_length[l - 1]);
+            s = std::max(s, findPRLSpacing(l, maxWidth, maxPRL));
+        }
+        if (l + 1 < data.num_layers && data.layer_type[l + 1] == 1) {
+            maxWidth = std::max(width, data.layer_via_lower_width[l - 1]);
+            maxPRL = std::min(length, data.layer_via_lower_length[l - 1]);
+            s = std::max(s, findPRLSpacing(l, maxWidth, maxPRL));
         }
         auto e_left = data.b_left[b] - s - data.layer_width[l] / 2 + 1;
         auto e_bottom = data.b_bottom[b] - s - data.layer_width[l] / 2 + 1;
@@ -659,34 +660,32 @@ void GTA::extractGCellInfo() {
             }
         }
     }
-    if (ENABLE_TA_VIA_DRC) {
-        data.gcell_cross_ir_start = (int *)calloc(
-            sizeof(int), data.layer_gcell_start[data.num_layers] + 1);
-        for (auto i = 0; i < data.num_guides; i++) {
-            auto l = data.ir_layer[i];
-            for (auto g = data.ir_gcell_begin[i] + 1; g < data.ir_gcell_end[i];
-                 g++) {
-                auto idx = data.layer_gcell_start[l] +
-                           data.ir_panel[i] * data.layer_panel_length[l] + g;
-                data.gcell_cross_ir_start[idx + 1]++;
-            }
+    data.gcell_cross_ir_start =
+        (int *)calloc(sizeof(int), data.layer_gcell_start[data.num_layers] + 1);
+    for (auto i = 0; i < data.num_guides; i++) {
+        auto l = data.ir_layer[i];
+        for (auto g = data.ir_gcell_begin[i] + 1; g < data.ir_gcell_end[i];
+             g++) {
+            auto idx = data.layer_gcell_start[l] +
+                       data.ir_panel[i] * data.layer_panel_length[l] + g;
+            data.gcell_cross_ir_start[idx + 1]++;
         }
-        for (auto i = 0; i < data.layer_gcell_start[data.num_layers]; i++)
-            data.gcell_cross_ir_start[i + 1] += data.gcell_cross_ir_start[i];
-        data.gcell_cross_ir_list = (int *)malloc(
-            sizeof(int) * (data.gcell_cross_ir_start
-                               [data.layer_gcell_start[data.num_layers]]));
-        memcpy(offset, data.gcell_cross_ir_start,
-               sizeof(int) * (data.layer_gcell_start[data.num_layers] + 1));
-        for (auto i = 0; i < data.num_guides; i++) {
-            auto l = data.ir_layer[i];
-            for (auto g = data.ir_gcell_begin[i] + 1; g < data.ir_gcell_end[i];
-                 g++) {
-                auto idx = data.layer_gcell_start[l] +
-                           data.ir_panel[i] * data.layer_panel_length[l] + g;
-                data.gcell_cross_ir_list[offset[idx]] = i;
-                offset[idx]++;
-            }
+    }
+    for (auto i = 0; i < data.layer_gcell_start[data.num_layers]; i++)
+        data.gcell_cross_ir_start[i + 1] += data.gcell_cross_ir_start[i];
+    data.gcell_cross_ir_list = (int *)malloc(
+        sizeof(int) *
+        (data.gcell_cross_ir_start[data.layer_gcell_start[data.num_layers]]));
+    memcpy(offset, data.gcell_cross_ir_start,
+           sizeof(int) * (data.layer_gcell_start[data.num_layers] + 1));
+    for (auto i = 0; i < data.num_guides; i++) {
+        auto l = data.ir_layer[i];
+        for (auto g = data.ir_gcell_begin[i] + 1; g < data.ir_gcell_end[i];
+             g++) {
+            auto idx = data.layer_gcell_start[l] +
+                       data.ir_panel[i] * data.layer_panel_length[l] + g;
+            data.gcell_cross_ir_list[offset[idx]] = i;
+            offset[idx]++;
         }
     }
     data.ir_super_set_start = (int *)calloc(sizeof(int), data.num_guides + 1);

@@ -29,13 +29,15 @@ class GTA {
     void findProjAp(fr::frGuide *g, int g_idx);
     int findPRLSpacing(int l, int width, int prl) const;
 
-    void init(int iter, int d_0);
+    void init(int d_0);
     void assignInitial(int d_0);
-    void assignRefinement(int iter, int d_0);
-    void assign(int iter, int i, std::set<int> *S = nullptr);
-    void apply(int i, int coef, bool enable_via, std::set<int> *S = nullptr);
+    void assignRefinement(int d_0);
+    void assign(int i, std::set<int> *S = nullptr);
+    void apply(int i, int coef, std::set<int> *S = nullptr);
 
     // ir i, blk j
-    void getBlkVio(int i, int j, bool enable_via);
+    void getBlkVio(int i, int j);
+
+    int iter;
 };
 } // namespace gta

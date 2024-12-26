@@ -248,11 +248,20 @@ int main(int argc, char **argv) {
                 argv++;
                 argc--;
                 ENABLE_GTA = atoi(*argv);
-            } else if(strcmp(*argv, "-ta_via_drc") == 0){
+            } else if (strcmp(*argv, "-ta_via_drc") == 0) {
                 argv++;
                 argc--;
                 ENABLE_TA_VIA_DRC = atoi(*argv);
-            }else {
+            } else if (strcmp(*argv, "-gta_via_wire") == 0) {
+                argv++;
+                argc--;
+                ENABLE_GTA_VIA_WIRE_DRC = atoi(*argv);
+            } else if(strcmp(*argv, "-gta_via_via") == 0){
+                argv++;
+                argc--;
+                ENABLE_GTA_VIA_VIA_DRC = atoi(*argv);
+            } 
+            else {
                 cout << "ERROR: Illegal command line option: " << *argv << endl;
                 return 2;
             }

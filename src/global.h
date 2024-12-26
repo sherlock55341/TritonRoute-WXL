@@ -59,6 +59,8 @@ extern int VERBOSE     ;
 extern int BOTTOM_ROUTING_LAYER;
 extern int TOP_ROUTING_LAYER;
 extern bool ENABLE_GTA;
+extern bool ENABLE_GTA_VIA_WIRE_DRC;
+extern bool ENABLE_GTA_VIA_VIA_DRC;
 extern bool ENABLE_TA_VIA_DRC;
 extern bool ALLOW_PIN_AS_FEEDTHROUGH;
 extern bool USENONPREFTRACKS;
