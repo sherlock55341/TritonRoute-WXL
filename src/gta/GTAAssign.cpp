@@ -99,73 +99,97 @@ void GTA::init(int d_0) {
     }
 #pragma omp barrier
     if (iter > 0) {
-        memset(data.ir_via_start, 0, sizeof(int) * (data.num_guides + 1));
+        memset(data.ir_lower_via_start, 0, sizeof(int) * (data.num_guides + 1));
+        memset(data.ir_upper_via_start, 0, sizeof(int) * (data.num_guides + 1));
         for (auto i = 0; i < data.num_guides; i++) {
             auto l = data.ir_layer[i];
             auto is_v = data.layer_direction[l];
             if (is_v != d_0)
                 continue;
-            for (auto idx = data.ir_nbr_start[i];
-                 idx < data.ir_nbr_start[i + 1]; idx++) {
+            for (auto nbr_idx = data.ir_nbr_start[i];
+                 nbr_idx < data.ir_nbr_start[i + 1]; nbr_idx++) {
+                auto j = data.ir_nbr_list[nbr_idx];
                 bool duplicate = false;
-                auto j = data.ir_nbr_list[idx];
-                for (auto idx_2 = data.ir_nbr_start[i]; idx_2 < idx; idx_2++) {
-                    auto k = data.ir_nbr_list[idx_2];
-                    if (data.ir_layer[j] == data.ir_layer[k] &&
-                        data.ir_track[j] == data.ir_track[k]) {
-                        duplicate = true;
-                        break;
-                    }
-                }
-                if (duplicate == false)
-                    data.ir_via_start[i + 1]++;
-            }
-        }
-        for (auto i = 0; i < data.num_guides; i++)
-            data.ir_via_start[i + 1] += data.ir_via_start[i];
-        data.ir_via_list_coor =
-            (int *)realloc(data.ir_via_list_coor,
-                           sizeof(int) * data.ir_via_start[data.num_guides]);
-        data.ir_via_list_layer = (short *)realloc(
-            data.ir_via_list_layer,
-            sizeof(short) * data.ir_via_start[data.num_guides]);
-        data.via_vio_list = (int8_t *)realloc(
-            data.via_vio_list,
-            sizeof(int8_t) * data.ir_via_start[data.num_guides]);
-        memset(data.via_vio_list, 0,
-               sizeof(int8_t) * data.ir_via_start[data.num_guides]);
-        for (auto i = 0; i < data.num_guides; i++) {
-            auto l = data.ir_layer[i];
-            auto is_v = data.layer_direction[l];
-            if (is_v != d_0)
-                continue;
-            int offset = 0;
-            for (auto idx = data.ir_nbr_start[i];
-                 idx < data.ir_nbr_start[i + 1]; idx++) {
-                bool duplicate = false;
-                auto j = data.ir_nbr_list[idx];
-                for (auto idx_2 = data.ir_nbr_start[i]; idx_2 < idx; idx_2++) {
-                    auto k = data.ir_nbr_list[idx_2];
-                    if (data.ir_layer[j] == data.ir_layer[k] &&
-                        data.ir_track[j] == data.ir_track[k]) {
+                for (auto nbr_idx_2 = data.ir_nbr_start[i]; nbr_idx_2 < nbr_idx;
+                     nbr_idx_2++) {
+                    auto k = data.ir_nbr_list[nbr_idx_2];
+                    auto on_same_layer = (data.ir_layer[j] == data.ir_layer[k]);
+                    auto on_same_track = (data.ir_track[j] == data.ir_track[k]);
+                    if (on_same_layer && on_same_track) {
                         duplicate = true;
                         break;
                     }
                 }
                 if (duplicate == false) {
-                    auto via_idx = data.ir_via_start[i] + offset;
-                    auto j_layer = data.ir_layer[j];
-                    data.ir_via_list_coor[via_idx] =
-                        data.layer_track_start[j_layer] +
-                        data.layer_track_step[j_layer] * data.ir_track[j];
-                    data.ir_via_list_layer[via_idx] = (l + j_layer) / 2;
-                    offset++;
+                    if (data.ir_layer[j] < l)
+                        data.ir_lower_via_start[i + 1]++;
+                    else
+                        data.ir_upper_via_start[i + 1]++;
                 }
             }
-            if (offset != data.ir_via_start[i + 1] - data.ir_via_start[i]) {
-                std::cout << "[ERROR] " << __FILE__ << ":" << __LINE__ << " "
-                          << offset << " "
-                          << data.ir_via_start[i + 1] - data.ir_via_start[i]
+        }
+        for (auto i = 0; i < data.num_guides; i++) {
+            data.ir_lower_via_start[i + 1] += data.ir_lower_via_start[i];
+            data.ir_upper_via_start[i + 1] += data.ir_upper_via_start[i];
+        }
+        data.ir_lower_via_coor = (int *)realloc(
+            data.ir_lower_via_coor,
+            sizeof(int) * data.ir_lower_via_start[data.num_guides]);
+        data.ir_upper_via_coor = (int *)realloc(
+            data.ir_upper_via_coor,
+            sizeof(int) * data.ir_upper_via_start[data.num_guides]);
+        for (auto i = 0; i < data.num_guides; i++) {
+            auto l = data.ir_layer[i];
+            auto is_v = data.layer_direction[l];
+            if (is_v != d_0)
+                continue;
+            int lower_offset = 0;
+            int upper_offset = 0;
+            for (auto nbr_idx = data.ir_nbr_start[i];
+                 nbr_idx < data.ir_nbr_start[i + 1]; nbr_idx++) {
+                auto j = data.ir_nbr_list[nbr_idx];
+                bool duplicate = false;
+                for (auto nbr_idx_2 = data.ir_nbr_start[i]; nbr_idx_2 < nbr_idx;
+                     nbr_idx_2++) {
+                    auto k = data.ir_nbr_list[nbr_idx_2];
+                    auto on_same_layer = (data.ir_layer[j] == data.ir_layer[k]);
+                    auto on_same_track = (data.ir_track[j] == data.ir_track[k]);
+                    if (on_same_layer && on_same_track) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (duplicate == false) {
+                    auto nbr_layer = data.ir_layer[j];
+                    auto nbr_coor =
+                        data.layer_track_start[nbr_layer] +
+                        data.layer_track_step[nbr_layer] * data.ir_track[j];
+                    if (data.ir_layer[j] < l) {
+                        data.ir_lower_via_coor[data.ir_lower_via_start[i] +
+                                               lower_offset] = nbr_coor;
+                        lower_offset++;
+                    } else {
+                        data.ir_upper_via_coor[data.ir_upper_via_start[i] +
+                                               upper_offset] = nbr_coor;
+                        upper_offset++;
+                    }
+                }
+            }
+            if (lower_offset !=
+                data.ir_lower_via_start[i + 1] - data.ir_lower_via_start[i]) {
+                std::cout << __FILE__ << ":" << __LINE__ << " " << lower_offset
+                          << " "
+                          << data.ir_lower_via_start[i + 1] -
+                                 data.ir_lower_via_start[i]
+                          << std::endl;
+                exit(0);
+            }
+            if (upper_offset !=
+                data.ir_upper_via_start[i + 1] - data.ir_upper_via_start[i]) {
+                std::cout << __FILE__ << ":" << __LINE__ << " " << upper_offset
+                          << " "
+                          << data.ir_upper_via_start[i + 1] -
+                                 data.ir_upper_via_start[i]
                           << std::endl;
                 exit(0);
             }
@@ -389,7 +413,8 @@ void GTA::apply(int i, int coef, std::set<int> *S) {
             data.ir_reassign[j] < 1)
             S->insert(j);
     }
-    if (data.layer_enable_via_wire_drc[l]) {
+    // via - wire violation
+    if (iter > 0 && data.layer_enable_via_wire_drc[l]) {
         auto pitch = data.layer_pitch[l];
         if (data.ir_gcell_begin_via_offset[i] > 0) {
             int p_delta_low = 0;
@@ -478,6 +503,40 @@ void GTA::apply(int i, int coef, std::set<int> *S) {
                         if (S && data.ir_track[j] == t &&
                             data.ir_reassign[j] < 1)
                             S->insert(j);
+                    }
+                }
+            }
+        }
+    }
+    // via - via violation
+    if (iter > 0 && ENABLE_GTA_VIA_VIA_DRC && data.layer_cut_spacing[l] != -1) {
+        auto lower_via_length = (l - 1 >= 0 && data.layer_type[l - 1] == 1)
+                                    ? data.layer_via_upper_length[l - 1]
+                                    : -1;
+        auto lower_via_width = (l - 1 >= 0 && data.layer_type[l - 1] == 1)
+                                   ? data.layer_via_upper_width[l - 1]
+                                   : -1;
+        auto upper_via_length =
+            (l + 1 < data.num_layers && data.layer_type[l + 1] == 1)
+                ? data.layer_via_lower_length[l + 1]
+                : -1;
+        auto upper_via_width =
+            (l + 1 < data.num_layers && data.layer_type[l + 1] == 1)
+                ? data.layer_via_lower_width[l + 1]
+                : -1;
+        for (auto g = gb; g <= ge; g++) {
+            auto idx =
+                data.layer_gcell_start[l] + p * data.layer_panel_length[l] + g;
+            for (auto list_idx = data.gcell_end_point_ir_start[idx];
+                 list_idx < data.gcell_end_point_ir_start[idx + 1];
+                 list_idx++) {
+                auto j = data.gcell_end_point_ir_list[list_idx];
+                if (i == j)
+                    continue;
+                if (data.ir_gcell_begin[j] == g ||
+                    (data.ir_gcell_end[j] == g &&
+                     data.ir_gcell_begin[j] < gb)) {
+                    if (data.ir_net[i] != data.ir_net[j]) {
                     }
                 }
             }

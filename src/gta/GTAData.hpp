@@ -39,8 +39,11 @@ struct GTAData {
     int *layer_via_lower_length = nullptr;
     int *layer_via_upper_width = nullptr;
     int *layer_via_upper_length = nullptr;
+    int *layer_via_span_x = nullptr;
+    int *layer_via_span_y = nullptr;
     int *layer_cut_spacing = nullptr;
     bool *layer_enable_via_wire_drc = nullptr;
+    bool *layer_enable_via_via_drc = nullptr;
     bool *layer_enable_corner_spacing = nullptr;
 
     short *ir_layer = nullptr;
@@ -62,9 +65,10 @@ struct GTAData {
     int *ir_nbr_start = nullptr;
     int *ir_nbr_list = nullptr;
     int *ir_reassign = nullptr;
-    int *ir_via_start = nullptr;
-    int *ir_via_list_coor = nullptr;
-    short *ir_via_list_layer = nullptr;
+    int *ir_lower_via_start = nullptr;
+    int *ir_lower_via_coor = nullptr;
+    int *ir_upper_via_start = nullptr;
+    int *ir_upper_via_coor = nullptr;
 
     int *b_left = nullptr;
     int *b_bottom = nullptr;
@@ -93,7 +97,6 @@ struct GTAData {
     int *ir_vio_cost_list = nullptr;
     int8_t *ir_align_list = nullptr;
     int *ir_key_cost = nullptr;
-    int8_t *via_vio_list = nullptr;
 };
 
 } // namespace gta

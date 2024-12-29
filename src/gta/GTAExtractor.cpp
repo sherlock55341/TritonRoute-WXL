@@ -57,8 +57,12 @@ void GTA::extractTechDesignBasicInfo() {
     data.layer_via_lower_length = (int *)malloc(sizeof(int) * data.num_layers);
     data.layer_via_upper_width = (int *)malloc(sizeof(int) * data.num_layers);
     data.layer_via_upper_length = (int *)malloc(sizeof(int) * data.num_layers);
+    data.layer_via_span_x = (int *)malloc(sizeof(int) * data.num_layers);
+    data.layer_via_span_y = (int *)malloc(sizeof(int) * data.num_layers);
     data.layer_cut_spacing = (int *)malloc(sizeof(int) * data.num_layers);
     data.layer_enable_via_wire_drc =
+        (bool *)malloc(sizeof(bool) * data.num_layers);
+    data.layer_enable_via_via_drc =
         (bool *)malloc(sizeof(bool) * data.num_layers);
     data.layer_enable_corner_spacing =
         (bool *)malloc(sizeof(bool) * data.num_layers);
@@ -81,8 +85,11 @@ void GTA::extractTechDesignBasicInfo() {
         data.layer_via_lower_length[i] = -1;
         data.layer_via_upper_width[i] = -1;
         data.layer_via_upper_length[i] = -1;
+        data.layer_via_span_x[i] = -1;
+        data.layer_via_span_y[i] = -1;
         data.layer_cut_spacing[i] = -1;
         data.layer_enable_via_wire_drc[i] = false;
+        data.layer_enable_via_via_drc[i] = false;
         data.layer_enable_corner_spacing[i] = false;
         if (l->getType() == fr::frLayerTypeEnum::ROUTING) {
             data.layer_type[i] = 0;
@@ -160,6 +167,11 @@ void GTA::extractTechDesignBasicInfo() {
                 }
             }
             std::cout << std::endl;
+            fr::frVia via(viaDef);
+            fr::frBox box(0, 0, 0, 0);
+            via.getCutBBox(box);
+            data.layer_via_span_x[i] = box.right() - box.left();
+            data.layer_via_span_y[i] = box.top() - box.bottom();
         } else
             data.layer_type[i] = -1;
     }
@@ -173,6 +185,7 @@ void GTA::extractTechDesignBasicInfo() {
         data.layer_spacing_table_spacing_start[i + 1] +=
             data.layer_spacing_table_spacing_start[i];
         if (data.layer_type[i] == 1) {
+            // via - wire violation
             assert(i + 1 >= 0 && i + 1 < tech->getLayers().size());
             assert(tech->getLayer(i + 1)->getType() ==
                    fr::frLayerTypeEnum::ROUTING);
@@ -204,6 +217,25 @@ void GTA::extractTechDesignBasicInfo() {
                     data.layer_via_upper_width[i + 1] / 2 >
                 data.layer_track_step[i + 1])
                 data.layer_enable_via_wire_drc[i + 1] = true;
+            // via - via violation
+            if (data.layer_cut_spacing[i] == -1)
+                continue;
+            if (i - 1 >= 0 && data.layer_type[i - 1] == 0) {
+                auto is_v = data.layer_direction[i - 1];
+                auto width = (is_v ? data.layer_via_span_x[i]
+                                   : data.layer_via_span_y[i]);
+                if (width + data.layer_cut_spacing[i] >
+                    data.layer_track_step[i - 1])
+                    data.layer_enable_via_via_drc[i - 1] = true;
+            }
+            if (i + 1 < data.num_layers && data.layer_type[i + 1] == 0) {
+                auto is_v = data.layer_direction[i + 1];
+                auto width = (is_v ? data.layer_via_span_x[i]
+                                   : data.layer_via_span_y[i]);
+                if (width + data.layer_cut_spacing[i] >
+                    data.layer_track_step[i + 1])
+                    data.layer_enable_via_via_drc[i + 1] = true;
+            }
         }
     }
 
@@ -242,9 +274,15 @@ void GTA::extractTechDesignBasicInfo() {
     for (auto i = 0; i < data.num_layers; i++)
         if (data.layer_type[i] == 0)
             data.layer_type[i] = (data.layer_type[i] & ENABLE_GTA_VIA_WIRE_DRC);
+    std::cout << "via - wire violation : ";
     for (auto i = 0; i < data.num_layers; i++)
         if (data.layer_type[i] == 0)
             std::cout << data.layer_enable_via_wire_drc[i] << " ";
+    std::cout << std::endl;
+    std::cout << "via - via violation : ";
+    for (auto i = 0; i < data.num_layers; i++)
+        if(data.layer_type[i] == 0)
+            std::cout << data.layer_enable_via_via_drc[i] << " ";
     std::cout << std::endl;
     auto tp1 = std::chrono::high_resolution_clock::now();
     std::cout << "extractTechDesignBasicInfo : "
@@ -283,7 +321,10 @@ void GTA::extractIrInfo() {
     data.ir_ap = (int *)malloc(sizeof(int) * data.num_guides);
     data.ir_nbr_start = (int *)calloc(sizeof(int), data.num_guides + 1);
     data.ir_reassign = (int *)calloc(sizeof(int), data.num_guides);
-    data.ir_via_start = (int *)malloc(sizeof(int) * data.num_guides);
+    data.ir_lower_via_start =
+        (int *)malloc(sizeof(int) * (data.num_guides + 1));
+    data.ir_upper_via_start =
+        (int *)malloc(sizeof(int) * (data.num_guides + 1));
 #pragma omp parallel for
     for (auto i = 0; i < nets.size(); i++) {
         auto net = nets[i].get();
