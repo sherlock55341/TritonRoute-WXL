@@ -1,11 +1,16 @@
 #include "GTA.hpp"
 #include "db/infra/frTime.h"
+#include "ops/assign/Assign.hpp"
+#include "ops/copy/Copy.hpp"
+#include "ops/extract/Extract.hpp"
+#include "ops/init/Init.hpp"
 #include <chrono>
 
 namespace gta {
 GTA::GTA(fr::frDesign *in) : tech(in->getTech()), design(in) {
     fr::frTime t;
-    extractGTADataFromDatabase();
+    // extractGTADataFromDatabase();
+    ops::extract(tech, design, data);
     t.print();
     std::cout << std::endl;
     // std::cout << "# layer " << data.num_layers << std::endl;
@@ -106,9 +111,9 @@ GTA::~GTA() {
     my_free(data.gcell_end_point_ir_list);
     my_free(data.gcell_end_point_blk_start);
     my_free(data.gcell_end_point_blk_list);
-    if(data.gcell_cross_ir_start)
+    if (data.gcell_cross_ir_start)
         my_free(data.gcell_cross_ir_start);
-    if(data.gcell_cross_ir_list)
+    if (data.gcell_cross_ir_list)
         my_free(data.gcell_cross_ir_list);
     my_free(data.ir_super_set_start);
     my_free(data.ir_super_set_list);
@@ -121,32 +126,41 @@ GTA::~GTA() {
     my_free(data.ir_key_cost);
 }
 
-void GTA::run(int maxIter) {
+void GTA::run(int maxIter, bool cuda) {
     fr::frTime t;
+    ops::malloc_device_data(data, data_device);
+    ops::h2d_data(data, data_device);
     for (iter = 0; iter < maxIter; iter++) {
-        // auto tp_iter_0 = std::chrono::high_resolution_clock::now();
-        init(data.layer_direction[0]);
-        if (iter == 0)
-            assignInitial(data.layer_direction[0]);
-        else
-            assignRefinement(data.layer_direction[0]);
-        // assignInitial(data.layer_direction[0], 1, 10);
-        init(data.layer_direction[0] ^ 1);
-        if (iter == 0)
-            assignInitial(data.layer_direction[0] ^ 1);
-        else
-            assignRefinement(data.layer_direction[0] ^ 1);
-        // assignInitial(data.layer_direction[0] ^ 1, 1, 10);
-        // auto tp_iter_1 = std::chrono::high_resolution_clock::now();
-        // std::cout << "iter " << iter << " "
-        //           << std::chrono::duration_cast<std::chrono::microseconds>(
-        //                  tp_iter_1 - tp_iter_0)
-        //                      .count() /
-        //                  1e6
-        //           << " s" << std::endl;
+        // if (iter == 0) {
+            // ops::h2d_data(data, data_device);
+            ops::init(data_device, iter, data.layer_direction[0]);
+            ops::assign(data_device, iter, data.layer_direction[0]);
+            // ops::d2h_data(data, data_device);
+        // } else {
+        //     ops::h2d_data(data, data_device);
+        //     ops::init(data_device, iter, data.layer_direction[0]);
+        //     ops::d2h_data(data, data_device);
+        //     ops::assign(data, iter, data.layer_direction[0]);
+        // }
+        // if (iter == 0) {
+            // ops::h2d_data(data, data_device);
+            ops::init(data_device, iter, data.layer_direction[0] ^ 1);
+            ops::assign(data_device, iter, data.layer_direction[0] ^ 1);
+            // ops::d2h_data(data, data_device);
+        // } else {
+        //     ops::h2d_data(data, data_device);
+        //     ops::init(data_device, iter, data.layer_direction[0] ^ 1);
+        //     ops::d2h_data(data, data_device);
+        //     ops::assign(data, iter, data.layer_direction[0] ^ 1);
+        // }
+        // ops::init(data_device, iter, data.layer_direction[0]);
+        // ops::assign(data_device, iter, data.layer_direction[0]);
+        // ops::init(data_device, iter, data.layer_direction[0] ^ 1);
+        // ops::assign(data_device, iter, data.layer_direction[0] ^ 1);
         t.print();
         std::cout << std::endl;
     }
+    ops::d2h_data(data, data_device);
     saveToGuide();
     t.print();
     std::cout << std::endl;

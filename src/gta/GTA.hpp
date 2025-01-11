@@ -1,6 +1,6 @@
 #pragma once
 
-#include "GTAData.hpp"
+#include "database/Data.hpp"
 #include "frDesign.h"
 #include <memory>
 
@@ -10,23 +10,16 @@ class GTA {
     GTA(fr::frDesign *in);
     ~GTA();
 
-    void run(int maxIter);
+    void run(int maxIter, bool cuda = false);
 
   protected:
     fr::frTechObject *tech = nullptr;
     fr::frDesign *design = nullptr;
-    GTAData data;
+    data::Data data;
+    data::Data data_device;
 
     void saveToGuide();
 
-    void extractGTADataFromDatabase();
-    void extractTechDesignBasicInfo();
-    void extractIrInfo();
-    void extractBlkInfo();
-    void extractGCellInfo();
-    void extractCostInfo();
-    bool findAp(fr::frGuide *g, int g_idx);
-    void findProjAp(fr::frGuide *g, int g_idx);
     int findPRLSpacing(int l, int width, int prl) const;
 
     void init(int d_0);

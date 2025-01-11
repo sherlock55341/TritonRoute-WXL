@@ -1,21 +1,136 @@
-#include "GTA.hpp"
-#include <chrono>
+#include "ExtractKernel.hpp"
 
-namespace gta {
-void GTA::extractGTADataFromDatabase() {
-    extractTechDesignBasicInfo();
-    extractIrInfo();
-    extractBlkInfo();
-    extractGCellInfo();
-    extractCostInfo();
+namespace gta::ops::cpu::helper {
+bool findAp(fr::frGuide *g, fr::frDesign *design, int g_idx, data::Data &data) {
+    fr::frPoint bp, ep;
+    g->getPoints(bp, ep);
+    if (bp != ep)
+        return false;
+    auto net = g->getNet();
+    fr::frBox box;
+    box.set(bp, bp);
+    std::vector<fr::frBlockObject *> result;
+    design->getRegionQuery()->queryGRPin(box, result);
+    // find access point
+    fr::frTransform instXform, shiftXform;
+    fr::frTerm *trueTerm = nullptr;
+    for (auto &term : result) {
+        fr::frInst *inst = nullptr;
+        if (term->typeId() == fr::frcInstTerm) {
+            if (static_cast<fr::frInstTerm *>(term)->getNet() != net) {
+                continue;
+            }
+            inst = static_cast<fr::frInstTerm *>(term)->getInst();
+            inst->getTransform(shiftXform);
+            shiftXform.set(fr::frOrient(fr::frcR0));
+            inst->getUpdatedXform(instXform);
+            trueTerm = static_cast<fr::frInstTerm *>(term)->getTerm();
+        } else if (term->typeId() == fr::frcTerm) {
+            if (static_cast<fr::frTerm *>(term)->getNet() != net) {
+                continue;
+            }
+            trueTerm = static_cast<fr::frTerm *>(term);
+        }
+        if (trueTerm) {
+            int pinIdx = 0;
+            int paIdx = inst ? inst->getPinAccessIdx() : -1;
+            for (auto &pin : trueTerm->getPins()) {
+                fr::frAccessPoint *ap = nullptr;
+                if (inst)
+                    ap = (static_cast<fr::frInstTerm *>(term)
+                              ->getAccessPoints())[pinIdx];
+                if (!pin->hasPinAccess())
+                    continue;
+                if (paIdx == -1)
+                    continue;
+                if (ap == nullptr)
+                    continue;
+                fr::frPoint apBp;
+                ap->getPoint(apBp);
+                apBp.transform(shiftXform);
+                if (ap->getLayerNum() - 2 == data.ir_layer[g_idx]) {
+                    data.ir_has_ap[g_idx] = true;
+                    data.ir_has_proj_ap[g_idx] = true;
+                    auto is_v = data.layer_direction[data.ir_layer[g_idx]];
+                    data.ir_ap[g_idx] = is_v ? apBp.x() : apBp.y();
+                    data.ir_begin[g_idx] = is_v ? apBp.y() : apBp.x();
+                    data.ir_end[g_idx] = is_v ? apBp.y() : apBp.x();
+                    data.ir_wl_weight[g_idx] = 0;
+                    return true;
+                }
+                pinIdx++;
+            }
+        }
+    }
+    return false;
 }
 
-void GTA::extractTechDesignBasicInfo() {
-    auto tp0 = std::chrono::high_resolution_clock::now();
+void findProjAp(fr::frGuide *g, fr::frDesign *design, int g_idx,
+                data::Data &data) {
+    fr::frPoint bp, ep;
+    g->getPoints(bp, ep);
+    auto net = g->getNet();
+    fr::frBox box;
+    box.set(bp, bp);
+    std::vector<fr::frBlockObject *> result;
+    design->getRegionQuery()->queryGRPin(box, result);
+    if (ep != bp) {
+        box.set(ep, ep);
+        design->getRegionQuery()->queryGRPin(box, result);
+    }
+    // find access point
+    fr::frTransform instXform, shiftXform;
+    fr::frTerm *trueTerm = nullptr;
+    for (auto &term : result) {
+        fr::frInst *inst = nullptr;
+        if (term->typeId() == fr::frcInstTerm) {
+            if (static_cast<fr::frInstTerm *>(term)->getNet() != net) {
+                continue;
+            }
+            inst = static_cast<fr::frInstTerm *>(term)->getInst();
+            inst->getTransform(shiftXform);
+            shiftXform.set(fr::frOrient(fr::frcR0));
+            inst->getUpdatedXform(instXform);
+            trueTerm = static_cast<fr::frInstTerm *>(term)->getTerm();
+        } else if (term->typeId() == fr::frcTerm) {
+            if (static_cast<fr::frTerm *>(term)->getNet() != net) {
+                continue;
+            }
+            trueTerm = static_cast<fr::frTerm *>(term);
+        }
+        if (trueTerm) {
+            int pinIdx = 0;
+            int paIdx = inst ? inst->getPinAccessIdx() : -1;
+            for (auto &pin : trueTerm->getPins()) {
+                fr::frAccessPoint *ap = nullptr;
+                if (inst)
+                    ap = (static_cast<fr::frInstTerm *>(term)
+                              ->getAccessPoints())[pinIdx];
+                if (!pin->hasPinAccess())
+                    continue;
+                if (paIdx == -1)
+                    continue;
+                if (ap == nullptr)
+                    continue;
+                fr::frPoint apBp;
+                ap->getPoint(apBp);
+                apBp.transform(shiftXform);
+                data.ir_has_proj_ap[g_idx] = true;
+                auto is_v = data.layer_direction[data.ir_layer[g_idx]];
+                data.ir_ap[g_idx] = is_v ? apBp.x() : apBp.y();
+                return;
+                pinIdx++;
+            }
+        }
+        data.ir_ap[g_idx] = 0;
+    }
+    return;
+}
+
+void techDesignInfo(fr::frTechObject *tech, fr::frDesign *design,
+                    data::Data &data) {
     data.num_layers = tech->getLayers().size() - 2;
     for (auto &g : design->getTopBlock()->getGCellPatterns()) {
-        // std::cout << g.isHorizontal() << " " << g.getStartCoord() << " "
-        //           << g.getSpacing() << " " << g.getCount() << std::endl;
         if (g.isHorizontal() == 0) {
             data.num_gcells_x = g.getCount();
             data.gcell_start_x = g.getStartCoord();
@@ -271,9 +386,6 @@ void GTA::extractTechDesignBasicInfo() {
         }
     }
 
-    for (auto i = 0; i < data.num_layers; i++)
-        if (data.layer_type[i] == 0)
-            data.layer_type[i] = (data.layer_type[i] & ENABLE_GTA_VIA_WIRE_DRC);
     std::cout << "via - wire violation : ";
     for (auto i = 0; i < data.num_layers; i++)
         if (data.layer_type[i] == 0)
@@ -281,20 +393,18 @@ void GTA::extractTechDesignBasicInfo() {
     std::cout << std::endl;
     std::cout << "via - via violation : ";
     for (auto i = 0; i < data.num_layers; i++)
-        if(data.layer_type[i] == 0)
+        if (data.layer_type[i] == 0)
             std::cout << data.layer_enable_via_via_drc[i] << " ";
     std::cout << std::endl;
-    auto tp1 = std::chrono::high_resolution_clock::now();
-    std::cout << "extractTechDesignBasicInfo : "
-              << std::chrono::duration_cast<std::chrono::microseconds>(tp1 -
-                                                                       tp0)
-                         .count() /
-                     1e6
-              << " s" << std::endl;
+    for (auto i = 0; i < data.num_layers; i++)
+        if (data.layer_type[i] == 0) {
+            data.layer_enable_via_wire_drc[i] &= ENABLE_GTA_VIA_WIRE_DRC;
+            data.layer_enable_via_via_drc[i] &= ENABLE_GTA_VIA_VIA_DRC;
+        }
 }
 
-void GTA::extractIrInfo() {
-    auto tp0 = std::chrono::high_resolution_clock::now();
+void irouteInfo(fr::frTechObject *tech, fr::frDesign *design,
+                data::Data &data) {
     auto &nets = design->getTopBlock()->getNets();
     int *net_guide_offset = (int *)calloc(sizeof(int), nets.size() + 1);
     for (auto i = 0; i < nets.size(); i++) {
@@ -461,8 +571,8 @@ void GTA::extractIrInfo() {
         for (auto j = 0; j < net->getGuides().size(); j++) {
             auto g = net->getGuides()[j].get();
             auto g_idx = net_guide_offset[i] + j;
-            if (findAp(g, g_idx) == false)
-                findProjAp(g, g_idx);
+            if (findAp(g, design, g_idx, data) == false)
+                findProjAp(g, design, g_idx, data);
         }
     }
 #pragma omp barrier
@@ -491,8 +601,8 @@ void GTA::extractIrInfo() {
             auto length =
                 (nbr_layer < l ? data.layer_via_upper_length[via_layer]
                                : data.layer_via_lower_length[via_layer]);
-            auto s =
-                findPRLSpacing(l, std::max(width, data.layer_width[l]), length);
+            auto s = data::helper::findPRLSpacing(
+                data, l, std::max(width, data.layer_width[l]), length);
             auto gap = s + width / 2 + data.layer_width[l] / 2;
             short delta = gap / data.layer_track_step[l];
             if (data.layer_track_step[l] * delta == gap)
@@ -506,17 +616,10 @@ void GTA::extractIrInfo() {
         }
     }
 #pragma omp barrier
-    auto tp1 = std::chrono::high_resolution_clock::now();
-    std::cout << "extractIrInfo : "
-              << std::chrono::duration_cast<std::chrono::microseconds>(tp1 -
-                                                                       tp0)
-                         .count() /
-                     1e6
-              << " s" << std::endl;
 }
 
-void GTA::extractBlkInfo() {
-    auto tp0 = std::chrono::high_resolution_clock::now();
+void blockageInfo(fr::frTechObject *tech, fr::frDesign *design,
+                  data::Data &data) {
     std::vector<std::vector<fr::rq_rptr_value_t<fr::frBlockObject>>> results(
         data.num_layers);
     for (auto i = 0; i < data.num_layers; i++) {
@@ -576,17 +679,9 @@ void GTA::extractBlkInfo() {
         }
     }
     free(offset);
-    auto tp1 = std::chrono::high_resolution_clock::now();
-    std::cout << "extractBlkInfo : "
-              << std::chrono::duration_cast<std::chrono::microseconds>(tp1 -
-                                                                       tp0)
-                         .count() /
-                     1e6
-              << " s" << std::endl;
 }
 
-void GTA::extractGCellInfo() {
-    auto tp0 = std::chrono::high_resolution_clock::now();
+void GCellInfo(fr::frTechObject *tech, fr::frDesign *design, data::Data &data) {
     data.gcell_end_point_ir_start =
         (int *)calloc(sizeof(int), data.layer_gcell_start[data.num_layers] + 1);
     for (auto i = 0; i < data.num_guides; i++) {
@@ -638,16 +733,18 @@ void GTA::extractGCellInfo() {
                               data.b_top[b] - data.b_bottom[b]);
         auto maxWidth = std::max(width, data.layer_width[l]);
         auto maxPRL = length;
-        auto s = findPRLSpacing(l, maxWidth, maxPRL);
+        auto s = data::helper::findPRLSpacing(data, l, maxWidth, maxPRL);
         if (l - 1 >= 0 && data.layer_type[l - 1] == 1) {
             maxWidth = std::max(width, data.layer_via_upper_width[l - 1]);
             maxPRL = std::min(length, data.layer_via_upper_length[l - 1]);
-            s = std::max(s, findPRLSpacing(l, maxWidth, maxPRL));
+            s = std::max(
+                s, data::helper::findPRLSpacing(data, l, maxWidth, maxPRL));
         }
         if (l + 1 < data.num_layers && data.layer_type[l + 1] == 1) {
             maxWidth = std::max(width, data.layer_via_lower_width[l - 1]);
             maxPRL = std::min(length, data.layer_via_lower_length[l - 1]);
-            s = std::max(s, findPRLSpacing(l, maxWidth, maxPRL));
+            s = std::max(
+                s, data::helper::findPRLSpacing(data, l, maxWidth, maxPRL));
         }
         auto e_left = data.b_left[b] - s - data.layer_width[l] / 2 + 1;
         auto e_bottom = data.b_bottom[b] - s - data.layer_width[l] / 2 + 1;
@@ -813,16 +910,9 @@ void GTA::extractGCellInfo() {
         }
     }
     free(offset);
-    auto tp1 = std::chrono::high_resolution_clock::now();
-    std::cout << "extractGCellInfo : "
-              << std::chrono::duration_cast<std::chrono::microseconds>(tp1 -
-                                                                       tp0)
-                         .count() /
-                     1e6
-              << " s" << std::endl;
 }
 
-void GTA::extractCostInfo() {
+void costInfo(fr::frTechObject *tech, fr::frDesign *design, data::Data &data) {
     data.ir_vio_cost_start = (int *)calloc(sizeof(int), data.num_guides + 1);
     for (auto i = 0; i < data.num_guides; i++)
         data.ir_vio_cost_start[i + 1] =
@@ -831,133 +921,21 @@ void GTA::extractCostInfo() {
         data.ir_vio_cost_start[i + 1] += data.ir_vio_cost_start[i];
     data.ir_vio_cost_list =
         (int *)calloc(sizeof(int), data.ir_vio_cost_start[data.num_guides]);
-    data.ir_align_list = (int8_t *)calloc(
-        sizeof(int8_t), data.ir_vio_cost_start[data.num_guides]);
+    data.ir_align_list = (int *)calloc(
+        sizeof(int), data.ir_vio_cost_start[data.num_guides]);
+    data.ir_via_vio_list =
+        (int *)calloc(sizeof(int), data.ir_vio_cost_start[data.num_guides]);
     data.ir_key_cost = (int *)calloc(sizeof(int), data.num_guides);
 }
+} // namespace gta::ops::cpu::helper
 
-bool GTA::findAp(fr::frGuide *g, int g_idx) {
-    fr::frPoint bp, ep;
-    g->getPoints(bp, ep);
-    if (bp != ep)
-        return false;
-    auto net = g->getNet();
-    fr::frBox box;
-    box.set(bp, bp);
-    std::vector<fr::frBlockObject *> result;
-    design->getRegionQuery()->queryGRPin(box, result);
-    // find access point
-    fr::frTransform instXform, shiftXform;
-    fr::frTerm *trueTerm = nullptr;
-    for (auto &term : result) {
-        fr::frInst *inst = nullptr;
-        if (term->typeId() == fr::frcInstTerm) {
-            if (static_cast<fr::frInstTerm *>(term)->getNet() != net) {
-                continue;
-            }
-            inst = static_cast<fr::frInstTerm *>(term)->getInst();
-            inst->getTransform(shiftXform);
-            shiftXform.set(fr::frOrient(fr::frcR0));
-            inst->getUpdatedXform(instXform);
-            trueTerm = static_cast<fr::frInstTerm *>(term)->getTerm();
-        } else if (term->typeId() == fr::frcTerm) {
-            if (static_cast<fr::frTerm *>(term)->getNet() != net) {
-                continue;
-            }
-            trueTerm = static_cast<fr::frTerm *>(term);
-        }
-        if (trueTerm) {
-            int pinIdx = 0;
-            int paIdx = inst ? inst->getPinAccessIdx() : -1;
-            for (auto &pin : trueTerm->getPins()) {
-                fr::frAccessPoint *ap = nullptr;
-                if (inst)
-                    ap = (static_cast<fr::frInstTerm *>(term)
-                              ->getAccessPoints())[pinIdx];
-                if (!pin->hasPinAccess())
-                    continue;
-                if (paIdx == -1)
-                    continue;
-                if (ap == nullptr)
-                    continue;
-                fr::frPoint apBp;
-                ap->getPoint(apBp);
-                apBp.transform(shiftXform);
-                if (ap->getLayerNum() - 2 == data.ir_layer[g_idx]) {
-                    data.ir_has_ap[g_idx] = true;
-                    data.ir_has_proj_ap[g_idx] = true;
-                    auto is_v = data.layer_direction[data.ir_layer[g_idx]];
-                    data.ir_ap[g_idx] = is_v ? apBp.x() : apBp.y();
-                    data.ir_begin[g_idx] = is_v ? apBp.y() : apBp.x();
-                    data.ir_end[g_idx] = is_v ? apBp.y() : apBp.x();
-                    data.ir_wl_weight[g_idx] = 0;
-                    return true;
-                }
-                pinIdx++;
-            }
-        }
-    }
-    return false;
+namespace gta::ops::cpu {
+void extract(fr::frTechObject *tech, fr::frDesign *design, data::Data &data) {
+    data.device = data::Device::CPU;
+    helper::techDesignInfo(tech, design, data);
+    helper::irouteInfo(tech, design, data);
+    helper::blockageInfo(tech, design, data);
+    helper::GCellInfo(tech, design, data);
+    helper::costInfo(tech, design, data);
 }
-
-void GTA::findProjAp(fr::frGuide *g, int g_idx) {
-    fr::frPoint bp, ep;
-    g->getPoints(bp, ep);
-    auto net = g->getNet();
-    fr::frBox box;
-    box.set(bp, bp);
-    std::vector<fr::frBlockObject *> result;
-    design->getRegionQuery()->queryGRPin(box, result);
-    if (ep != bp) {
-        box.set(ep, ep);
-        design->getRegionQuery()->queryGRPin(box, result);
-    }
-    // find access point
-    fr::frTransform instXform, shiftXform;
-    fr::frTerm *trueTerm = nullptr;
-    for (auto &term : result) {
-        fr::frInst *inst = nullptr;
-        if (term->typeId() == fr::frcInstTerm) {
-            if (static_cast<fr::frInstTerm *>(term)->getNet() != net) {
-                continue;
-            }
-            inst = static_cast<fr::frInstTerm *>(term)->getInst();
-            inst->getTransform(shiftXform);
-            shiftXform.set(fr::frOrient(fr::frcR0));
-            inst->getUpdatedXform(instXform);
-            trueTerm = static_cast<fr::frInstTerm *>(term)->getTerm();
-        } else if (term->typeId() == fr::frcTerm) {
-            if (static_cast<fr::frTerm *>(term)->getNet() != net) {
-                continue;
-            }
-            trueTerm = static_cast<fr::frTerm *>(term);
-        }
-        if (trueTerm) {
-            int pinIdx = 0;
-            int paIdx = inst ? inst->getPinAccessIdx() : -1;
-            for (auto &pin : trueTerm->getPins()) {
-                fr::frAccessPoint *ap = nullptr;
-                if (inst)
-                    ap = (static_cast<fr::frInstTerm *>(term)
-                              ->getAccessPoints())[pinIdx];
-                if (!pin->hasPinAccess())
-                    continue;
-                if (paIdx == -1)
-                    continue;
-                if (ap == nullptr)
-                    continue;
-                fr::frPoint apBp;
-                ap->getPoint(apBp);
-                apBp.transform(shiftXform);
-                data.ir_has_proj_ap[g_idx] = true;
-                auto is_v = data.layer_direction[data.ir_layer[g_idx]];
-                data.ir_ap[g_idx] = is_v ? apBp.x() : apBp.y();
-                return;
-                pinIdx++;
-            }
-        }
-        data.ir_ap[g_idx] = 0;
-    }
-    return;
-}
-} // namespace gta
+} // namespace gta::ops::cpu

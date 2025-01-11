@@ -3,8 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace gta {
-struct GTAData {
+namespace gta::data {
+enum class Device { CPU, CUDA };
+struct Data {
     int num_layers;
     int num_gcells_x;
     int num_gcells_y;
@@ -95,8 +96,14 @@ struct GTAData {
 
     int *ir_vio_cost_start = nullptr;
     int *ir_vio_cost_list = nullptr;
-    int8_t *ir_align_list = nullptr;
+    int *ir_align_list = nullptr;
+    int *ir_via_vio_list = nullptr;
     int *ir_key_cost = nullptr;
-};
 
+    Device device = Device::CPU;
+};
 } // namespace gta
+
+namespace gta::data::helper{
+int findPRLSpacing(Data &data, int l, int width, int prl);
+}
