@@ -33,6 +33,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include "dev/Dev.hpp"
 
 using namespace std;
 using namespace fr;
@@ -260,7 +261,11 @@ int main(int argc, char **argv) {
                 argv++;
                 argc--;
                 ENABLE_GTA_VIA_VIA_DRC = atoi(*argv);
-            } 
+            }  else if(strcmp(*argv, "-device") == 0){
+                argv++;
+                argc--;
+                DEVICE_ID = atoi(*argv);
+            }
             else {
                 cout << "ERROR: Illegal command line option: " << *argv << endl;
                 return 2;
@@ -268,6 +273,9 @@ int main(int argc, char **argv) {
             argv++;
         }
     }
+
+    if(ENABLE_GTA)
+        dev::set_device(DEVICE_ID);
 
     FlexRoute router;
     router.main();

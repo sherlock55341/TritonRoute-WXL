@@ -131,32 +131,10 @@ void GTA::run(int maxIter, bool cuda) {
     ops::malloc_device_data(data, data_device);
     ops::h2d_data(data, data_device);
     for (iter = 0; iter < maxIter; iter++) {
-        // if (iter == 0) {
-            // ops::h2d_data(data, data_device);
-            ops::init(data_device, iter, data.layer_direction[0]);
-            ops::assign(data_device, iter, data.layer_direction[0]);
-            // ops::d2h_data(data, data_device);
-        // } else {
-        //     ops::h2d_data(data, data_device);
-        //     ops::init(data_device, iter, data.layer_direction[0]);
-        //     ops::d2h_data(data, data_device);
-        //     ops::assign(data, iter, data.layer_direction[0]);
-        // }
-        // if (iter == 0) {
-            // ops::h2d_data(data, data_device);
-            ops::init(data_device, iter, data.layer_direction[0] ^ 1);
-            ops::assign(data_device, iter, data.layer_direction[0] ^ 1);
-            // ops::d2h_data(data, data_device);
-        // } else {
-        //     ops::h2d_data(data, data_device);
-        //     ops::init(data_device, iter, data.layer_direction[0] ^ 1);
-        //     ops::d2h_data(data, data_device);
-        //     ops::assign(data, iter, data.layer_direction[0] ^ 1);
-        // }
-        // ops::init(data_device, iter, data.layer_direction[0]);
-        // ops::assign(data_device, iter, data.layer_direction[0]);
-        // ops::init(data_device, iter, data.layer_direction[0] ^ 1);
-        // ops::assign(data_device, iter, data.layer_direction[0] ^ 1);
+        ops::init(data_device, iter, data.layer_direction[0]);
+        ops::assign(data_device, iter, data.layer_direction[0]);
+        ops::init(data_device, iter, data.layer_direction[0] ^ 1);
+        ops::assign(data_device, iter, data.layer_direction[0] ^ 1);
         t.print();
         std::cout << std::endl;
     }
@@ -209,24 +187,26 @@ void GTA::saveToGuide() {
     free(net_guide_offset);
 }
 
-int GTA::findPRLSpacing(int l, int width, int prl) const {
-    int row = 0, col = 0;
-    const auto row_num = data.layer_spacing_table_width_start[l + 1] -
-                         data.layer_spacing_table_width_start[l];
-    const auto col_num = data.layer_spacing_table_prl_start[l + 1] -
-                         data.layer_spacing_table_prl_start[l];
-    while (row + 1 < row_num &&
-           width > data.layer_spacing_table_width
-                       [data.layer_spacing_table_width_start[l] + row + 1])
-        row++;
-    while (
-        col + 1 < col_num &&
-        prl >
-            data.layer_spacing_table_prl[data.layer_spacing_table_prl_start[l] +
-                                         col + 1])
-        col++;
-    return data
-        .layer_spacing_table_spacing[data.layer_spacing_table_spacing_start[l] +
-                                     row * col_num + col];
-}
+// int GTA::findPRLSpacing(int l, int width, int prl) const {
+//     int row = 0, col = 0;
+//     const auto row_num = data.layer_spacing_table_width_start[l + 1] -
+//                          data.layer_spacing_table_width_start[l];
+//     const auto col_num = data.layer_spacing_table_prl_start[l + 1] -
+//                          data.layer_spacing_table_prl_start[l];
+//     while (row + 1 < row_num &&
+//            width > data.layer_spacing_table_width
+//                        [data.layer_spacing_table_width_start[l] + row + 1])
+//         row++;
+//     while (
+//         col + 1 < col_num &&
+//         prl >
+//             data.layer_spacing_table_prl[data.layer_spacing_table_prl_start[l]
+//             +
+//                                          col + 1])
+//         col++;
+//     return data
+//         .layer_spacing_table_spacing[data.layer_spacing_table_spacing_start[l]
+//         +
+//                                      row * col_num + col];
+// }
 } // namespace gta

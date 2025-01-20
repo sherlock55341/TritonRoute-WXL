@@ -24,8 +24,9 @@ __device__ void assign(data::Data &data, int iter, int i) {
         }
         assert(data.ir_align_list[t] >= 0);
         int align_cost = data.ir_align_list[t] * 4 * data.layer_pitch[l];
-        auto via_vio_cost = data.layer_pitch[data.ir_layer[i]] *
-                            min(data.ir_via_vio_list[t], 4);
+        // auto via_vio_cost = data.layer_pitch[data.ir_layer[i]] *
+        //                     min(data.ir_via_vio_list[t], 4);
+        auto via_vio_cost = 0;
         auto local_cost = drc * (data.ir_vio_cost_list[t] + via_vio_cost) +
                           wire_length_cost + pin_connect_cost - align_cost;
         if (local_cost < best_cost) {

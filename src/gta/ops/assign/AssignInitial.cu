@@ -1,6 +1,7 @@
 #include "AssignInitial.cuh"
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <vector>
@@ -85,7 +86,7 @@ namespace gta::ops::cuda {
 #define BLOCKS(x, y) (((x) + ((y) - 1)) / (y))
 
 void generate_rank_initial(data::Data &data, int d, int *rank) {
-    std::cout << "generate rank begin" << std::endl;
+    // std::cout << "generate rank begin" << std::endl;
     bool *ir_has_proj_ap = (bool *)malloc(sizeof(bool) * data.num_guides);
     float *ir_wl_weight = (float *)malloc(sizeof(float) * data.num_guides);
     short *ir_panel = (short *)malloc(sizeof(short) * data.num_guides);
@@ -94,7 +95,7 @@ void generate_rank_initial(data::Data &data, int d, int *rank) {
     short *ir_layer = (short *)malloc(sizeof(short) * data.num_guides);
     int *layer_direction = (int *)malloc(sizeof(int) * data.num_layers);
     int *rank_host = (int *)malloc(sizeof(int) * data.num_guides);
-    std::cout << "begin cuda memcpy" << std::endl;
+    // std::cout << "begin cuda memcpy" << std::endl;
     cudaMemcpy(ir_has_proj_ap, data.ir_has_proj_ap,
                sizeof(bool) * data.num_guides, cudaMemcpyDeviceToHost);
     cudaMemcpy(ir_wl_weight, data.ir_wl_weight, sizeof(float) * data.num_guides,
@@ -109,7 +110,7 @@ void generate_rank_initial(data::Data &data, int d, int *rank) {
                cudaMemcpyDeviceToHost);
     cudaMemcpy(layer_direction, data.layer_direction,
                sizeof(int) * data.num_layers, cudaMemcpyDeviceToHost);
-    std::cout << "finish cuda memcpy" << std::endl;
+    // std::cout << "finish cuda memcpy" << std::endl;
     auto panel_num = (d ? data.num_gcells_x : data.num_gcells_y);
     std::vector<std::vector<int>> ir_groups(panel_num);
     for (auto i = 0; i < data.num_guides; i++) {
@@ -136,10 +137,11 @@ void generate_rank_initial(data::Data &data, int d, int *rank) {
     int max_panel_iroute = 0;
     for (auto &ir_group : ir_groups)
         max_panel_iroute = std::max(max_panel_iroute, (int)ir_group.size());
-    std::cout << "Max # iroute in a panel : " << max_panel_iroute << std::endl;
+    // std::cout << "Max # iroute in a panel : " << max_panel_iroute <<
+    // std::endl;
     cudaMemcpy(rank, rank_host, sizeof(int) * data.num_guides,
                cudaMemcpyHostToDevice);
-    std::cout << "begin free" << std::endl;
+    // std::cout << "begin free" << std::endl;
     free(ir_has_proj_ap);
     free(ir_wl_weight);
     free(ir_panel);
@@ -148,11 +150,12 @@ void generate_rank_initial(data::Data &data, int d, int *rank) {
     free(ir_layer);
     free(layer_direction);
     free(rank_host);
-    std::cout << "generate rank end" << std::endl;
+    // std::cout << "generate rank end" << std::endl;
 }
 
 void assign_initial(data::Data &data, int iter, int d) {
     assert(data.device == data::Device::CUDA);
+    auto tp_0 = std::chrono::high_resolution_clock::now();
     int *rank = nullptr;
     cudaMalloc((void **)&rank, sizeof(int) * data.num_guides);
     generate_rank_initial(data, d, rank);
@@ -205,7 +208,7 @@ void assign_initial(data::Data &data, int iter, int d) {
                   << cudaGetErrorString(e) << std::endl;
         exit(0);
     }
-    std::cout << "data.num_guides : " << data.num_guides << std::endl;
+    // std::cout << "data.num_guides : " << data.num_guides << std::endl;
     while (inc_exist_host[0]) {
         inner_iter++;
         kernel::select_one_step_initial<<<BLOCKS(data.num_guides, 256), 256>>>(
@@ -225,12 +228,14 @@ void assign_initial(data::Data &data, int iter, int d) {
                       << cudaGetErrorString(e) << std::endl;
             exit(0);
         }
-        e = cudaMemcpy(inc_exist_host, inc_exist_device, sizeof(int),
-                       cudaMemcpyDeviceToHost);
-        if (e != cudaSuccess) {
-            std::cout << "[CUDA ERROR] " << __FILE__ << ":" << __LINE__ << " "
-                      << cudaGetErrorString(e) << std::endl;
-            exit(0);
+        if (inner_iter % 3 == 0) {
+            e = cudaMemcpy(inc_exist_host, inc_exist_device, sizeof(int),
+                           cudaMemcpyDeviceToHost);
+            if (e != cudaSuccess) {
+                std::cout << "[CUDA ERROR] " << __FILE__ << ":" << __LINE__
+                          << " " << cudaGetErrorString(e) << std::endl;
+                exit(0);
+            }
         }
         kernel::tag_inc_initial<<<BLOCKS(data.num_guides, 256), 256>>>(
             data, tag, inc, inc_exist_device);
@@ -275,7 +280,14 @@ void assign_initial(data::Data &data, int iter, int d) {
     inc = nullptr;
     inc_exist_device = nullptr;
     inc_exist_host = nullptr;
+    auto tp_1 = std::chrono::high_resolution_clock::now();
     std::cout << "Inner Iteration : " << inner_iter << " (" << iter << ", " << d
               << ")" << std::endl;
+    std::cout << "ASSIGN INITIAL on device (" << iter << ", " << d << ") "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(tp_1 -
+                                                                       tp_0)
+                         .count() /
+                     1e3
+              << " s" << std::endl;
 }
 } // namespace gta::ops::cuda

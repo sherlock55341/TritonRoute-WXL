@@ -58,6 +58,7 @@ extern int DRCSAFEDIST ;
 extern int VERBOSE     ;
 extern int BOTTOM_ROUTING_LAYER;
 extern int TOP_ROUTING_LAYER;
+extern int DEVICE_ID;
 extern bool ENABLE_GTA;
 extern bool ENABLE_GTA_VIA_WIRE_DRC;
 extern bool ENABLE_GTA_VIA_VIA_DRC;

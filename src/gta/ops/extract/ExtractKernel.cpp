@@ -354,6 +354,7 @@ void techDesignInfo(fr::frTechObject *tech, fr::frDesign *design,
         }
     }
 
+    data.num_gcells = data.layer_gcell_start[data.num_layers];
     data.layer_spacing_table_width = (int *)malloc(
         sizeof(int) * data.layer_spacing_table_width_start[data.num_layers]);
     data.layer_spacing_table_prl = (int *)malloc(

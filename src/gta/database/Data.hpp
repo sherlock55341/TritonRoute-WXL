@@ -16,6 +16,7 @@ struct Data {
     int num_nets;
     int num_guides;
     int num_blks;
+    int num_gcells;
     int *layer_type = nullptr;
     int *layer_direction = nullptr;
     int *layer_width = nullptr;
@@ -89,6 +90,12 @@ struct Data {
     int *gcell_end_point_blk_list = nullptr;
     int *gcell_cross_ir_start = nullptr;
     int *gcell_cross_ir_list = nullptr;
+    int *gcell_lower_via_start = nullptr;
+    int *gcell_lower_via_coor = nullptr;
+    int *gcell_lower_via_net = nullptr;
+    int *gcell_upper_via_start = nullptr;
+    int *gcell_upper_via_coor = nullptr;
+    int *gcell_upper_via_net = nullptr;
     int *ir_super_set_start = nullptr;
     int *ir_super_set_list = nullptr;
     int *blk_super_set_start = nullptr;

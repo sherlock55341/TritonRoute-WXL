@@ -56,6 +56,7 @@ int    DRCSAFEDIST   = 500;
 int    VERBOSE       = 1;
 int    BOTTOM_ROUTING_LAYER = 2;
 int    TOP_ROUTING_LAYER = std::numeric_limits<frLayerNum>::max();
+int    DEVICE_ID = 0;
 bool   ENABLE_GTA = false;
 bool   ENABLE_GTA_VIA_WIRE_DRC = true;
 bool   ENABLE_GTA_VIA_VIA_DRC = false;

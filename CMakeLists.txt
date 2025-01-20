@@ -72,7 +72,7 @@ if(CUDA_FOUND)
     # set(CMAKE_POSITION_INDEPENDENT_CODE ON)
     set(CUDA_SEPARABLE_COMPILATION TRUE)
     # set(CMAKE_CUDA_FLAGS ${CUDA_ARCH_FLAGS})
-    list(APPEND CUDA_NVCC_FLAGS -Xptxas -g -G -std=c++17 ${CMAKE_CUDA_FLAGS})
+    list(APPEND CUDA_NVCC_FLAGS -Xptxas -O3 -std=c++17 ${CMAKE_CUDA_FLAGS})
     list(APPEND CUDA_NVCC_FLAGS --compiler-options -fPIC)
     cuda_add_library(
         ${CUDA_LINKED} STATIC

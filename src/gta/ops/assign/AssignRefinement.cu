@@ -1,6 +1,7 @@
 #include "AssignRefinement.cuh"
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <vector>
@@ -47,6 +48,8 @@ __global__ void select_one_step_refinement(data::Data data, int iter, int d,
     assert(i >= 0 && i < data.num_guides);
     if (tag[i] > 0)
         return;
+    if (data.ir_key_cost[i] == 0)
+        return;
     bool select = true;
     int gb = max(0, data.ir_gcell_begin[i] - 1);
     int ge = min(data.layer_panel_length[l] - 1, data.ir_gcell_end[i] + 1);
@@ -76,8 +79,58 @@ __global__ void select_one_step_refinement(data::Data data, int iter, int d,
                 continue;
             if (tag[j] > 0)
                 continue;
+            if (data.ir_key_cost[j] == 0)
+                continue;
             if (device::compare_refinement(data, i, j) == false)
                 select = false;
+        }
+    }
+    // via - wire conflict
+    if (data.layer_enable_via_wire_drc[l] == true) {
+        int p_low = max(0, data.ir_panel[i] - 1);
+        int p_high =
+            min(data.layer_panel_start[l + 1] - data.layer_panel_start[l],
+                data.ir_panel[i] + 1);
+        if (data.ir_gcell_begin_via_offset[i] > 0) {
+            for (auto p = p_low; select && p <= p_high; p++) {
+                auto g = data.ir_gcell_begin[i];
+                auto idx = data.layer_gcell_start[l] +
+                           data.layer_panel_length[l] * p + g;
+                for (auto cross_idx = data.gcell_cross_ir_start[idx];
+                     select && cross_idx < data.gcell_cross_ir_start[idx + 1];
+                     cross_idx++) {
+                    auto j = data.gcell_cross_ir_list[cross_idx];
+                    if (i == j)
+                        continue;
+                    if (tag[j] > 0)
+                        continue;
+                    if (data.ir_key_cost[j] == 0)
+                        continue;
+                    if (device::compare_refinement(data, i, j) == false)
+                        select = false;
+                }
+            }
+        }
+        if (data.ir_gcell_end_via_offset[i] > 0 &&
+            data.ir_gcell_begin[i] != data.ir_gcell_end[i]) {
+            for (auto p = p_low; select && p <= p_high; p++) {
+                auto g = data.ir_gcell_end[i];
+                auto idx = data.layer_gcell_start[l] +
+                           data.layer_panel_length[l] * p + g;
+                for (auto cross_idx = data.gcell_cross_ir_start[idx];
+                     select && cross_idx < data.gcell_cross_ir_start[idx + 1];
+                     cross_idx++) {
+                    auto j = data.gcell_cross_ir_list[cross_idx];
+                    if (i == j)
+                        continue;
+                    if (tag[j] > 0)
+                        continue;
+                    if (data.ir_key_cost[j] == 0)
+                        continue;
+                    if (device::compare_refinement(data, i, j) == false)
+                        select = false;
+                }
+            }
         }
     }
     if (select) {
@@ -118,6 +171,7 @@ namespace gta::ops::cuda {
 
 void assign_refinement(data::Data &data, int iter, int d) {
     assert(data.device == data::Device::CUDA);
+    auto tp_0 = std::chrono::high_resolution_clock::now();
     kernel::init_ir_key_cost<<<BLOCKS(data.num_guides, 256), 256>>>(data, iter,
                                                                     d);
     int *tag = nullptr;
@@ -163,13 +217,13 @@ void assign_refinement(data::Data &data, int iter, int d) {
         exit(0);
     }
     inc_exist_host[0] = 1;
-    std::cout << "data.num_guides : " << data.num_guides << std::endl;
+    // std::cout << "data.num_guides : " << data.num_guides << std::endl;
     while (inc_exist_host[0]) {
         inner_iter++;
         kernel::
             select_one_step_refinement<<<BLOCKS(data.num_guides, 256), 256>>>(
                 data, iter, d, tag, inc, inc_exist_device);
-        cudaDeviceSynchronize();
+        // cudaDeviceSynchronize();
         e = cudaGetLastError();
         if (e != cudaSuccess) {
             std::cout << "[CUDA ERROR] " << __FILE__ << ":" << __LINE__ << " "
@@ -179,24 +233,26 @@ void assign_refinement(data::Data &data, int iter, int d) {
         kernel::
             assign_one_step_refinement<<<BLOCKS(data.num_guides, 256), 256>>>(
                 data, iter, inc);
-        cudaDeviceSynchronize();
+        // cudaDeviceSynchronize();
         e = cudaGetLastError();
         if (e != cudaSuccess) {
             std::cout << "[CUDA ERROR] " << __FILE__ << ":" << __LINE__ << " "
                       << cudaGetErrorString(e) << std::endl;
             exit(0);
         }
-        e = cudaMemcpy(inc_exist_host, inc_exist_device, sizeof(int),
-                       cudaMemcpyDeviceToHost);
-        cudaDeviceSynchronize();
-        if (e != cudaSuccess) {
-            std::cout << "[CUDA ERROR] " << __FILE__ << ":" << __LINE__ << " "
-                      << cudaGetErrorString(e) << std::endl;
-            exit(0);
+        if (inner_iter % 3 == 0) {
+            e = cudaMemcpy(inc_exist_host, inc_exist_device, sizeof(int),
+                           cudaMemcpyDeviceToHost);
+            // cudaDeviceSynchronize();
+            if (e != cudaSuccess) {
+                std::cout << "[CUDA ERROR] " << __FILE__ << ":" << __LINE__
+                          << " " << cudaGetErrorString(e) << std::endl;
+                exit(0);
+            }
         }
         kernel::tag_inc_refinement<<<BLOCKS(data.num_guides, 256), 256>>>(
             data, tag, inc, inc_exist_device);
-        cudaDeviceSynchronize();
+        // cudaDeviceSynchronize();
         e = cudaGetLastError();
         if (e != cudaSuccess) {
             std::cout << "[CUDA ERROR] " << __FILE__ << ":" << __LINE__ << " "
@@ -231,7 +287,14 @@ void assign_refinement(data::Data &data, int iter, int d) {
     inc = nullptr;
     inc_exist_device = nullptr;
     inc_exist_host = nullptr;
+    auto tp_1 = std::chrono::high_resolution_clock::now();
     std::cout << "Inner Iteration : " << inner_iter << " (" << iter << ", " << d
               << ")" << std::endl;
+    std::cout << "ASSIGN REFINEMENT on device (" << iter << ", " << d << ") "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(tp_1 -
+                                                                       tp_0)
+                         .count() /
+                     1e3
+              << " s" << std::endl;
 }
 } // namespace gta::ops::cuda

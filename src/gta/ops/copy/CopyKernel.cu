@@ -43,7 +43,7 @@ template <class T> void d2h(T *ptr_h, T *ptr_d, size_t N) {
 
 namespace gta::ops::cpu {
 void malloc_data(data::Data &data_h, data::Data &data_d) {
-    std::cout << "begin malloc device" << std::endl;
+    // std::cout << "begin malloc device" << std::endl;
     data_d.device = data::Device::CUDA;
     data_d.num_layers = data_h.num_layers;
     data_d.num_gcells_x = data_h.num_gcells_x;
@@ -55,6 +55,7 @@ void malloc_data(data::Data &data_h, data::Data &data_d) {
     data_d.num_nets = data_h.num_nets;
     data_d.num_guides = data_h.num_guides;
     data_d.num_blks = data_h.num_blks;
+    data_d.num_gcells = data_h.num_gcells;
     helper::malloc(data_d.layer_type, data_h.num_layers);
 
     helper::malloc(data_d.layer_direction, data_h.num_layers);
@@ -158,12 +159,10 @@ void malloc_data(data::Data &data_h, data::Data &data_d) {
 
     helper::malloc(data_d.ir_reassign, data_h.num_guides);
 
-    // helper::malloc(data_d.ir_lower_via_start, data_h.num_guides + 1);
-    // helper::malloc(data_d.ir_lower_via_coor,
-    //                data_h.ir_lower_via_start[data_h.num_guides]);
-    // helper::malloc(data_d.ir_upper_via_start, data_h.num_guides + 1);
-    // helper::malloc(data_d.ir_upper_via_coor,
-    //                data_h.ir_upper_via_start[data_h.num_guides]);
+    helper::malloc(data_d.ir_lower_via_start, data_h.num_guides + 1);
+
+    helper::malloc(data_d.ir_upper_via_start, data_h.num_guides + 1);
+
     helper::malloc(data_d.b_left, data_h.num_blks);
 
     helper::malloc(data_d.b_bottom, data_h.num_blks);
@@ -208,6 +207,12 @@ void malloc_data(data::Data &data_h, data::Data &data_d) {
         data_h
             .gcell_cross_ir_start[data_h.layer_gcell_start[data_h.num_layers]]);
 
+    helper::malloc(data_d.gcell_lower_via_start,
+                   data_h.layer_gcell_start[data_h.num_layers] + 1);
+
+    helper::malloc(data_d.gcell_upper_via_start,
+                   data_h.layer_gcell_start[data_h.num_layers] + 1);
+
     helper::malloc(data_d.ir_super_set_start, data_h.num_guides + 1);
 
     helper::malloc(data_d.ir_super_set_list,
@@ -231,7 +236,7 @@ void malloc_data(data::Data &data_h, data::Data &data_d) {
 
     helper::malloc(data_d.ir_key_cost, data_h.num_guides);
 
-    std::cout << "finish malloc device" << std::endl;
+    // std::cout << "finish malloc device" << std::endl;
 }
 
 void h2d_data(data::Data &data_h, data::Data &data_d) {
@@ -248,6 +253,7 @@ void h2d_data(data::Data &data_h, data::Data &data_d) {
     data_d.num_nets = data_h.num_nets;
     data_d.num_guides = data_h.num_guides;
     data_d.num_blks = data_h.num_blks;
+    data_d.num_gcells = data_h.num_gcells;
     helper::h2d(data_h.layer_type, data_d.layer_type, data_h.num_layers);
 
     helper::h2d(data_h.layer_direction, data_d.layer_direction,
@@ -461,8 +467,7 @@ void h2d_data(data::Data &data_h, data::Data &data_d) {
                 data_h.ir_vio_cost_start[data_h.num_guides]);
     helper::h2d(data_h.ir_via_vio_list, data_d.ir_via_vio_list,
                 data_h.ir_vio_cost_start[data_h.num_guides]);
-    helper::h2d(data_h.ir_key_cost, data_d.ir_key_cost,
-                data_h.num_guides);
+    helper::h2d(data_h.ir_key_cost, data_d.ir_key_cost, data_h.num_guides);
 
     // std::cout << "finish h2d" << std::endl;
 }

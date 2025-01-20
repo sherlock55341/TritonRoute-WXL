@@ -81,8 +81,8 @@ __device__ void apply(data::Data &data, int iter, int i, int coef) {
             }
         }
     }
-    if(iter == 0)
-        return ;
+    if (iter == 0)
+        return;
     // via - wire violation
     if (data.layer_enable_via_wire_drc[l]) {
         auto pitch = data.layer_pitch[l];
@@ -179,6 +179,52 @@ __device__ void apply(data::Data &data, int iter, int i, int coef) {
                 }
             }
         }
+    }
+    // via - via violation
+    if (data.layer_enable_via_via_drc[l]) {
+        auto is_v = data.layer_direction[l];
+        int lower_width = -1;
+        int lower_length = -1;
+        int upper_width = -1;
+        int upper_length = -1;
+        int gcell_start = (is_v ? data.gcell_start_y : data.gcell_start_x);
+        int gcell_step = (is_v ? data.gcell_step_y : data.gcell_step_x);
+        int gcell_num = (is_v ? data.num_gcells_y : data.num_gcells_x);
+        if (l - 1 >= 0 && data.layer_type[l - 1] == 1) {
+            lower_width = (is_v ? data.layer_via_span_x[l - 1]
+                                : data.layer_via_span_y[l - 1]);
+            lower_length = (is_v ? data.layer_via_span_y[l - 1]
+                                 : data.layer_via_span_x[l - 1]);
+        }
+        if (l + 1 < data.num_layers && data.layer_type[l + 1] == 1) {
+            upper_width = (is_v ? data.layer_via_span_x[l + 1]
+                                : data.layer_via_span_y[l + 1]);
+            upper_length = (is_v ? data.layer_via_span_y[l + 1]
+                                 : data.layer_via_span_x[l + 1]);
+        }
+        int max_offset = 0;
+        if (l - 1 >= 0 && data.layer_type[l - 1] == 1)
+            max_offset =
+                max(max_offset,
+                    static_cast<int>(floor(
+                        1.0 * (lower_width + data.layer_cut_spacing[l - 1]) /
+                        data.layer_track_step[l])) -
+                        1);
+        if (l + 1 < data.num_layers && data.layer_type[l + 1] == 1)
+            max_offset =
+                max(max_offset,
+                    static_cast<int>(floor(
+                        1.0 * (upper_width + data.layer_cut_spacing[l + 1]) /
+                        data.layer_track_step[l])) -
+                        1);
+        int p_low = data.ir_panel[i];
+        int p_high = data.ir_panel[i];
+        if (data.ir_track[i] + max_offset > data.ir_track_high[i])
+            p_high = min(data.layer_panel_start[l + 1] -
+                             data.layer_panel_start[l] - 1,
+                         p_high + 1);
+        if (data.ir_track[i] - max_offset < data.ir_track_low[i])
+            p_low = max(0, p_low - 1);
     }
 }
 } // namespace gta::data::cuda::device

@@ -38,6 +38,7 @@
 #include "gr/FlexGR.h"
 #include "gta/GTA.hpp"
 #include "rp/FlexRP.h"
+#include <chrono>
 
 using namespace std;
 using namespace fr;
@@ -71,6 +72,7 @@ void FlexRoute::gr() {
 }
 
 void FlexRoute::ta() {
+    auto tp_0 = std::chrono::high_resolution_clock::now();
     if (ENABLE_GTA) {
         gta::GTA gtaWorker(getDesign());
         gtaWorker.run(2);
@@ -78,6 +80,13 @@ void FlexRoute::ta() {
         FlexTA ta(getDesign());
         ta.main();
     }
+    auto tp_1 = std::chrono::high_resolution_clock::now();
+    std::cout << "Track Assignment Runtime : "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(tp_1 -
+                                                                       tp_0)
+                         .count() /
+                     1e3
+              << " s" << std::endl;
     io::Writer writer(getDesign());
     writer.writeFromTA();
     // exit(0);
@@ -110,6 +119,7 @@ int FlexRoute::main() {
     }
     prep();
     ta();
+    // return 0;
     dr();
     endFR();
 
