@@ -413,22 +413,24 @@ void init(data::Data &data, int iter, int d) {
                cudaMemcpyDeviceToHost);
     for (int i = 0; i < data.num_guides; i++)
         offset_h[i + 1] += offset_h[i];
-    int *work_i_d = nullptr, *work_j_d = nullptr;
-    cudaMemcpy(offset_d, offset_h, sizeof(int) * (data.num_guides + 1),
-               cudaMemcpyHostToDevice);
-    cudaMalloc(&work_i_d, sizeof(int) * offset_h[data.num_guides]);
-    cudaMalloc(&work_j_d, sizeof(int) * offset_h[data.num_guides]);
-    kernel::init_blk_vio_work<<<BLOCKS(data.num_guides, 256), 256>>>(
-        data, d, offset_d, work_i_d, work_j_d);
-    kernel::init_blk_vio<<<BLOCKS(offset_h[data.num_guides], 256), 256>>>(
-        data, offset_h[data.num_guides], work_i_d, work_j_d);
-    cudaDeviceSynchronize();
-    std::cout << "old : " << counter << std::endl;
-    std::cout << "new : " << offset_h[data.num_guides] << std::endl;
+    if (offset_h[data.num_guides] > 0) {
+        int *work_i_d = nullptr, *work_j_d = nullptr;
+        cudaMemcpy(offset_d, offset_h, sizeof(int) * (data.num_guides + 1),
+                   cudaMemcpyHostToDevice);
+        cudaMalloc(&work_i_d, sizeof(int) * offset_h[data.num_guides]);
+        cudaMalloc(&work_j_d, sizeof(int) * offset_h[data.num_guides]);
+        kernel::init_blk_vio_work<<<BLOCKS(data.num_guides, 256), 256>>>(
+            data, d, offset_d, work_i_d, work_j_d);
+        kernel::init_blk_vio<<<BLOCKS(offset_h[data.num_guides], 256), 256>>>(
+            data, offset_h[data.num_guides], work_i_d, work_j_d);
+        cudaDeviceSynchronize();
+        std::cout << "old : " << counter << std::endl;
+        std::cout << "new : " << offset_h[data.num_guides] << std::endl;
+        cudaFree(work_i_d);
+        cudaFree(work_j_d);
+    }
     free(offset_h);
     cudaFree(offset_d);
-    cudaFree(work_i_d);
-    cudaFree(work_j_d);
     e = cudaGetLastError();
     if (e != cudaSuccess) {
         std::cout << __FILE__ << ":" << __LINE__ << " " << cudaGetErrorString(e)

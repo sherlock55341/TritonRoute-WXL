@@ -6,6 +6,29 @@
 #include <iostream>
 #include <vector>
 
+namespace gta::ops::cuda::device {
+__forceinline__ __device__ bool compare_initial(const data::Data &data, int lhs,
+                                                int rhs) {
+    assert(lhs != rhs);
+    assert(lhs >= 0 && lhs < data.num_guides);
+    assert(rhs >= 0 && rhs < data.num_guides);
+    // if (data.ir_key_cost[lhs] != data.ir_key_cost[rhs])
+    //     return data.ir_key_cost[lhs] > data.ir_key_cost[rhs];
+    // int l_lhs = data.ir_end[lhs] - data.ir_begin[lhs];
+    // int l_rhs = data.ir_end[rhs] - data.ir_begin[rhs];
+    // return l_lhs != l_rhs ? l_lhs > l_rhs : lhs < rhs;
+    if (data.ir_has_proj_ap[lhs] != data.ir_has_proj_ap[rhs])
+        return data.ir_has_proj_ap[lhs] > data.ir_has_proj_ap[rhs];
+    auto coef_lhs =
+        1.0 * abs(data.ir_wl_weight[lhs] / (data.ir_end[lhs] - data.ir_begin[lhs] + 1));
+    auto coef_rhs =
+        1.0 * abs(data.ir_wl_weight[rhs] / (data.ir_end[rhs] - data.ir_begin[rhs] + 1));
+    if(coef_lhs != coef_rhs)
+        return coef_lhs > coef_rhs;
+    return lhs < rhs;
+}
+} // namespace gta::ops::cuda::device
+
 namespace gta::ops::cuda::kernel {
 __global__ void select_one_step_initial(data::Data data, int iter, int d,
                                         int *rank, int *tag, bool *inc,
@@ -38,7 +61,8 @@ __global__ void select_one_step_initial(data::Data data, int iter, int d,
                 assert(j >= 0 && j < data.num_guides);
                 if (tag[j] > 0)
                     continue;
-                if (rank[j] < rank[i])
+                // if (rank[j] < rank[i])
+                if (device::compare_initial(data, i, j) == false)
                     select = false;
                 // return ;
             }
@@ -50,7 +74,8 @@ __global__ void select_one_step_initial(data::Data data, int iter, int d,
                 continue;
             if (tag[j] > 0)
                 continue;
-            if (rank[j] < rank[i])
+            // if (rank[j] < rank[i])
+            if (device::compare_initial(data, i, j) == false)
                 select = false;
         }
     }
