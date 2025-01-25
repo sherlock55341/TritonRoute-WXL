@@ -93,6 +93,8 @@ __global__ void select_one_step_refinement(data::Data data, int iter, int d,
                 data.ir_panel[i] + 1);
         if (data.ir_gcell_begin_via_offset[i] > 0) {
             for (auto p = p_low; select && p <= p_high; p++) {
+                if (p == data.ir_panel[i])
+                    continue;
                 auto g = data.ir_gcell_begin[i];
                 auto idx = data.layer_gcell_start[l] +
                            data.layer_panel_length[l] * p + g;
@@ -114,6 +116,8 @@ __global__ void select_one_step_refinement(data::Data data, int iter, int d,
         if (data.ir_gcell_end_via_offset[i] > 0 &&
             data.ir_gcell_begin[i] != data.ir_gcell_end[i]) {
             for (auto p = p_low; select && p <= p_high; p++) {
+                if (p == data.ir_panel[i])
+                    continue;
                 auto g = data.ir_gcell_end[i];
                 auto idx = data.layer_gcell_start[l] +
                            data.layer_panel_length[l] * p + g;
@@ -126,6 +130,27 @@ __global__ void select_one_step_refinement(data::Data data, int iter, int d,
                     if (tag[j] > 0)
                         continue;
                     if (data.ir_key_cost[j] == 0)
+                        continue;
+                    if (device::compare_refinement(data, i, j) == false)
+                        select = false;
+                }
+            }
+        }
+        for (auto p = p_low; select && p < p_high; p++) {
+            if (p == data.ir_panel[i])
+                continue;
+            for (auto g = data.ir_gcell_begin[i] + 1; g < data.ir_gcell_end[i];
+                 g++) {
+                auto idx = data.layer_gcell_start[l] +
+                           p * data.layer_panel_length[l] + g;
+                for (auto list_idx = data.gcell_end_point_ir_start[idx];
+                     list_idx < data.gcell_end_point_ir_start[idx + 1];
+                     list_idx++) {
+                    auto j = data.gcell_end_point_ir_list[list_idx];
+                    if (i == j)
+                        continue;
+                    assert(j >= 0 && j < data.num_guides);
+                    if (tag[j] > 0)
                         continue;
                     if (device::compare_refinement(data, i, j) == false)
                         select = false;
