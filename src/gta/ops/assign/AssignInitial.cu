@@ -61,8 +61,8 @@ __global__ void select_one_step_initial(data::Data data, int iter, int d,
                 assert(j >= 0 && j < data.num_guides);
                 if (tag[j] > 0)
                     continue;
-                // if (rank[j] < rank[i])
-                if (device::compare_initial(data, i, j) == false)
+                if (rank[j] < rank[i])
+                // if (device::compare_initial(data, i, j) == false)
                     select = false;
                 // return ;
             }
@@ -74,8 +74,8 @@ __global__ void select_one_step_initial(data::Data data, int iter, int d,
                 continue;
             if (tag[j] > 0)
                 continue;
-            // if (rank[j] < rank[i])
-            if (device::compare_initial(data, i, j) == false)
+            if (rank[j] < rank[i])
+            // if (device::compare_initial(data, i, j) == false)
                 select = false;
         }
     }

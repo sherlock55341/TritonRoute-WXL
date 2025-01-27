@@ -48,8 +48,8 @@ __global__ void select_one_step_refinement(data::Data data, int iter, int d,
     assert(i >= 0 && i < data.num_guides);
     if (tag[i] > 0)
         return;
-    if (data.ir_key_cost[i] == 0)
-        return;
+    // if (data.ir_key_cost[i] == 0)
+    //     return;
     bool select = true;
     int gb = max(0, data.ir_gcell_begin[i] - 1);
     int ge = min(data.layer_panel_length[l] - 1, data.ir_gcell_end[i] + 1);
@@ -79,8 +79,8 @@ __global__ void select_one_step_refinement(data::Data data, int iter, int d,
                 continue;
             if (tag[j] > 0)
                 continue;
-            if (data.ir_key_cost[j] == 0)
-                continue;
+            // if (data.ir_key_cost[j] == 0)
+            //     continue;
             if (device::compare_refinement(data, i, j) == false)
                 select = false;
         }
@@ -106,8 +106,8 @@ __global__ void select_one_step_refinement(data::Data data, int iter, int d,
                         continue;
                     if (tag[j] > 0)
                         continue;
-                    if (data.ir_key_cost[j] == 0)
-                        continue;
+                    // if (data.ir_key_cost[j] == 0)
+                    //     continue;
                     if (device::compare_refinement(data, i, j) == false)
                         select = false;
                 }
@@ -129,8 +129,8 @@ __global__ void select_one_step_refinement(data::Data data, int iter, int d,
                         continue;
                     if (tag[j] > 0)
                         continue;
-                    if (data.ir_key_cost[j] == 0)
-                        continue;
+                    // if (data.ir_key_cost[j] == 0)
+                    //     continue;
                     if (device::compare_refinement(data, i, j) == false)
                         select = false;
                 }
