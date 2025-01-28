@@ -1,4 +1,5 @@
 #include "ExtractKernel.hpp"
+#include <chrono>
 
 namespace gta::ops::cpu::helper {
 bool findAp(fr::frGuide *g, fr::frDesign *design, int g_idx, data::Data &data) {
@@ -129,6 +130,7 @@ void findProjAp(fr::frGuide *g, fr::frDesign *design, int g_idx,
 
 void techDesignInfo(fr::frTechObject *tech, fr::frDesign *design,
                     data::Data &data) {
+    auto tp_0 = std::chrono::high_resolution_clock::now();
     data.num_layers = tech->getLayers().size() - 2;
     for (auto &g : design->getTopBlock()->getGCellPatterns()) {
         if (g.isHorizontal() == 0) {
@@ -386,6 +388,13 @@ void techDesignInfo(fr::frTechObject *tech, fr::frDesign *design,
                          j * col.size() + k] = vals[j][k];
         }
     }
+    auto tp_1 = std::chrono::high_resolution_clock::now();
+    std::cout << "tech design info time : "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(tp_1 -
+                                                                       tp_0)
+                         .count() /
+                     1e3
+              << " s" << std::endl;
 
     std::cout << "via - wire violation : ";
     for (auto i = 0; i < data.num_layers; i++)
@@ -406,6 +415,7 @@ void techDesignInfo(fr::frTechObject *tech, fr::frDesign *design,
 
 void irouteInfo(fr::frTechObject *tech, fr::frDesign *design,
                 data::Data &data) {
+    auto tp_0 = std::chrono::high_resolution_clock::now();
     auto &nets = design->getTopBlock()->getNets();
     int *net_guide_offset = (int *)calloc(sizeof(int), nets.size() + 1);
     for (auto i = 0; i < nets.size(); i++) {
@@ -617,10 +627,18 @@ void irouteInfo(fr::frTechObject *tech, fr::frDesign *design,
         }
     }
 #pragma omp barrier
+    auto tp_1 = std::chrono::high_resolution_clock::now();
+    std::cout << "iroute time : "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(tp_1 -
+                                                                       tp_0)
+                         .count() /
+                     1e3
+              << " s" << std::endl;
 }
 
 void blockageInfo(fr::frTechObject *tech, fr::frDesign *design,
                   data::Data &data) {
+    auto tp_0 = std::chrono::high_resolution_clock::now();
     std::vector<std::vector<fr::rq_rptr_value_t<fr::frBlockObject>>> results(
         data.num_layers);
     for (auto i = 0; i < data.num_layers; i++) {
@@ -680,9 +698,17 @@ void blockageInfo(fr::frTechObject *tech, fr::frDesign *design,
         }
     }
     free(offset);
+    auto tp_1 = std::chrono::high_resolution_clock::now();
+    std::cout << "blockage time : "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(tp_1 -
+                                                                       tp_0)
+                         .count() /
+                     1e3
+              << " s" << std::endl;
 }
 
 void GCellInfo(fr::frTechObject *tech, fr::frDesign *design, data::Data &data) {
+    auto tp_0 = std::chrono::high_resolution_clock::now();
     data.gcell_end_point_ir_start =
         (int *)calloc(sizeof(int), data.layer_gcell_start[data.num_layers] + 1);
     for (auto i = 0; i < data.num_guides; i++) {
@@ -911,6 +937,13 @@ void GCellInfo(fr::frTechObject *tech, fr::frDesign *design, data::Data &data) {
         }
     }
     free(offset);
+    auto tp_1 = std::chrono::high_resolution_clock::now();
+    std::cout << "gcell time : "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(tp_1 -
+                                                                       tp_0)
+                         .count() /
+                     1e3
+              << " s" << std::endl;
 }
 
 void costInfo(fr::frTechObject *tech, fr::frDesign *design, data::Data &data) {
@@ -922,8 +955,8 @@ void costInfo(fr::frTechObject *tech, fr::frDesign *design, data::Data &data) {
         data.ir_vio_cost_start[i + 1] += data.ir_vio_cost_start[i];
     data.ir_vio_cost_list =
         (int *)calloc(sizeof(int), data.ir_vio_cost_start[data.num_guides]);
-    data.ir_align_list = (int *)calloc(
-        sizeof(int), data.ir_vio_cost_start[data.num_guides]);
+    data.ir_align_list =
+        (int *)calloc(sizeof(int), data.ir_vio_cost_start[data.num_guides]);
     data.ir_via_vio_list =
         (int *)calloc(sizeof(int), data.ir_vio_cost_start[data.num_guides]);
     data.ir_key_cost = (int *)calloc(sizeof(int), data.num_guides);

@@ -30,6 +30,9 @@ set(DEFLIB_HOME
 set(LEFLIB_HOME
   ${PROJECT_SOURCE_DIR}/module/lef/5.8-p029
 )
+set(CUB_DIR
+  ${PROJECT_SOURCE_DIR}/module/cub
+)
 
 ## include subdirectories
 add_subdirectory(${DEFLIB_HOME})

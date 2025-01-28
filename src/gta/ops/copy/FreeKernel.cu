@@ -6,9 +6,9 @@ template <class T> void free(T &ptr) {
         cudaFree(ptr);
         ptr = nullptr;
     } else {
-#ifdef DEBUG_MODE
-        std::cout << "[WARNING] NULLPTR" << std::endl;
-#endif
+// #ifdef DEBUG_MODE
+//         std::cout << "[WARNING] NULLPTR" << std::endl;
+// #endif
     }
 }
 } // namespace gta::ops::kernel::helper

@@ -10,7 +10,15 @@ namespace gta {
 GTA::GTA(fr::frDesign *in) : tech(in->getTech()), design(in) {
     fr::frTime t;
     // extractGTADataFromDatabase();
+    auto tp_0 = std::chrono::high_resolution_clock::now();
     ops::extract(tech, design, data);
+    auto tp_1 = std::chrono::high_resolution_clock::now();
+    std::cout << "extract time : "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(tp_1 -
+                                                                       tp_0)
+                         .count() /
+                     1e3
+              << " s" << std::endl;
     t.print();
     std::cout << std::endl;
     // std::cout << "# layer " << data.num_layers << std::endl;
