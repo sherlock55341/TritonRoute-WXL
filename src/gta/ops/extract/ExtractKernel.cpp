@@ -641,6 +641,7 @@ void blockageInfo(fr::frTechObject *tech, fr::frDesign *design,
     auto tp_0 = std::chrono::high_resolution_clock::now();
     std::vector<std::vector<fr::rq_rptr_value_t<fr::frBlockObject>>> results(
         data.num_layers);
+    auto tp_1 = std::chrono::high_resolution_clock::now();
     for (auto i = 0; i < data.num_layers; i++) {
         if (data.layer_type[i] != 0)
             continue;
@@ -654,6 +655,13 @@ void blockageInfo(fr::frTechObject *tech, fr::frDesign *design,
         fr::frBox box(lx, ly, hx, hy);
         design->getRegionQuery()->query(box, i + 2, results[i]);
     }
+    auto tp_2 = std::chrono::high_resolution_clock::now();
+    std::cout << "blockage phase 1 : "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(tp_2 -
+                                                                       tp_1)
+                         .count() /
+                     1e3
+              << " s" << std::endl;
     data.num_blks = 0;
     for (auto i = 0; i < data.num_layers; i++)
         data.num_blks += results[i].size();
@@ -698,9 +706,9 @@ void blockageInfo(fr::frTechObject *tech, fr::frDesign *design,
         }
     }
     free(offset);
-    auto tp_1 = std::chrono::high_resolution_clock::now();
+    auto tp_3 = std::chrono::high_resolution_clock::now();
     std::cout << "blockage time : "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(tp_1 -
+              << std::chrono::duration_cast<std::chrono::milliseconds>(tp_3 -
                                                                        tp_0)
                          .count() /
                      1e3
@@ -758,21 +766,23 @@ void GCellInfo(fr::frTechObject *tech, fr::frDesign *design, data::Data &data) {
                                data.b_top[b] - data.b_bottom[b]);
         auto width = std::min(data.b_right[b] - data.b_left[b],
                               data.b_top[b] - data.b_bottom[b]);
+        if (data.b_use_min_width[b])
+            width = data.layer_width[l];
         auto maxWidth = std::max(width, data.layer_width[l]);
         auto maxPRL = length;
         auto s = data::helper::findPRLSpacing(data, l, maxWidth, maxPRL);
-        if (l - 1 >= 0 && data.layer_type[l - 1] == 1) {
-            maxWidth = std::max(width, data.layer_via_upper_width[l - 1]);
-            maxPRL = std::min(length, data.layer_via_upper_length[l - 1]);
-            s = std::max(
-                s, data::helper::findPRLSpacing(data, l, maxWidth, maxPRL));
-        }
-        if (l + 1 < data.num_layers && data.layer_type[l + 1] == 1) {
-            maxWidth = std::max(width, data.layer_via_lower_width[l - 1]);
-            maxPRL = std::min(length, data.layer_via_lower_length[l - 1]);
-            s = std::max(
-                s, data::helper::findPRLSpacing(data, l, maxWidth, maxPRL));
-        }
+        // if (l - 1 >= 0 && data.layer_type[l - 1] == 1) {
+        //     maxWidth = std::max(width, data.layer_via_upper_width[l - 1]);
+        //     maxPRL = std::min(length, data.layer_via_upper_length[l - 1]);
+        //     s = std::max(
+        //         s, data::helper::findPRLSpacing(data, l, maxWidth, maxPRL));
+        // }
+        // if (l + 1 < data.num_layers && data.layer_type[l + 1] == 1) {
+        //     maxWidth = std::max(width, data.layer_via_lower_width[l - 1]);
+        //     maxPRL = std::min(length, data.layer_via_lower_length[l - 1]);
+        //     s = std::max(
+        //         s, data::helper::findPRLSpacing(data, l, maxWidth, maxPRL));
+        // }
         auto e_left = data.b_left[b] - s - data.layer_width[l] / 2 + 1;
         auto e_bottom = data.b_bottom[b] - s - data.layer_width[l] / 2 + 1;
         auto e_right = data.b_right[b] + s + data.layer_width[l] / 2 - 1;
@@ -969,7 +979,7 @@ void extract(fr::frTechObject *tech, fr::frDesign *design, data::Data &data) {
     helper::techDesignInfo(tech, design, data);
     helper::irouteInfo(tech, design, data);
     helper::blockageInfo(tech, design, data);
-    helper::GCellInfo(tech, design, data);
+    // helper::GCellInfo(tech, design, data);
     helper::costInfo(tech, design, data);
 }
 } // namespace gta::ops::cpu

@@ -185,43 +185,43 @@ void malloc_data(data::Data &data_h, data::Data &data_d) {
 
     helper::malloc(data_d.b_gcell_end, data_h.num_blks);
 
-    helper::malloc(data_d.gcell_end_point_ir_start,
-                   data_h.layer_gcell_start[data_h.num_layers] + 1);
+    // helper::malloc(data_d.gcell_end_point_ir_start,
+    //                data_h.layer_gcell_start[data_h.num_layers] + 1);
 
-    helper::malloc(data_d.gcell_end_point_ir_list,
-                   data_h.gcell_end_point_ir_start
-                       [data_h.layer_gcell_start[data_h.num_layers]]);
+    // helper::malloc(data_d.gcell_end_point_ir_list,
+    //                data_h.gcell_end_point_ir_start
+    //                    [data_h.layer_gcell_start[data_h.num_layers]]);
 
-    helper::malloc(data_d.gcell_end_point_blk_start,
-                   data_h.layer_gcell_start[data_h.num_layers] + 1);
+    // helper::malloc(data_d.gcell_end_point_blk_start,
+    //                data_h.layer_gcell_start[data_h.num_layers] + 1);
 
-    helper::malloc(data_d.gcell_end_point_blk_list,
-                   data_h.gcell_end_point_blk_start
-                       [data_h.layer_gcell_start[data_h.num_layers]]);
+    // helper::malloc(data_d.gcell_end_point_blk_list,
+    //                data_h.gcell_end_point_blk_start
+    //                    [data_h.layer_gcell_start[data_h.num_layers]]);
 
-    helper::malloc(data_d.gcell_cross_ir_start,
-                   data_h.layer_gcell_start[data_h.num_layers] + 1);
+    // helper::malloc(data_d.gcell_cross_ir_start,
+    //                data_h.layer_gcell_start[data_h.num_layers] + 1);
 
-    helper::malloc(
-        data_d.gcell_cross_ir_list,
-        data_h
-            .gcell_cross_ir_start[data_h.layer_gcell_start[data_h.num_layers]]);
+    // helper::malloc(
+    //     data_d.gcell_cross_ir_list,
+    //     data_h
+    //         .gcell_cross_ir_start[data_h.layer_gcell_start[data_h.num_layers]]);
 
-    helper::malloc(data_d.gcell_lower_via_start,
-                   data_h.layer_gcell_start[data_h.num_layers] + 1);
+    // helper::malloc(data_d.gcell_lower_via_start,
+    //                data_h.layer_gcell_start[data_h.num_layers] + 1);
 
-    helper::malloc(data_d.gcell_upper_via_start,
-                   data_h.layer_gcell_start[data_h.num_layers] + 1);
+    // helper::malloc(data_d.gcell_upper_via_start,
+    //                data_h.layer_gcell_start[data_h.num_layers] + 1);
 
-    helper::malloc(data_d.ir_super_set_start, data_h.num_guides + 1);
+    // helper::malloc(data_d.ir_super_set_start, data_h.num_guides + 1);
 
-    helper::malloc(data_d.ir_super_set_list,
-                   data_h.ir_super_set_start[data_h.num_guides]);
+    // helper::malloc(data_d.ir_super_set_list,
+    //                data_h.ir_super_set_start[data_h.num_guides]);
 
-    helper::malloc(data_d.blk_super_set_start, data_h.num_guides + 1);
+    // helper::malloc(data_d.blk_super_set_start, data_h.num_guides + 1);
 
-    helper::malloc(data_d.blk_super_set_list,
-                   data_h.blk_super_set_start[data_h.num_guides]);
+    // helper::malloc(data_d.blk_super_set_list,
+    //                data_h.blk_super_set_start[data_h.num_guides]);
 
     helper::malloc(data_d.ir_vio_cost_start, data_h.num_guides + 1);
 
@@ -422,42 +422,42 @@ void h2d_data(data::Data &data_h, data::Data &data_d) {
 
     helper::h2d(data_h.b_gcell_end, data_d.b_gcell_end, data_h.num_blks);
 
-    helper::h2d(data_h.gcell_end_point_ir_start,
-                data_d.gcell_end_point_ir_start,
-                data_h.layer_gcell_start[data_h.num_layers] + 1);
+    // helper::h2d(data_h.gcell_end_point_ir_start,
+    //             data_d.gcell_end_point_ir_start,
+    //             data_h.layer_gcell_start[data_h.num_layers] + 1);
 
-    helper::h2d(data_h.gcell_end_point_ir_list, data_d.gcell_end_point_ir_list,
-                data_h.gcell_end_point_ir_start
-                    [data_h.layer_gcell_start[data_h.num_layers]]);
+    // helper::h2d(data_h.gcell_end_point_ir_list, data_d.gcell_end_point_ir_list,
+    //             data_h.gcell_end_point_ir_start
+    //                 [data_h.layer_gcell_start[data_h.num_layers]]);
 
-    helper::h2d(data_h.gcell_end_point_blk_start,
-                data_d.gcell_end_point_blk_start,
-                data_h.layer_gcell_start[data_h.num_layers] + 1);
+    // helper::h2d(data_h.gcell_end_point_blk_start,
+    //             data_d.gcell_end_point_blk_start,
+    //             data_h.layer_gcell_start[data_h.num_layers] + 1);
 
-    helper::h2d(data_h.gcell_end_point_blk_list,
-                data_d.gcell_end_point_blk_list,
-                data_h.gcell_end_point_blk_start
-                    [data_h.layer_gcell_start[data_h.num_layers]]);
+    // helper::h2d(data_h.gcell_end_point_blk_list,
+    //             data_d.gcell_end_point_blk_list,
+    //             data_h.gcell_end_point_blk_start
+    //                 [data_h.layer_gcell_start[data_h.num_layers]]);
 
-    helper::h2d(data_h.gcell_cross_ir_start, data_d.gcell_cross_ir_start,
-                data_h.layer_gcell_start[data_h.num_layers] + 1);
+    // helper::h2d(data_h.gcell_cross_ir_start, data_d.gcell_cross_ir_start,
+    //             data_h.layer_gcell_start[data_h.num_layers] + 1);
 
-    helper::h2d(
-        data_h.gcell_cross_ir_list, data_d.gcell_cross_ir_list,
-        data_h
-            .gcell_cross_ir_start[data_h.layer_gcell_start[data_h.num_layers]]);
+    // helper::h2d(
+    //     data_h.gcell_cross_ir_list, data_d.gcell_cross_ir_list,
+    //     data_h
+    //         .gcell_cross_ir_start[data_h.layer_gcell_start[data_h.num_layers]]);
 
-    helper::h2d(data_h.ir_super_set_start, data_d.ir_super_set_start,
-                data_h.num_guides + 1);
+    // helper::h2d(data_h.ir_super_set_start, data_d.ir_super_set_start,
+    //             data_h.num_guides + 1);
 
-    helper::h2d(data_h.ir_super_set_list, data_d.ir_super_set_list,
-                data_h.ir_super_set_start[data_h.num_guides]);
+    // helper::h2d(data_h.ir_super_set_list, data_d.ir_super_set_list,
+    //             data_h.ir_super_set_start[data_h.num_guides]);
 
-    helper::h2d(data_h.blk_super_set_start, data_d.blk_super_set_start,
-                data_h.num_guides + 1);
+    // helper::h2d(data_h.blk_super_set_start, data_d.blk_super_set_start,
+    //             data_h.num_guides + 1);
 
-    helper::h2d(data_h.blk_super_set_list, data_d.blk_super_set_list,
-                data_h.blk_super_set_start[data_h.num_guides]);
+    // helper::h2d(data_h.blk_super_set_list, data_d.blk_super_set_list,
+    //             data_h.blk_super_set_start[data_h.num_guides]);
 
     helper::h2d(data_h.ir_vio_cost_start, data_d.ir_vio_cost_start,
                 data_h.num_guides + 1);

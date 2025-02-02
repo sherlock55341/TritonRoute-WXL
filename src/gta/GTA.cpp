@@ -3,6 +3,7 @@
 #include "ops/assign/Assign.hpp"
 #include "ops/copy/Copy.hpp"
 #include "ops/extract/Extract.hpp"
+#include "ops/extract/ExtractDevice.hpp"
 #include "ops/init/Init.hpp"
 #include <chrono>
 
@@ -138,6 +139,7 @@ void GTA::run(int maxIter, bool cuda) {
     fr::frTime t;
     ops::malloc_device_data(data, data_device);
     ops::h2d_data(data, data_device);
+    ops::extract_gcell_device(data, data_device);
     for (iter = 0; iter < maxIter; iter++) {
         ops::init(data_device, iter, data.layer_direction[0]);
         ops::assign(data_device, iter, data.layer_direction[0]);
