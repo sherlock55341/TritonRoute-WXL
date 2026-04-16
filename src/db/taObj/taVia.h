@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2019, The Regents of the University of California
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -13,12 +13,12 @@
  *     * Neither the name of the University nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
  * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
  * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
@@ -36,11 +36,11 @@
 #include "db/infra/frOrient.h"
 
 namespace fr {
-  class frNet;
-  class taRef: public taPinFig {
-  public:
+class frNet;
+class taRef : public taPinFig {
+   public:
     // constructors
-    taRef(): taPinFig() {}
+    taRef() : taPinFig() {}
     // getters
     virtual frOrient getOrient() const = 0;
     virtual void getOrigin(frPoint &tmpOrigin) const = 0;
@@ -49,109 +49,104 @@ namespace fr {
     virtual void setOrient(const frOrient &tmpOrient) = 0;
     virtual void setOrigin(const frPoint &tmpPoint) = 0;
     virtual void setTransform(const frTransform &xform) = 0;
-  protected:
-  };
-  class taVia: public taRef {
-  public:
+
+   protected:
+};
+class taVia : public taRef {
+   public:
     // constructors
-    taVia(): taRef() {}
-    taVia(frViaDef* in): taRef(), origin(), viaDef(in), owner(nullptr) {}
+    taVia() : taRef() {}
+    taVia(frViaDef *in) : taRef(), origin(), viaDef(in), owner(nullptr) {}
     // getters
-    frViaDef* getViaDef() const {
-      return viaDef;
-    }
+    frViaDef *getViaDef() const { return viaDef; }
     void getLayer1BBox(frBox &boxIn) const {
-      auto &figs = viaDef->getLayer1Figs();
-      bool isFirst = true;
-      frBox box;
-      frCoord xl = 0;
-      frCoord yl = 0;
-      frCoord xh = 0;
-      frCoord yh = 0;
-      for (auto &fig: figs) {
-        fig->getBBox(box);
-        if (isFirst) {
-          xl = box.left();
-          yl = box.bottom();
-          xh = box.right();
-          yh = box.top();
-          isFirst = false;
-        } else {
-          xl = std::min(xl, box.left());
-          yl = std::min(yl, box.bottom());
-          xh = std::max(xh, box.right());
-          yh = std::max(yh, box.top());
+        auto &figs = viaDef->getLayer1Figs();
+        bool isFirst = true;
+        frBox box;
+        frCoord xl = 0;
+        frCoord yl = 0;
+        frCoord xh = 0;
+        frCoord yh = 0;
+        for (auto &fig : figs) {
+            fig->getBBox(box);
+            if (isFirst) {
+                xl = box.left();
+                yl = box.bottom();
+                xh = box.right();
+                yh = box.top();
+                isFirst = false;
+            } else {
+                xl = std::min(xl, box.left());
+                yl = std::min(yl, box.bottom());
+                xh = std::max(xh, box.right());
+                yh = std::max(yh, box.top());
+            }
         }
-      }
-      boxIn.set(xl,yl,xh,yh);
-      frTransform xform;
-      xform.set(origin);
-      boxIn.transform(xform);
+        boxIn.set(xl, yl, xh, yh);
+        frTransform xform;
+        xform.set(origin);
+        boxIn.transform(xform);
     }
     void getCutBBox(frBox &boxIn) const {
-      auto &figs = viaDef->getCutFigs();
-      bool isFirst = true;
-      frBox box;
-      frCoord xl = 0;
-      frCoord yl = 0;
-      frCoord xh = 0;
-      frCoord yh = 0;
-      for (auto &fig: figs) {
-        fig->getBBox(box);
-        if (isFirst) {
-          xl = box.left();
-          yl = box.bottom();
-          xh = box.right();
-          yh = box.top();
-          isFirst = false;
-        } else {
-          xl = std::min(xl, box.left());
-          yl = std::min(yl, box.bottom());
-          xh = std::max(xh, box.right());
-          yh = std::max(yh, box.top());
+        auto &figs = viaDef->getCutFigs();
+        bool isFirst = true;
+        frBox box;
+        frCoord xl = 0;
+        frCoord yl = 0;
+        frCoord xh = 0;
+        frCoord yh = 0;
+        for (auto &fig : figs) {
+            fig->getBBox(box);
+            if (isFirst) {
+                xl = box.left();
+                yl = box.bottom();
+                xh = box.right();
+                yh = box.top();
+                isFirst = false;
+            } else {
+                xl = std::min(xl, box.left());
+                yl = std::min(yl, box.bottom());
+                xh = std::max(xh, box.right());
+                yh = std::max(yh, box.top());
+            }
         }
-      }
-      boxIn.set(xl,yl,xh,yh);
-      frTransform xform;
-      xform.set(origin);
-      boxIn.transform(xform);
+        boxIn.set(xl, yl, xh, yh);
+        frTransform xform;
+        xform.set(origin);
+        boxIn.transform(xform);
     }
     void getLayer2BBox(frBox &boxIn) const {
-      auto &figs = viaDef->getLayer2Figs();
-      bool isFirst = true;
-      frBox box;
-      frCoord xl = 0;
-      frCoord yl = 0;
-      frCoord xh = 0;
-      frCoord yh = 0;
-      for (auto &fig: figs) {
-        fig->getBBox(box);
-        if (isFirst) {
-          xl = box.left();
-          yl = box.bottom();
-          xh = box.right();
-          yh = box.top();
-          isFirst = false;
-        } else {
-          xl = std::min(xl, box.left());
-          yl = std::min(yl, box.bottom());
-          xh = std::max(xh, box.right());
-          yh = std::max(yh, box.top());
+        auto &figs = viaDef->getLayer2Figs();
+        bool isFirst = true;
+        frBox box;
+        frCoord xl = 0;
+        frCoord yl = 0;
+        frCoord xh = 0;
+        frCoord yh = 0;
+        for (auto &fig : figs) {
+            fig->getBBox(box);
+            if (isFirst) {
+                xl = box.left();
+                yl = box.bottom();
+                xh = box.right();
+                yh = box.top();
+                isFirst = false;
+            } else {
+                xl = std::min(xl, box.left());
+                yl = std::min(yl, box.bottom());
+                xh = std::max(xh, box.right());
+                yh = std::max(yh, box.top());
+            }
         }
-      }
-      boxIn.set(xl,yl,xh,yh);
-      frTransform xform;
-      xform.set(origin);
-      boxIn.transform(xform);
+        boxIn.set(xl, yl, xh, yh);
+        frTransform xform;
+        xform.set(origin);
+        boxIn.transform(xform);
     }
     // setters
-    void setViaDef(frViaDef* in) {
-      viaDef = in;
-    }
+    void setViaDef(frViaDef *in) { viaDef = in; }
     // others
-    frBlockObjectEnum typeId() const override {
-      return tacVia;
-    }
+    frBlockObjectEnum typeId() const override { return tacVia; }
 
     /* from frRef
      * getOrient
@@ -162,20 +157,12 @@ namespace fr {
      * setTransform
      */
 
-    frOrient getOrient() const override {
-      return frOrient();
-    }
-    void setOrient(const frOrient &tmpOrient) override {
-      ;
-    }
-    void getOrigin(frPoint &tmpOrigin) const override {
-      tmpOrigin.set(origin);
-    }
-    void setOrigin(const frPoint &tmpPoint) override {
-      origin.set(tmpPoint);
-    }
+    frOrient getOrient() const override { return frOrient(); }
+    void setOrient(const frOrient &tmpOrient) override { ; }
+    void getOrigin(frPoint &tmpOrigin) const override { tmpOrigin.set(origin); }
+    void setOrigin(const frPoint &tmpPoint) override { origin.set(tmpPoint); }
     void getTransform(frTransform &xformIn) const override {
-      xformIn.set(origin);
+        xformIn.set(origin);
     }
     void setTransform(const frTransform &xformIn) override {}
 
@@ -186,17 +173,13 @@ namespace fr {
      * removeFromPin
      */
     bool hasPin() const override {
-      return (owner) && (owner->typeId() == tacPin);
+        return (owner) && (owner->typeId() == tacPin);
     }
-    taPin* getPin() const override {
-      return reinterpret_cast<taPin*>(owner);
+    taPin *getPin() const override { return reinterpret_cast<taPin *>(owner); }
+    void addToPin(taPin *in) override {
+        owner = reinterpret_cast<frBlockObject *>(in);
     }
-    void addToPin(taPin* in) override {
-      owner = reinterpret_cast<frBlockObject*>(in);
-    }
-    void removeFromPin() override {
-      owner = nullptr;
-    }
+    void removeFromPin() override { owner = nullptr; }
 
     /* from frConnFig
      * hasNet
@@ -205,17 +188,13 @@ namespace fr {
      * removeFromNet
      */
     bool hasNet() const override {
-      return (owner) && (owner->typeId() == frcNet);
+        return (owner) && (owner->typeId() == frcNet);
     }
-    frNet* getNet() const override {
-      return reinterpret_cast<frNet*>(owner);
+    frNet *getNet() const override { return reinterpret_cast<frNet *>(owner); }
+    void addToNet(frNet *in) override {
+        owner = reinterpret_cast<frBlockObject *>(in);
     }
-    void addToNet(frNet* in) override {
-      owner = reinterpret_cast<frBlockObject*>(in);
-    }
-    void removeFromNet() override {
-      owner = nullptr;
-    }
+    void removeFromNet() override { owner = nullptr; }
 
     /* from frFig
      * getBBox
@@ -223,78 +202,75 @@ namespace fr {
      * overlaps
      */
 
-    void getBBox (frBox &boxIn) const override {
-      auto &layer1Figs = viaDef->getLayer1Figs();
-      auto &layer2Figs = viaDef->getLayer2Figs();
-      auto &cutFigs    = viaDef->getCutFigs();
-      bool isFirst = true;
-      frBox box;
-      frCoord xl = 0;
-      frCoord yl = 0;
-      frCoord xh = 0;
-      frCoord yh = 0;
-      for (auto &fig: layer1Figs) {
-        fig->getBBox(box);
-        if (isFirst) {
-          xl = box.left();
-          yl = box.bottom();
-          xh = box.right();
-          yh = box.top();
-          isFirst = false;
-        } else {
-          xl = std::min(xl, box.left());
-          yl = std::min(yl, box.bottom());
-          xh = std::max(xh, box.right());
-          yh = std::max(yh, box.top());
+    void getBBox(frBox &boxIn) const override {
+        auto &layer1Figs = viaDef->getLayer1Figs();
+        auto &layer2Figs = viaDef->getLayer2Figs();
+        auto &cutFigs = viaDef->getCutFigs();
+        bool isFirst = true;
+        frBox box;
+        frCoord xl = 0;
+        frCoord yl = 0;
+        frCoord xh = 0;
+        frCoord yh = 0;
+        for (auto &fig : layer1Figs) {
+            fig->getBBox(box);
+            if (isFirst) {
+                xl = box.left();
+                yl = box.bottom();
+                xh = box.right();
+                yh = box.top();
+                isFirst = false;
+            } else {
+                xl = std::min(xl, box.left());
+                yl = std::min(yl, box.bottom());
+                xh = std::max(xh, box.right());
+                yh = std::max(yh, box.top());
+            }
         }
-      }
-      for (auto &fig: layer2Figs) {
-        fig->getBBox(box);
-        if (isFirst) {
-          xl = box.left();
-          yl = box.bottom();
-          xh = box.right();
-          yh = box.top();
-          isFirst = false;
-        } else {
-          xl = std::min(xl, box.left());
-          yl = std::min(yl, box.bottom());
-          xh = std::max(xh, box.right());
-          yh = std::max(yh, box.top());
+        for (auto &fig : layer2Figs) {
+            fig->getBBox(box);
+            if (isFirst) {
+                xl = box.left();
+                yl = box.bottom();
+                xh = box.right();
+                yh = box.top();
+                isFirst = false;
+            } else {
+                xl = std::min(xl, box.left());
+                yl = std::min(yl, box.bottom());
+                xh = std::max(xh, box.right());
+                yh = std::max(yh, box.top());
+            }
         }
-      }
-      for (auto &fig: cutFigs) {
-        fig->getBBox(box);
-        if (isFirst) {
-          xl = box.left();
-          yl = box.bottom();
-          xh = box.right();
-          yh = box.top();
-          isFirst = false;
-        } else {
-          xl = std::min(xl, box.left());
-          yl = std::min(yl, box.bottom());
-          xh = std::max(xh, box.right());
-          yh = std::max(yh, box.top());
+        for (auto &fig : cutFigs) {
+            fig->getBBox(box);
+            if (isFirst) {
+                xl = box.left();
+                yl = box.bottom();
+                xh = box.right();
+                yh = box.top();
+                isFirst = false;
+            } else {
+                xl = std::min(xl, box.left());
+                yl = std::min(yl, box.bottom());
+                xh = std::max(xh, box.right());
+                yh = std::max(yh, box.top());
+            }
         }
-      }
-      boxIn.set(xl,yl,xh,yh);
-      frTransform xform;
-      xform.set(origin);
-      //cout <<"origin " <<origin.x() <<" " <<origin.y() <<endl;
-      boxIn.transform(xform);
+        boxIn.set(xl, yl, xh, yh);
+        frTransform xform;
+        xform.set(origin);
+        // cout <<"origin " <<origin.x() <<" " <<origin.y() <<endl;
+        boxIn.transform(xform);
     }
-    void move(const frTransform &xform) override {
-      ;
-    }
-    bool overlaps(const frBox &box) const override {
-      return false;
-    }
-  protected:
-    frPoint        origin;
-    frViaDef*      viaDef;
-    frBlockObject* owner;
-  };
-}
+    void move(const frTransform &xform) override { ; }
+    bool overlaps(const frBox &box) const override { return false; }
+
+   protected:
+    frPoint origin;
+    frViaDef *viaDef;
+    frBlockObject *owner;
+};
+}  // namespace fr
 
 #endif

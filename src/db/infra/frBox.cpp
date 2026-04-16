@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2019, The Regents of the University of California
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -13,12 +13,12 @@
  *     * Neither the name of the University nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
  * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
  * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
@@ -33,32 +33,33 @@ using namespace std;
 using namespace fr;
 
 void frBox::transform(const frTransform &xform) {
-  //auto ll = bBox.lowerLeft.transform(xform);
-  //ll.transform(xform);
-  //auto ur = bBox.upperRight.transform(xform);
-  //ur.transform(xform);
-  //this->set(ll, ur);
-  ll.transform(xform);
-  ur.transform(xform);
-  this->set(ll, ur);
+    // auto ll = bBox.lowerLeft.transform(xform);
+    // ll.transform(xform);
+    // auto ur = bBox.upperRight.transform(xform);
+    // ur.transform(xform);
+    // this->set(ll, ur);
+    ll.transform(xform);
+    ur.transform(xform);
+    this->set(ll, ur);
 }
 
 bool frBox::overlaps(const frBox &boxIn, bool incEdges) const {
-  if (incEdges) {
-    return !(right() < boxIn.left()   || // left
-             top()   < boxIn.bottom() || // bottom
-             left()  > boxIn.right()  || // right
-             bottom()> boxIn.top()        // top
-             );
-  } else {
-    return !(right() <= boxIn.left()   || // left
-             top()   <= boxIn.bottom() || // bottom
-             left()  >= boxIn.right()  || // right
-             bottom()>= boxIn.top()        // top
-             );
-  }
+    if (incEdges) {
+        return !(right() < boxIn.left() ||  // left
+                 top() < boxIn.bottom() ||  // bottom
+                 left() > boxIn.right() ||  // right
+                 bottom() > boxIn.top()     // top
+        );
+    } else {
+        return !(right() <= boxIn.left() ||  // left
+                 top() <= boxIn.bottom() ||  // bottom
+                 left() >= boxIn.right() ||  // right
+                 bottom() >= boxIn.top()     // top
+        );
+    }
 }
 
 void frBox::bloat(const frCoord distance, frBox &boxOut) const {
-  boxOut.set(left() - distance, bottom() - distance, right() + distance, top() + distance);
+    boxOut.set(left() - distance, bottom() - distance, right() + distance,
+               top() + distance);
 }

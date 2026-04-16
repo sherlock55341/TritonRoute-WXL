@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2019, The Regents of the University of California
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -13,12 +13,12 @@
  *     * Neither the name of the University nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
  * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
  * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
@@ -35,21 +35,18 @@
 #include "drc/frDRC.h"
 
 namespace fr {
-  class APGWorker {
-  public:
+class APGWorker {
+   public:
     APGWorker() {}
-    APGWorker(frDesign* designIn, frInst* instIn): design(designIn), inst(instIn) {
-
-    }
+    APGWorker(frDesign* designIn, frInst* instIn)
+        : design(designIn), inst(instIn) {}
 
     void init();
     void setup();
     void main();
     void end();
 
-
-
-  protected:
+   protected:
     frDesign* design;
     frInst* inst;
     // frVector<frAccessPattern*> aps;
@@ -58,14 +55,14 @@ namespace fr {
     std::set<FlexAccessPattern*> validAPs;
     frVector<FlexAccessPattern*> bestAPComb;
     std::map<frPin*, std::vector<FlexAccessPattern*> > pin2APs;
-    std::map<frLayerNum, bgi::rtree<std::pair<point_t, FlexAccessPattern*>, bgi::quadratic<16> > > layer2APRTree;
+    std::map<frLayerNum, bgi::rtree<std::pair<point_t, FlexAccessPattern*>,
+                                    bgi::quadratic<16> > >
+        layer2APRTree;
     Rectangle apBBoxRect;
 
     // functions
     void updateAPStatus();
-  };
-}
-
-
+};
+}  // namespace fr
 
 #endif
