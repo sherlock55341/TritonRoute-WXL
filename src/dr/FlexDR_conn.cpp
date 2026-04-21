@@ -1028,6 +1028,7 @@ void FlexDR::checkConnectivity_merge1(
             } else {
                 cout << "Error: non-orthogonal wires in "
                         "checkConnectivity_merge\n";
+                cout << net->getName() << std::endl;
             }
             // vert
         } else if (connFig->typeId() == frcVia) {

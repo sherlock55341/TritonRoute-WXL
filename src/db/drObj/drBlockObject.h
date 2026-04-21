@@ -31,6 +31,7 @@
 
 #include "frBaseTypes.h"
 #include "db/obj/frBlockObject.h"
+#include "db/infra/frPoint.h"
 
 namespace fr {
 class drBlockObject : public frBlockObject {

@@ -29,6 +29,8 @@
 #ifndef _FLEX_MAZE_TYPES_H_
 #define _FLEX_MAZE_TYPES_H_
 
+#include <frBaseTypes.h>
+
 namespace fr {
 class FlexMazeIdx {
    public:

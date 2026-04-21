@@ -17,3 +17,53 @@ The visible git history is minimal, so use short, imperative commit subjects suc
 
 ## Configuration Notes
 CMake requires GCC 7+ compatible C++17 support plus Boost, OpenMP, Bison, and zlib. For global-detailed routing runs, ensure `POST9.dat` and `POWV9.dat` from `src/gr/flute/` are available in the working directory.
+
+## Custom Route Subsystem (`src/cr/`)
+
+### Overview
+The `cr/` subsystem is a custom routing module that operates on a single frNet at a time, without the routeBox/extBox region-partitioning used by FlexDR. Its entry point is `CustomRouteWorker`.
+
+### Key Types
+- `crNet` (`src/cr/type/crNet.hpp`) — mirrors `drNet`. Holds `crPin`s, `crConnFig`s, a `terms` set, and a back-pointer to the source `frNet`.
+- `crPin` (`src/cr/type/crPin.hpp`) — mirrors `drPin`. Holds a `frBlockObject*` term reference and a vector of `crAccessPoint`s.
+- `crAccessPoint` (`src/cr/type/crAccessPoint.hpp`) — mirrors `drAccessPattern`. Fields: `pt` (frPoint), `layerIdx`, `mazeIdx` (crMazeType), `validAccess` (6-bool directional flags E/S/W/N/U/D), `upViaDefs[2]`, `downViaDefs[2]`.
+- `crConnFig` (`src/cr/type/crFig.hpp`) — base class for routing geometry results.
+
+### Net Initialization (`crWorker.cpp`)
+`initNet(frNet*)` builds a `crNet` from an `frNet` by iterating all instTerms and terms. For each terminal, `initNetTerm` creates a `crPin` and populates its `crAccessPoint`s from the frPin → frPinAccess → frAccessPoint chain, applying the instance transform (`shiftXform`). Unlike FlexDR, there is no routeBox filtering — all access points are included.
+
+### Data Flow: frNet → crNet
+```
+frNet
+├── frInstTerm[] / frTerm[]
+│   └── frTerm::getPins() → frPin[]
+│       └── frPin::getPinAccess(pinAccessIdx) → frPinAccess
+│           └── frPinAccess::getAccessPoints() → frAccessPoint[]
+│               ├── point (transformed by instance shiftXform)
+│               ├── layerNum
+│               ├── accesses[6] (directional flags)
+│               └── viaDefs[][] (by cut number)
+↓
+crNet
+├── crPin[] (one per frInstTerm/frTerm)
+│   └── crAccessPoint[]
+│       ├── pt (transformed)
+│       ├── layerIdx
+│       ├── validAccess[6]
+│       ├── upViaDefs[2], downViaDefs[2]
+│       └── mazeIdx (set later, after gridGraph construction)
+```
+
+### GridGraph Construction (planned)
+The `mazeIdx` field on `crAccessPoint` is not set during `initNet`. It requires a gridGraph to be built first. The DR flow for reference:
+
+1. **Collect coordinates** — from pin access points and existing routing endpoints into `xMap`/`yMap` (keyed by physical coord, valued by `{layerNum → trackPattern*}`). Each access point adds its coord to the pref-dir map of its layer and the adjacent layer (±2).
+2. **Add track coordinates** — iterate design trackPatterns within the bbox, adding all track locations to `xMap`/`yMap`.
+3. **Build grid** (`initGrids`) — flatten `xMap`/`yMap`/`zMap` keys into `xCoords[]`/`yCoords[]`/`zCoords[]` arrays; allocate bit arrays sized xDim × yDim × zDim for costs, A* state, src/dst markers.
+4. **Build edges** (`initEdges`) — for each grid node, determine E/N/U edge existence and cost based on trackPattern and DRC rules.
+5. **Backfill mazeIdx** (`initMazeIdx_ap`) — for each access point, map `(pt, layerNum)` → grid index via `gridGraph.getMazeIdx()`.
+
+For CustomRouteWorker, the bbox can be derived from the bounding box of all pin access points (with margin), rather than a pre-assigned routeBox.
+
+### Region Query and Existing Routing
+frNet shapes (pathSeg, via) are loaded into the global `frRegionQuery` R-tree during `frRegionQuery::initDRObj()`. FlexDRWorker queries this R-tree to discover existing routing within its work area. CustomRouteWorker can query the same R-tree if it needs to be aware of existing routing (e.g., for rip-up reroute), but does not need to for fresh routing.
