@@ -9,6 +9,18 @@
 #include "db/obj/frTrackPattern.h"
 
 namespace fr {
+struct crPatternPoint {
+    frCoord x;
+    frCoord y;
+
+    bool operator<(const crPatternPoint& rhs) const {
+        return (x < rhs.x) || (x == rhs.x && y < rhs.y);
+    }
+    bool operator==(const crPatternPoint& rhs) const {
+        return x == rhs.x && y == rhs.y;
+    }
+};
+
 class CustomRouteWorker {
    public:
     CustomRouteWorker(
@@ -27,6 +39,7 @@ class CustomRouteWorker {
     void initNet(frNet* _net);
     void initNetTerm(crNet* cNet, frBlockObject* term);
     void initRouteBox();
+    void initPatternGraph();
     void initTrackCoords(
         std::map<frCoord, std::map<frLayerNum, frTrackPattern*> >& xMap,
         std::map<frCoord, std::map<frLayerNum, frTrackPattern*> >& yMap);
@@ -34,6 +47,8 @@ class CustomRouteWorker {
         crNet* cNet,
         std::map<frCoord, std::map<frLayerNum, frTrackPattern*> >& xMap,
         std::map<frCoord, std::map<frLayerNum, frTrackPattern*> >& yMap);
+    void initPatternGraphL(crNet* cNet,
+                           std::vector<crPatternPoint>& points) const;
 
     frDesign* design;
     std::vector<std::unique_ptr<crNet>> nets;

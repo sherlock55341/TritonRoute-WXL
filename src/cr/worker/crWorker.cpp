@@ -1,4 +1,5 @@
 #include "crWorker.hpp"
+
 namespace fr {
 CustomRouteWorker::CustomRouteWorker(
     CustomRoute* _cr,
@@ -15,5 +16,6 @@ CustomRouteWorker::CustomRouteWorker(
     }
     initRouteBox();
     patternGraph->build(this);
+    initPatternGraph();
 }
 }  // namespace fr

@@ -1,5 +1,7 @@
 #include "crPatternGraph.hpp"
+#include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 namespace fr {
 
@@ -10,9 +12,73 @@ void crPatternGraph::setDims(std::size_t _xDim, std::size_t _yDim,
     zDim = _zDim;
 }
 
+void crPatternGraph::setCoords(std::vector<frCoord> xCoordsIn,
+                               std::vector<frCoord> yCoordsIn,
+                               std::vector<frLayerNum> zCoordsIn) {
+    std::sort(xCoordsIn.begin(), xCoordsIn.end());
+    std::sort(yCoordsIn.begin(), yCoordsIn.end());
+    std::sort(zCoordsIn.begin(), zCoordsIn.end());
+    xCoordsIn.erase(std::unique(xCoordsIn.begin(), xCoordsIn.end()),
+                    xCoordsIn.end());
+    yCoordsIn.erase(std::unique(yCoordsIn.begin(), yCoordsIn.end()),
+                    yCoordsIn.end());
+    zCoordsIn.erase(std::unique(zCoordsIn.begin(), zCoordsIn.end()),
+                    zCoordsIn.end());
+
+    xCoords = std::move(xCoordsIn);
+    yCoords = std::move(yCoordsIn);
+    zCoords = std::move(zCoordsIn);
+    setDims(xCoords.size(), yCoords.size(), zCoords.size());
+}
+
 void crPatternGraph::clear() {
+    xDim = 0;
+    yDim = 0;
+    zDim = 0;
+    xCoords.clear();
+    yCoords.clear();
+    zCoords.clear();
     nodes.clear();
     nodeMap.clear();
+}
+
+template <typename T>
+bool crPatternGraph::hasCoord(const std::vector<T>& coords, T coord) const {
+    return std::binary_search(coords.begin(), coords.end(), coord);
+}
+
+template <typename T>
+crIndex_t crPatternGraph::getCoordIdx(const std::vector<T>& coords,
+                                      T coord) const {
+    auto it = std::lower_bound(coords.begin(), coords.end(), coord);
+    if (it == coords.end() || *it != coord) {
+        return -1;
+    }
+    return static_cast<crIndex_t>(it - coords.begin());
+}
+
+bool crPatternGraph::hasMazeXCoord(frCoord xCoord) const {
+    return hasCoord(xCoords, xCoord);
+}
+
+bool crPatternGraph::hasMazeYCoord(frCoord yCoord) const {
+    return hasCoord(yCoords, yCoord);
+}
+
+bool crPatternGraph::hasMazeZCoord(frLayerNum layerNum) const {
+    return hasCoord(zCoords, layerNum);
+}
+
+bool crPatternGraph::hasMazeIdx(frCoord xCoord, frCoord yCoord,
+                                frLayerNum layerNum) const {
+    return hasMazeXCoord(xCoord) && hasMazeYCoord(yCoord) &&
+           hasMazeZCoord(layerNum);
+}
+
+crMazeType crPatternGraph::getMazeIdx(frCoord xCoord, frCoord yCoord,
+                                      frLayerNum layerNum) const {
+    return crMazeType(getCoordIdx(xCoords, xCoord), getCoordIdx(yCoords, yCoord),
+                      getCoordIdx(zCoords, layerNum));
 }
 
 std::uint64_t crPatternGraph::getMapKey(const crMazeType& mazeIdx) const {
@@ -41,6 +107,13 @@ int crPatternGraph::getNodeIdx(const crMazeType& mazeIdx) const {
 }
 
 int crPatternGraph::addNode(const crMazeType& mazeIdx) {
+    if (mazeIdx.empty() || mazeIdx.x < 0 || mazeIdx.y < 0 || mazeIdx.z < 0 ||
+        static_cast<std::size_t>(mazeIdx.x) >= xDim ||
+        static_cast<std::size_t>(mazeIdx.y) >= yDim ||
+        static_cast<std::size_t>(mazeIdx.z) >= zDim) {
+        return -1;
+    }
+
     auto key = getMapKey(mazeIdx);
     auto it = nodeMap.find(key);
     if (it != nodeMap.end()) {
@@ -56,6 +129,16 @@ int crPatternGraph::addNode(const crMazeType& mazeIdx) {
 void crPatternGraph::addNodes(const std::vector<crMazeType>& mazeIdxs) {
     for (auto& mazeIdx : mazeIdxs) {
         addNode(mazeIdx);
+    }
+}
+
+void crPatternGraph::addRoutingLayerNodes(frCoord xCoord, frCoord yCoord) {
+    if (!hasMazeXCoord(xCoord) || !hasMazeYCoord(yCoord)) {
+        return;
+    }
+
+    for (auto layerNum : zCoords) {
+        addNode(getMazeIdx(xCoord, yCoord, layerNum));
     }
 }
 
