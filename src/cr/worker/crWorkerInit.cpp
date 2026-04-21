@@ -18,6 +18,8 @@ void CustomRouteWorker::initPatternGraph() {
         return;
     }
 
+    std::vector<frCoord> xCoords;
+    std::vector<frCoord> yCoords;
     std::vector<crPatternPoint> points;
     std::vector<frLayerNum> zCoords;
 
@@ -31,20 +33,13 @@ void CustomRouteWorker::initPatternGraph() {
         auto cNet = nets[i].get();
         switch (policies[i]) {
             case crPatternEnum::L:
-                initPatternGraphL(cNet, points);
+                collectPatternGraphCoordsL(cNet, xCoords, yCoords);
                 break;
             default:
                 break;
         }
     }
 
-    std::sort(points.begin(), points.end());
-    points.erase(std::unique(points.begin(), points.end()), points.end());
-
-    std::vector<frCoord> xCoords;
-    std::vector<frCoord> yCoords;
-    xCoords.reserve(points.size() + 4);
-    yCoords.reserve(points.size() + 4);
     xCoords.push_back(routeBox.left());
     xCoords.push_back(routeBox.right());
     xCoords.push_back(extBox.left());
@@ -53,11 +48,6 @@ void CustomRouteWorker::initPatternGraph() {
     yCoords.push_back(routeBox.top());
     yCoords.push_back(extBox.bottom());
     yCoords.push_back(extBox.top());
-
-    for (auto& point : points) {
-        xCoords.push_back(point.x);
-        yCoords.push_back(point.y);
-    }
 
     auto uniqueCoords = [](auto& coords) {
         std::sort(coords.begin(), coords.end());
@@ -70,8 +60,128 @@ void CustomRouteWorker::initPatternGraph() {
     patternGraph->setCoords(std::move(xCoords), std::move(yCoords),
                             std::move(zCoords));
 
+    for (std::size_t i = 0; i < nets.size() && i < policies.size(); ++i) {
+        auto cNet = nets[i].get();
+        switch (policies[i]) {
+            case crPatternEnum::L:
+                initPatternGraphL(cNet, patternGraph->getXCoords(),
+                                  patternGraph->getYCoords(), points);
+                break;
+            default:
+                break;
+        }
+    }
+
+    std::sort(points.begin(), points.end());
+    points.erase(std::unique(points.begin(), points.end()), points.end());
+
     for (auto& point : points) {
         patternGraph->addRoutingLayerNodes(point.x, point.y);
+    }
+}
+
+void CustomRouteWorker::collectPatternGraphCoordsL(
+    crNet* cNet, std::vector<frCoord>& xCoords, std::vector<frCoord>& yCoords)
+    const {
+    if (!cNet || cNet->getPins().size() != 2) {
+        return;
+    }
+
+    const auto& pin0Aps = cNet->getPins()[0]->getAccessPoints();
+    const auto& pin1Aps = cNet->getPins()[1]->getAccessPoints();
+
+    for (auto& ap : pin0Aps) {
+        auto pt = ap->getPt();
+        xCoords.push_back(pt.x());
+        yCoords.push_back(pt.y());
+    }
+    for (auto& ap : pin1Aps) {
+        auto pt = ap->getPt();
+        xCoords.push_back(pt.x());
+        yCoords.push_back(pt.y());
+    }
+}
+
+void CustomRouteWorker::initPatternGraphL(
+    crNet* cNet, const std::vector<frCoord>& xCoords,
+    const std::vector<frCoord>& yCoords, std::vector<crPatternPoint>& points)
+    const {
+    if (!cNet || cNet->getPins().size() != 2) {
+        return;
+    }
+
+    const auto& pin0Aps = cNet->getPins()[0]->getAccessPoints();
+    const auto& pin1Aps = cNet->getPins()[1]->getAccessPoints();
+
+    std::vector<frCoord> pin0Xs;
+    std::vector<frCoord> pin0Ys;
+    std::vector<frCoord> pin1Xs;
+    std::vector<frCoord> pin1Ys;
+
+    for (auto& ap : pin0Aps) {
+        auto pt = ap->getPt();
+        pin0Xs.push_back(pt.x());
+        pin0Ys.push_back(pt.y());
+    }
+    for (auto& ap : pin1Aps) {
+        auto pt = ap->getPt();
+        pin1Xs.push_back(pt.x());
+        pin1Ys.push_back(pt.y());
+    }
+
+    auto uniqueCoords = [](auto& coords) {
+        std::sort(coords.begin(), coords.end());
+        coords.erase(std::unique(coords.begin(), coords.end()), coords.end());
+    };
+    uniqueCoords(pin0Xs);
+    uniqueCoords(pin0Ys);
+    uniqueCoords(pin1Xs);
+    uniqueCoords(pin1Ys);
+
+    auto addPoint = [&points](frCoord xCoord, frCoord yCoord) {
+        points.push_back({xCoord, yCoord});
+    };
+    auto addHorizontalSegment = [&](frCoord yCoord, frCoord xCoord1,
+                                   frCoord xCoord2) {
+        auto lo = std::min(xCoord1, xCoord2);
+        auto hi = std::max(xCoord1, xCoord2);
+        auto begin = std::lower_bound(xCoords.begin(), xCoords.end(), lo);
+        auto end = std::upper_bound(xCoords.begin(), xCoords.end(), hi);
+        for (auto it = begin; it != end; ++it) {
+            addPoint(*it, yCoord);
+        }
+    };
+    auto addVerticalSegment = [&](frCoord xCoord, frCoord yCoord1,
+                                  frCoord yCoord2) {
+        auto lo = std::min(yCoord1, yCoord2);
+        auto hi = std::max(yCoord1, yCoord2);
+        auto begin = std::lower_bound(yCoords.begin(), yCoords.end(), lo);
+        auto end = std::upper_bound(yCoords.begin(), yCoords.end(), hi);
+        for (auto it = begin; it != end; ++it) {
+            addPoint(xCoord, *it);
+        }
+    };
+
+    for (auto x0 : pin0Xs) {
+        for (auto y1 : pin1Ys) {
+            for (auto y0 : pin0Ys) {
+                addVerticalSegment(x0, y0, y1);
+            }
+            for (auto x1 : pin1Xs) {
+                addHorizontalSegment(y1, x0, x1);
+            }
+        }
+    }
+
+    for (auto x1 : pin1Xs) {
+        for (auto y0 : pin0Ys) {
+            for (auto y1 : pin1Ys) {
+                addVerticalSegment(x1, y1, y0);
+            }
+            for (auto x0 : pin0Xs) {
+                addHorizontalSegment(y0, x1, x0);
+            }
+        }
     }
 }
 
@@ -252,95 +362,6 @@ void CustomRouteWorker::initTrackCoords(
 
     for (auto& net : nets) {
         initTrackCoordsPin(net.get(), xMap, yMap);
-    }
-}
-
-void CustomRouteWorker::initPatternGraphL(
-    crNet* cNet, std::vector<crPatternPoint>& points) const {
-    if (!cNet || cNet->getPins().size() != 2) {
-        return;
-    }
-
-    const auto& pin0Aps = cNet->getPins()[0]->getAccessPoints();
-    const auto& pin1Aps = cNet->getPins()[1]->getAccessPoints();
-
-    std::vector<frCoord> pin0Xs;
-    std::vector<frCoord> pin0Ys;
-    std::vector<frCoord> pin1Xs;
-    std::vector<frCoord> pin1Ys;
-
-    for (auto& ap : pin0Aps) {
-        auto pt = ap->getPt();
-        pin0Xs.push_back(pt.x());
-        pin0Ys.push_back(pt.y());
-    }
-    for (auto& ap : pin1Aps) {
-        auto pt = ap->getPt();
-        pin1Xs.push_back(pt.x());
-        pin1Ys.push_back(pt.y());
-    }
-
-    auto uniqueCoords = [](auto& coords) {
-        std::sort(coords.begin(), coords.end());
-        coords.erase(std::unique(coords.begin(), coords.end()), coords.end());
-    };
-    uniqueCoords(pin0Xs);
-    uniqueCoords(pin0Ys);
-    uniqueCoords(pin1Xs);
-    uniqueCoords(pin1Ys);
-
-    std::vector<frCoord> xCoords = pin0Xs;
-    xCoords.insert(xCoords.end(), pin1Xs.begin(), pin1Xs.end());
-    uniqueCoords(xCoords);
-
-    std::vector<frCoord> yCoords = pin0Ys;
-    yCoords.insert(yCoords.end(), pin1Ys.begin(), pin1Ys.end());
-    uniqueCoords(yCoords);
-
-    auto addPoint = [&points](frCoord xCoord, frCoord yCoord) {
-        points.push_back({xCoord, yCoord});
-    };
-    auto addHorizontalSegment = [&](frCoord yCoord, frCoord xCoord1,
-                                   frCoord xCoord2) {
-        auto lo = std::min(xCoord1, xCoord2);
-        auto hi = std::max(xCoord1, xCoord2);
-        auto begin = std::lower_bound(xCoords.begin(), xCoords.end(), lo);
-        auto end = std::upper_bound(xCoords.begin(), xCoords.end(), hi);
-        for (auto it = begin; it != end; ++it) {
-            addPoint(*it, yCoord);
-        }
-    };
-    auto addVerticalSegment = [&](frCoord xCoord, frCoord yCoord1,
-                                  frCoord yCoord2) {
-        auto lo = std::min(yCoord1, yCoord2);
-        auto hi = std::max(yCoord1, yCoord2);
-        auto begin = std::lower_bound(yCoords.begin(), yCoords.end(), lo);
-        auto end = std::upper_bound(yCoords.begin(), yCoords.end(), hi);
-        for (auto it = begin; it != end; ++it) {
-            addPoint(xCoord, *it);
-        }
-    };
-
-    for (auto x0 : pin0Xs) {
-        for (auto y1 : pin1Ys) {
-            for (auto y0 : pin0Ys) {
-                addVerticalSegment(x0, y0, y1);
-            }
-            for (auto x1 : pin1Xs) {
-                addHorizontalSegment(y1, x0, x1);
-            }
-        }
-    }
-
-    for (auto x1 : pin1Xs) {
-        for (auto y0 : pin0Ys) {
-            for (auto y1 : pin1Ys) {
-                addVerticalSegment(x1, y1, y0);
-            }
-            for (auto x0 : pin0Xs) {
-                addHorizontalSegment(y0, x1, x0);
-            }
-        }
     }
 }
 

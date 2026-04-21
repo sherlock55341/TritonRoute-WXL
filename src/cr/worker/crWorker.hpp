@@ -26,6 +26,7 @@ class CustomRouteWorker {
     CustomRouteWorker(
         CustomRoute* _cr,
         const std::vector<std::pair<frNet*, crPatternEnum>>& _tasks);
+    frDesign* getDesign() const { return design; }
     const frBox& getRouteBox() const { return routeBox; }
     const frBox& getExtBox() const { return extBox; }
     crNet& getNet() { return *nets.front(); }
@@ -34,6 +35,9 @@ class CustomRouteWorker {
     const std::vector<std::unique_ptr<crNet>>& getNets() const { return nets; }
     crPatternGraph* getPatternGraph() { return patternGraph.get(); }
     const crPatternGraph* getPatternGraph() const { return patternGraph.get(); }
+    void route();
+    bool routeNet(crNet* cNet, crPatternEnum policy,
+                  std::vector<crMazeType>& path) const;
 
    protected:
     void initNet(frNet* _net);
@@ -47,7 +51,10 @@ class CustomRouteWorker {
         crNet* cNet,
         std::map<frCoord, std::map<frLayerNum, frTrackPattern*> >& xMap,
         std::map<frCoord, std::map<frLayerNum, frTrackPattern*> >& yMap);
-    void initPatternGraphL(crNet* cNet,
+    void collectPatternGraphCoordsL(crNet* cNet, std::vector<frCoord>& xCoords,
+                                    std::vector<frCoord>& yCoords) const;
+    void initPatternGraphL(crNet* cNet, const std::vector<frCoord>& xCoords,
+                           const std::vector<frCoord>& yCoords,
                            std::vector<crPatternPoint>& points) const;
 
     frDesign* design;

@@ -4,12 +4,14 @@
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
+#include "db/tech/frTechObject.h"
 #include "frBaseTypes.h"
 #include "../type/crMazeType.hpp"
 
 namespace fr {
 
 class CustomRouteWorker;
+class frDesign;
 
 class crPatternGraph {
    public:
@@ -33,6 +35,8 @@ class crPatternGraph {
     std::size_t getXDim() const { return xDim; }
     std::size_t getYDim() const { return yDim; }
     std::size_t getZDim() const { return zDim; }
+    frDesign* getDesign() const;
+    frTechObject* getTech() const;
 
     void setDims(std::size_t _xDim, std::size_t _yDim, std::size_t _zDim);
     void setCoords(std::vector<frCoord> xCoordsIn,
@@ -46,17 +50,23 @@ class crPatternGraph {
     bool hasMazeIdx(frCoord xCoord, frCoord yCoord, frLayerNum layerNum) const;
     crMazeType getMazeIdx(frCoord xCoord, frCoord yCoord,
                           frLayerNum layerNum) const;
+    frPoint getPoint(const crMazeType& mazeIdx) const;
+    frLayerNum getLayerNum(const crMazeType& mazeIdx) const;
     bool hasNode(const crMazeType& mazeIdx) const;
     int getNodeIdx(const crMazeType& mazeIdx) const;
     int addNode(const crMazeType& mazeIdx);
     void addNodes(const std::vector<crMazeType>& mazeIdxs);
     void addRoutingLayerNodes(frCoord xCoord, frCoord yCoord);
+    std::uint64_t getNodeKey(const crMazeType& mazeIdx) const;
+    bool getNextMazeIdx(const crMazeType& curr, frDirEnum dir,
+                        crMazeType& next) const;
 
    protected:
     template <typename T>
     bool hasCoord(const std::vector<T>& coords, T coord) const;
     template <typename T>
     crIndex_t getCoordIdx(const std::vector<T>& coords, T coord) const;
+    bool isValidMazeIdx(const crMazeType& mazeIdx) const;
     std::uint64_t getMapKey(const crMazeType& mazeIdx) const;
 
     CustomRouteWorker* worker;

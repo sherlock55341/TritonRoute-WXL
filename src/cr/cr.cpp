@@ -13,5 +13,6 @@ void CustomRoute::run() {
                      workers.front()->getPatternGraph()->getYCoords().size() *
                      workers.front()->getPatternGraph()->getZCoords().size()
               << std::endl;
+    workers.front()->route();
 }
 }  // namespace fr

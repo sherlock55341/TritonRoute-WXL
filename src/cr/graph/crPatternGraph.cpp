@@ -2,8 +2,18 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include "cr/worker/crWorker.hpp"
 
 namespace fr {
+
+frDesign* crPatternGraph::getDesign() const {
+    return worker ? worker->getDesign() : nullptr;
+}
+
+frTechObject* crPatternGraph::getTech() const {
+    auto design = getDesign();
+    return design ? design->getTech() : nullptr;
+}
 
 void crPatternGraph::setDims(std::size_t _xDim, std::size_t _yDim,
                              std::size_t _zDim) {
@@ -81,8 +91,29 @@ crMazeType crPatternGraph::getMazeIdx(frCoord xCoord, frCoord yCoord,
                       getCoordIdx(zCoords, layerNum));
 }
 
+frPoint crPatternGraph::getPoint(const crMazeType& mazeIdx) const {
+    if (!isValidMazeIdx(mazeIdx)) {
+        return frPoint();
+    }
+    return frPoint(xCoords[mazeIdx.x], yCoords[mazeIdx.y]);
+}
+
+frLayerNum crPatternGraph::getLayerNum(const crMazeType& mazeIdx) const {
+    if (!isValidMazeIdx(mazeIdx)) {
+        return -1;
+    }
+    return zCoords[mazeIdx.z];
+}
+
+bool crPatternGraph::isValidMazeIdx(const crMazeType& mazeIdx) const {
+    return !mazeIdx.empty() && mazeIdx.x >= 0 && mazeIdx.y >= 0 &&
+           mazeIdx.z >= 0 && static_cast<std::size_t>(mazeIdx.x) < xDim &&
+           static_cast<std::size_t>(mazeIdx.y) < yDim &&
+           static_cast<std::size_t>(mazeIdx.z) < zDim;
+}
+
 std::uint64_t crPatternGraph::getMapKey(const crMazeType& mazeIdx) const {
-    if (mazeIdx.empty()) {
+    if (!isValidMazeIdx(mazeIdx)) {
         throw std::invalid_argument("cannot encode empty crMazeType");
     }
 
@@ -92,6 +123,10 @@ std::uint64_t crPatternGraph::getMapKey(const crMazeType& mazeIdx) const {
     return z * static_cast<std::uint64_t>(xDim) *
                static_cast<std::uint64_t>(yDim) +
            x * static_cast<std::uint64_t>(yDim) + y;
+}
+
+std::uint64_t crPatternGraph::getNodeKey(const crMazeType& mazeIdx) const {
+    return getMapKey(mazeIdx);
 }
 
 bool crPatternGraph::hasNode(const crMazeType& mazeIdx) const {
@@ -107,10 +142,7 @@ int crPatternGraph::getNodeIdx(const crMazeType& mazeIdx) const {
 }
 
 int crPatternGraph::addNode(const crMazeType& mazeIdx) {
-    if (mazeIdx.empty() || mazeIdx.x < 0 || mazeIdx.y < 0 || mazeIdx.z < 0 ||
-        static_cast<std::size_t>(mazeIdx.x) >= xDim ||
-        static_cast<std::size_t>(mazeIdx.y) >= yDim ||
-        static_cast<std::size_t>(mazeIdx.z) >= zDim) {
+    if (!isValidMazeIdx(mazeIdx)) {
         return -1;
     }
 
@@ -140,6 +172,39 @@ void crPatternGraph::addRoutingLayerNodes(frCoord xCoord, frCoord yCoord) {
     for (auto layerNum : zCoords) {
         addNode(getMazeIdx(xCoord, yCoord, layerNum));
     }
+}
+
+bool crPatternGraph::getNextMazeIdx(const crMazeType& curr, frDirEnum dir,
+                                    crMazeType& next) const {
+    if (!isValidMazeIdx(curr)) {
+        return false;
+    }
+
+    next = curr;
+    switch (dir) {
+        case frDirEnum::E:
+            ++next.x;
+            break;
+        case frDirEnum::W:
+            --next.x;
+            break;
+        case frDirEnum::N:
+            ++next.y;
+            break;
+        case frDirEnum::S:
+            --next.y;
+            break;
+        case frDirEnum::U:
+            ++next.z;
+            break;
+        case frDirEnum::D:
+            --next.z;
+            break;
+        default:
+            return false;
+    }
+
+    return isValidMazeIdx(next) && hasNode(next);
 }
 
 void crPatternGraph::build(CustomRouteWorker* worker) {
