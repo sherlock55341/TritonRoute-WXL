@@ -20,7 +20,6 @@ void CustomRouteWorker::initPatternGraph() {
 
     std::vector<frCoord> xCoords;
     std::vector<frCoord> yCoords;
-    std::vector<crPatternPoint> points;
     std::vector<frLayerNum> zCoords;
 
     for (auto& layer : design->getTech()->getLayers()) {
@@ -60,24 +59,6 @@ void CustomRouteWorker::initPatternGraph() {
     patternGraph->setCoords(std::move(xCoords), std::move(yCoords),
                             std::move(zCoords));
 
-    for (std::size_t i = 0; i < nets.size() && i < policies.size(); ++i) {
-        auto cNet = nets[i].get();
-        switch (policies[i]) {
-            case crPatternEnum::L:
-                initPatternGraphL(cNet, patternGraph->getXCoords(),
-                                  patternGraph->getYCoords(), points);
-                break;
-            default:
-                break;
-        }
-    }
-
-    std::sort(points.begin(), points.end());
-    points.erase(std::unique(points.begin(), points.end()), points.end());
-
-    for (auto& point : points) {
-        patternGraph->addRoutingLayerNodes(point.x, point.y);
-    }
 }
 
 void CustomRouteWorker::collectPatternGraphCoordsL(

@@ -103,7 +103,7 @@ set (FLEXROUTE_SRC
   ${FLEXROUTE_HOME}/src/cr/worker/crWorker.cpp
   ${FLEXROUTE_HOME}/src/cr/worker/crWorkerInit.cpp
   ${FLEXROUTE_HOME}/src/cr/graph/crPatternGraph.cpp
-  ${FLEXROUTE_HOME}/src/cr/route/crMazeRouter.cpp
+  ${FLEXROUTE_HOME}/src/cr/route/crPatternRouter.cpp
   ${FLEXROUTE_HOME}/src/cr/cr.cpp
   )
 

@@ -116,11 +116,19 @@ The current `src/cr/` implementation has intentionally adopted only a subset of
 the `dr` flow. The following are implemented:
 
 - global Hanan axes in `crPatternGraph`, with only selected pattern points
-  materialized as nodes
-- policy-driven maze search in `crMazeRouter`
+  collected from the target nets and route/ext box bounds
+- full grid instantiation in `crPatternGraph`; every valid
+  `(xCoord, yCoord, routingLayer)` inside the graph dimensions is now treated
+  as an available node, without a separate sparse node map
+- policy-driven routing in `crPatternRouter`; current `L` policy enumerates
+  candidate bend locations instead of running full maze expansion, and no
+  longer keeps unused Dijkstra-style search state for `L`
 - graph-owned planar `DRCCost` marking for basic short/spacing influence
-- graph-owned planar non-preferred-direction cost marking, following DR's
-  "wrong-way is allowed but penalized" model instead of hard forbidding it
+- planar non-preferred-direction cost is derived on demand from layer preferred
+  direction, following DR's "wrong-way is allowed but penalized" model instead
+  of hard forbidding it
+- graph-owned edge cost channels use DR-like normalized edge keys, so opposite
+  directions share the same physical edge cost
 - graph-owned planar `DRCCost` uses increment/decrement counting semantics,
   following the `dr` style of additive removable cost instead of bool/set
   marking
@@ -168,8 +176,14 @@ The following parts were intentionally simplified and are not implemented yet:
   `crVia`/`frVia`, using pin-AP one-cut viaDefs when available and otherwise
   falling back to the cut layer's default viaDef.
 - Implemented: planar non-preferred-direction routing is now penalized in
-  `crMazeRouter`, using a graph-owned edge-cost channel instead of hard
+  `crPatternRouter`, using a graph-owned edge-cost channel instead of hard
   blocking wrong-way edges.
+- Implemented: `L` policy now enumerates candidate bend locations plus
+  endpoint via transitions onto a shared routing layer, and scores those
+  candidates directly instead of using maze search with turn penalties.
+- Implemented: `crPatternGraph` no longer sparsely inserts nodes. The graph is
+  now a full `xCoords x yCoords x zCoords` grid, and router traversal only
+  checks `mazeIdx` validity.
 - Implemented: writeback is centralized. `crNet` keeps only local
   `routeConnFigs`; end-stage cleanup now queries global `frRegionQuery` inside
   `routeBox` and removes old `frPathSeg`/`frVia`/`frPatchWire` for the routed

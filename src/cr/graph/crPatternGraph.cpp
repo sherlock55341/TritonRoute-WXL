@@ -2,10 +2,15 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include "db/obj/frGuide.h"
+#include "db/obj/frInstBlockage.h"
+#include "db/obj/frMarker.h"
 #include "db/obj/frShape.h"
 #include "db/obj/frVia.h"
 #include "db/tech/frConstraint.h"
+#include "frRegionQuery.h"
 #include "cr/type/crPathSeg.hpp"
+#include "cr/type/crVia.hpp"
 #include "cr/worker/crWorker.hpp"
 
 namespace fr {
@@ -43,6 +48,8 @@ void crPatternGraph::setCoords(std::vector<frCoord> xCoordsIn,
     yCoords = std::move(yCoordsIn);
     zCoords = std::move(zCoordsIn);
     setDims(xCoords.size(), yCoords.size(), zCoords.size());
+    planarDrcCosts.assign(getGridCapacity(), 0);
+    viaDrcCosts.assign(getGridCapacity(), 0);
 }
 
 void crPatternGraph::clear() {
@@ -52,10 +59,8 @@ void crPatternGraph::clear() {
     xCoords.clear();
     yCoords.clear();
     zCoords.clear();
-    nodes.clear();
-    nodeMap.clear();
-    drcEdges.clear();
-    nonPrefEdges.clear();
+    planarDrcCosts.clear();
+    viaDrcCosts.clear();
 }
 
 template <typename T>
@@ -93,7 +98,8 @@ bool crPatternGraph::hasMazeIdx(frCoord xCoord, frCoord yCoord,
 
 crMazeType crPatternGraph::getMazeIdx(frCoord xCoord, frCoord yCoord,
                                       frLayerNum layerNum) const {
-    return crMazeType(getCoordIdx(xCoords, xCoord), getCoordIdx(yCoords, yCoord),
+    return crMazeType(getCoordIdx(xCoords, xCoord),
+                      getCoordIdx(yCoords, yCoord),
                       getCoordIdx(zCoords, layerNum));
 }
 
@@ -118,6 +124,32 @@ bool crPatternGraph::isValidMazeIdx(const crMazeType& mazeIdx) const {
            static_cast<std::size_t>(mazeIdx.z) < zDim;
 }
 
+std::size_t crPatternGraph::getGridCapacity() const {
+    return xDim * yDim * zDim;
+}
+
+std::size_t crPatternGraph::getGridIdx(const crMazeType& mazeIdx) const {
+    if (!isValidMazeIdx(mazeIdx)) {
+        throw std::invalid_argument("cannot index invalid crMazeType");
+    }
+    return static_cast<std::size_t>(mazeIdx.z) * xDim * yDim +
+           static_cast<std::size_t>(mazeIdx.x) * yDim +
+           static_cast<std::size_t>(mazeIdx.y);
+}
+
+std::size_t crPatternGraph::getPlanarCostIdx(const crMazeType& node) const {
+    return getGridIdx(node);
+}
+
+std::size_t crPatternGraph::getViaCostIdx(const crMazeType& node,
+                                          frDirEnum dir) const {
+    auto canonical = node;
+    if (dir == frDirEnum::D) {
+        --canonical.z;
+    }
+    return getGridIdx(canonical);
+}
+
 std::uint64_t crPatternGraph::getMapKey(const crMazeType& mazeIdx) const {
     if (!isValidMazeIdx(mazeIdx)) {
         throw std::invalid_argument("cannot encode empty crMazeType");
@@ -140,49 +172,29 @@ std::uint64_t crPatternGraph::getEdgeKey(const crMazeType& node,
     return getNodeKey(node) * 7 + static_cast<std::uint64_t>(dir);
 }
 
+std::uint64_t crPatternGraph::getCostEdgeKey(crMazeType node,
+                                             frDirEnum dir) const {
+    switch (dir) {
+        case frDirEnum::W:
+            --node.x;
+            dir = frDirEnum::E;
+            break;
+        case frDirEnum::S:
+            --node.y;
+            dir = frDirEnum::N;
+            break;
+        case frDirEnum::D:
+            --node.z;
+            dir = frDirEnum::U;
+            break;
+        default:
+            break;
+    }
+    return getEdgeKey(node, dir);
+}
+
 bool crPatternGraph::hasNode(const crMazeType& mazeIdx) const {
-    return nodeMap.find(getMapKey(mazeIdx)) != nodeMap.end();
-}
-
-int crPatternGraph::getNodeIdx(const crMazeType& mazeIdx) const {
-    auto it = nodeMap.find(getMapKey(mazeIdx));
-    if (it == nodeMap.end()) {
-        return -1;
-    }
-    return it->second;
-}
-
-int crPatternGraph::addNode(const crMazeType& mazeIdx) {
-    if (!isValidMazeIdx(mazeIdx)) {
-        return -1;
-    }
-
-    auto key = getMapKey(mazeIdx);
-    auto it = nodeMap.find(key);
-    if (it != nodeMap.end()) {
-        return it->second;
-    }
-
-    nodes.push_back(mazeIdx);
-    auto nodeIdx = static_cast<int>(nodes.size()) - 1;
-    nodeMap[key] = nodeIdx;
-    return nodeIdx;
-}
-
-void crPatternGraph::addNodes(const std::vector<crMazeType>& mazeIdxs) {
-    for (auto& mazeIdx : mazeIdxs) {
-        addNode(mazeIdx);
-    }
-}
-
-void crPatternGraph::addRoutingLayerNodes(frCoord xCoord, frCoord yCoord) {
-    if (!hasMazeXCoord(xCoord) || !hasMazeYCoord(yCoord)) {
-        return;
-    }
-
-    for (auto layerNum : zCoords) {
-        addNode(getMazeIdx(xCoord, yCoord, layerNum));
-    }
+    return isValidMazeIdx(mazeIdx);
 }
 
 bool crPatternGraph::getNextMazeIdx(const crMazeType& curr, frDirEnum dir,
@@ -215,50 +227,63 @@ bool crPatternGraph::getNextMazeIdx(const crMazeType& curr, frDirEnum dir,
             return false;
     }
 
-    return isValidMazeIdx(next) && hasNode(next);
+    return isValidMazeIdx(next);
 }
 
 bool crPatternGraph::hasDRCCost(const crMazeType& node, frDirEnum dir) const {
-    auto it = drcEdges.find(getEdgeKey(node, dir));
-    return it != drcEdges.end() && it->second > 0;
+    if (dir == frDirEnum::U || dir == frDirEnum::D) {
+        auto idx = getViaCostIdx(node, dir);
+        return idx < viaDrcCosts.size() && viaDrcCosts[idx] > 0;
+    }
+
+    auto canonical = node;
+    if (dir == frDirEnum::W) {
+        --canonical.x;
+    } else if (dir == frDirEnum::S) {
+        --canonical.y;
+    }
+
+    auto idx = getPlanarCostIdx(canonical);
+    return idx < planarDrcCosts.size() && planarDrcCosts[idx] > 0;
 }
 
 bool crPatternGraph::hasNonPrefCost(const crMazeType& node,
                                     frDirEnum dir) const {
-    auto it = nonPrefEdges.find(getEdgeKey(node, dir));
-    return it != nonPrefEdges.end() && it->second > 0;
-}
-
-void crPatternGraph::addNonPrefCost(const crMazeType& node, frDirEnum dir) {
-    ++nonPrefEdges[getEdgeKey(node, dir)];
-}
-
-void crPatternGraph::subNonPrefCost(const crMazeType& node, frDirEnum dir) {
-    auto key = getEdgeKey(node, dir);
-    auto it = nonPrefEdges.find(key);
-    if (it == nonPrefEdges.end()) {
-        return;
-    }
-    --(it->second);
-    if (it->second <= 0) {
-        nonPrefEdges.erase(it);
-    }
+    return isPlanarNonPrefDir(getLayerNum(node), dir);
 }
 
 void crPatternGraph::addDRCCost(const crMazeType& node, frDirEnum dir) {
-    ++drcEdges[getEdgeKey(node, dir)];
+    if (dir == frDirEnum::U || dir == frDirEnum::D) {
+        auto idx = getViaCostIdx(node, dir);
+        if (idx < viaDrcCosts.size() &&
+            viaDrcCosts[idx] < std::numeric_limits<std::uint16_t>::max()) {
+            ++viaDrcCosts[idx];
+        }
+        return;
+    }
+
+    auto idx = getPlanarCostIdx(node);
+    if (idx < planarDrcCosts.size() &&
+        planarDrcCosts[idx] < std::numeric_limits<std::uint16_t>::max()) {
+        ++planarDrcCosts[idx];
+    }
 }
 
 void crPatternGraph::subDRCCost(const crMazeType& node, frDirEnum dir) {
-    auto key = getEdgeKey(node, dir);
-    auto it = drcEdges.find(key);
-    if (it == drcEdges.end()) {
+    if (dir == frDirEnum::U || dir == frDirEnum::D) {
+        auto idx = getViaCostIdx(node, dir);
+        if (idx >= viaDrcCosts.size() || viaDrcCosts[idx] == 0) {
+            return;
+        }
+        --viaDrcCosts[idx];
         return;
     }
-    --(it->second);
-    if (it->second <= 0) {
-        drcEdges.erase(it);
+
+    auto idx = getPlanarCostIdx(node);
+    if (idx >= planarDrcCosts.size() || planarDrcCosts[idx] == 0) {
+        return;
     }
+    --planarDrcCosts[idx];
 }
 
 frCoord crPatternGraph::getMinSpacing(const frBox& box,
@@ -291,6 +316,20 @@ frCoord crPatternGraph::getMinSpacing(const frBox& box,
     }
 }
 
+namespace {
+
+frCoord getBoxDistSquare(const frBox& lhs, const frBox& rhs) {
+    auto dx = std::max(
+        std::max(lhs.left(), rhs.left()) - std::min(lhs.right(), rhs.right()),
+        static_cast<frCoord>(0));
+    auto dy = std::max(
+        std::max(lhs.bottom(), rhs.bottom()) - std::min(lhs.top(), rhs.top()),
+        static_cast<frCoord>(0));
+    return dx * dx + dy * dy;
+}
+
+}  // namespace
+
 frBox crPatternGraph::getPlanarEdgeBox(const crMazeType& curr,
                                        const crMazeType& next) const {
     auto currPt = getPoint(curr);
@@ -306,81 +345,6 @@ frBox crPatternGraph::getPlanarEdgeBox(const crMazeType& curr,
     }
     return frBox(currPt.x() - halfWidth, std::min(currPt.y(), nextPt.y()),
                  currPt.x() + halfWidth, std::max(currPt.y(), nextPt.y()));
-}
-
-bool crPatternGraph::hasShortViolation(const frBox& edgeBox,
-                                       frLayerNum layerNum) const {
-    auto design = getDesign();
-    auto rq = design ? design->getRegionQuery() : nullptr;
-    if (!rq) {
-        return false;
-    }
-
-    std::vector<frBlockObject*> result;
-    rq->queryDRObj(edgeBox, layerNum, result);
-    for (auto* obj : result) {
-        if (!isExternalObject(obj)) {
-            continue;
-        }
-
-        frBox objBox;
-        if (obj->typeId() == frcPathSeg || obj->typeId() == frcRect ||
-            obj->typeId() == frcPatchWire) {
-            static_cast<frShape*>(obj)->getBBox(objBox);
-        } else if (obj->typeId() == frcVia) {
-            static_cast<frVia*>(obj)->getBBox(objBox);
-        } else {
-            continue;
-        }
-
-        if (edgeBox.overlaps(objBox)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool crPatternGraph::hasSpacingViolation(const frBox& edgeBox,
-                                         frLayerNum layerNum) const {
-    auto spacing = getMinSpacing(edgeBox, layerNum);
-    if (spacing <= 0) {
-        return false;
-    }
-
-    frBox queryBox;
-    edgeBox.bloat(spacing, queryBox);
-
-    auto design = getDesign();
-    auto rq = design ? design->getRegionQuery() : nullptr;
-    if (!rq) {
-        return false;
-    }
-
-    std::vector<frBlockObject*> result;
-    rq->queryDRObj(queryBox, layerNum, result);
-    for (auto* obj : result) {
-        if (!isExternalObject(obj)) {
-            continue;
-        }
-
-        frBox objBox;
-        if (obj->typeId() == frcPathSeg || obj->typeId() == frcRect ||
-            obj->typeId() == frcPatchWire) {
-            static_cast<frShape*>(obj)->getBBox(objBox);
-        } else if (obj->typeId() == frcVia) {
-            static_cast<frVia*>(obj)->getBBox(objBox);
-        } else {
-            continue;
-        }
-
-        if (edgeBox.overlaps(objBox)) {
-            continue;
-        }
-        if (queryBox.overlaps(objBox, false)) {
-            return true;
-        }
-    }
-    return false;
 }
 
 bool crPatternGraph::isExternalObject(frBlockObject* obj) const {
@@ -414,6 +378,96 @@ bool crPatternGraph::isExternalObject(frBlockObject* obj) const {
     return false;
 }
 
+void crPatternGraph::modMetalShapeCost(const frBox& srcBox, frLayerNum layerNum,
+                                       bool isAdd) {
+    if (xDim == 0 || yDim == 0 || zDim == 0 || !hasMazeZCoord(layerNum)) {
+        return;
+    }
+
+    auto z = getCoordIdx(zCoords, layerNum);
+    if (z < 0) {
+        return;
+    }
+
+    auto layer = getTech() ? getTech()->getLayer(layerNum) : nullptr;
+    if (!layer) {
+        return;
+    }
+
+    frCoord spacing = getMinSpacing(srcBox, layerNum);
+    frCoord halfWidth = layer->getWidth() / 2;
+    frBox searchBox;
+    srcBox.bloat(std::max(static_cast<frCoord>(0), spacing + halfWidth),
+                 searchBox);
+    auto spacingSquare = spacing * spacing;
+
+    auto xBegin =
+        std::lower_bound(xCoords.begin(), xCoords.end(), searchBox.left());
+    auto xEnd =
+        std::upper_bound(xCoords.begin(), xCoords.end(), searchBox.right());
+    auto yBegin =
+        std::lower_bound(yCoords.begin(), yCoords.end(), searchBox.bottom());
+    auto yEnd =
+        std::upper_bound(yCoords.begin(), yCoords.end(), searchBox.top());
+
+    for (auto xIt = xBegin; xIt != xEnd; ++xIt) {
+        auto xIdx = static_cast<crIndex_t>(xIt - xCoords.begin());
+        for (auto yIt = yBegin; yIt != yEnd; ++yIt) {
+            auto yIdx = static_cast<crIndex_t>(yIt - yCoords.begin());
+            crMazeType curr(xIdx, yIdx, z);
+            auto pt = getPoint(curr);
+            frBox testBox(pt.x() - halfWidth, pt.y() - halfWidth,
+                          pt.x() + halfWidth, pt.y() + halfWidth);
+            if (!srcBox.overlaps(testBox) &&
+                getBoxDistSquare(srcBox, testBox) >= spacingSquare) {
+                continue;
+            }
+            if (isAdd) {
+                addDRCCost(curr, frDirEnum::E);
+            } else {
+                subDRCCost(curr, frDirEnum::E);
+            }
+        }
+    }
+}
+
+void crPatternGraph::modViaShapeCost(const frBox& cutBox,
+                                     frLayerNum lowerLayerNum, bool isAdd) {
+    if (xDim == 0 || yDim == 0 || zDim == 0 || !hasMazeZCoord(lowerLayerNum)) {
+        return;
+    }
+
+    auto z = getCoordIdx(zCoords, lowerLayerNum);
+    if (z < 0 || static_cast<std::size_t>(z + 1) >= zDim) {
+        return;
+    }
+
+    auto xBegin =
+        std::lower_bound(xCoords.begin(), xCoords.end(), cutBox.left());
+    auto xEnd =
+        std::upper_bound(xCoords.begin(), xCoords.end(), cutBox.right());
+    auto yBegin =
+        std::lower_bound(yCoords.begin(), yCoords.end(), cutBox.bottom());
+    auto yEnd = std::upper_bound(yCoords.begin(), yCoords.end(), cutBox.top());
+
+    for (auto xIt = xBegin; xIt != xEnd; ++xIt) {
+        auto xIdx = static_cast<crIndex_t>(xIt - xCoords.begin());
+        for (auto yIt = yBegin; yIt != yEnd; ++yIt) {
+            auto yIdx = static_cast<crIndex_t>(yIt - yCoords.begin());
+            crMazeType node(xIdx, yIdx, z);
+            auto pt = getPoint(node);
+            if (!cutBox.contains(pt)) {
+                continue;
+            }
+            if (isAdd) {
+                addDRCCost(node, frDirEnum::U);
+            } else {
+                subDRCCost(node, frDirEnum::U);
+            }
+        }
+    }
+}
+
 bool crPatternGraph::isPlanarNonPrefDir(frLayerNum layerNum,
                                         frDirEnum dir) const {
     if (dir != frDirEnum::E && dir != frDirEnum::W && dir != frDirEnum::N &&
@@ -437,48 +491,54 @@ bool crPatternGraph::isPlanarNonPrefDir(frLayerNum layerNum,
     return false;
 }
 
-void crPatternGraph::initNonPrefCost() {
-    for (auto& node : nodes) {
-        auto layerNum = getLayerNum(node);
-        for (auto dir : {frDirEnum::E, frDirEnum::W, frDirEnum::N,
-                         frDirEnum::S}) {
-            if (!isPlanarNonPrefDir(layerNum, dir)) {
-                continue;
-            }
+void crPatternGraph::modFrObjCost(frBlockObject* obj, bool isAdd) {
+    if (!obj || !isExternalObject(obj)) {
+        return;
+    }
 
-            crMazeType next;
-            if (!getNextMazeIdx(node, dir, next)) {
-                continue;
-            }
-            addNonPrefCost(node, dir);
+    if (obj->typeId() == frcPathSeg || obj->typeId() == frcRect ||
+        obj->typeId() == frcPatchWire) {
+        auto* shape = static_cast<frShape*>(obj);
+        frBox box;
+        shape->getBBox(box);
+        modMetalShapeCost(box, shape->getLayerNum(), isAdd);
+        return;
+    }
+
+    if (obj->typeId() == frcVia) {
+        auto* via = static_cast<frVia*>(obj);
+        auto* viaDef = via->getViaDef();
+        if (!viaDef) {
+            return;
         }
+
+        frBox box;
+        via->getLayer1BBox(box);
+        modMetalShapeCost(box, viaDef->getLayer1Num(), isAdd);
+        via->getLayer2BBox(box);
+        modMetalShapeCost(box, viaDef->getLayer2Num(), isAdd);
+        via->getCutBBox(box);
+        modViaShapeCost(box, viaDef->getLayer1Num(), isAdd);
     }
 }
 
-void crPatternGraph::initPlanarDRCCost() {
-    for (auto& node : nodes) {
-        auto layerNum = getLayerNum(node);
-        for (auto dir : {frDirEnum::E, frDirEnum::W, frDirEnum::N,
-                         frDirEnum::S}) {
-            crMazeType next;
-            if (!getNextMazeIdx(node, dir, next)) {
-                continue;
-            }
+void crPatternGraph::initExternalDRCCost() {
+    auto design = getDesign();
+    if (!design || !worker) {
+        return;
+    }
 
-            auto edgeBox = getPlanarEdgeBox(node, next);
-            if (hasShortViolation(edgeBox, layerNum) ||
-                hasSpacingViolation(edgeBox, layerNum)) {
-                addDRCCost(node, dir);
-            }
-        }
+    std::vector<frBlockObject*> result;
+    design->getRegionQuery()->queryDRObj(worker->getExtBox(), result);
+    for (auto* obj : result) {
+        modFrObjCost(obj, true);
     }
 }
 
 void crPatternGraph::initDRCCost() {
-    drcEdges.clear();
-    nonPrefEdges.clear();
-    initNonPrefCost();
-    initPlanarDRCCost();
+    std::fill(planarDrcCosts.begin(), planarDrcCosts.end(), 0);
+    std::fill(viaDrcCosts.begin(), viaDrcCosts.end(), 0);
+    initExternalDRCCost();
 }
 
 void crPatternGraph::addPathCost(const crConnFig* connFig) {
@@ -497,7 +557,7 @@ void crPatternGraph::modPathCost(const crConnFig* connFig, bool isAdd) {
     if (connFig->typeId() == crcPathSeg) {
         modPathSegCost(static_cast<const crPathSeg*>(connFig), isAdd);
     } else if (connFig->typeId() == crcVia) {
-        return;
+        modViaCost(static_cast<const crVia*>(connFig), isAdd);
     }
 }
 
@@ -506,41 +566,20 @@ void crPatternGraph::modPathSegCost(const crPathSeg* pathSeg, bool isAdd) {
         return;
     }
 
-    auto beginMazeIdx = pathSeg->getBeginMazeIdx();
-    auto endMazeIdx = pathSeg->getEndMazeIdx();
-    auto layerNum = pathSeg->getLayerNum();
-    if (beginMazeIdx.empty() || endMazeIdx.empty() || beginMazeIdx.z != endMazeIdx.z) {
+    modMetalShapeCost(pathSeg->getBBox(), pathSeg->getLayerNum(), isAdd);
+}
+
+void crPatternGraph::modViaCost(const crVia* via, bool isAdd) {
+    if (!via || !via->getViaDef()) {
         return;
     }
 
-    auto dir = frDirEnum::UNKNOWN;
-    if (beginMazeIdx.x == endMazeIdx.x) {
-        dir = (beginMazeIdx.y <= endMazeIdx.y) ? frDirEnum::N : frDirEnum::S;
-    } else if (beginMazeIdx.y == endMazeIdx.y) {
-        dir = (beginMazeIdx.x <= endMazeIdx.x) ? frDirEnum::E : frDirEnum::W;
-    } else {
-        return;
-    }
-
-    auto curr = beginMazeIdx;
-    while (!(curr == endMazeIdx)) {
-        crMazeType next;
-        if (!getNextMazeIdx(curr, dir, next)) {
-            break;
-        }
-
-        auto edgeBox = getPlanarEdgeBox(curr, next);
-        auto hasViolation =
-            hasShortViolation(edgeBox, layerNum) || hasSpacingViolation(edgeBox, layerNum);
-        if (hasViolation) {
-            if (isAdd) {
-                addDRCCost(curr, dir);
-            } else {
-                subDRCCost(curr, dir);
-            }
-        }
-        curr = next;
-    }
+    auto* viaDef = via->getViaDef();
+    modMetalShapeCost(via->getLowerLayerFigBBox(), viaDef->getLayer1Num(),
+                      isAdd);
+    modMetalShapeCost(via->getUpperLayerFigBBox(), viaDef->getLayer2Num(),
+                      isAdd);
+    modViaShapeCost(via->getCutFigBBox(), viaDef->getLayer1Num(), isAdd);
 }
 
 void crPatternGraph::build(CustomRouteWorker* worker) {

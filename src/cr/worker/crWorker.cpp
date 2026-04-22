@@ -1,7 +1,7 @@
 #include "crWorker.hpp"
 #include "cr/type/crPathSeg.hpp"
 #include "cr/type/crVia.hpp"
-#include "cr/route/crMazeRouter.hpp"
+#include "cr/route/crPatternRouter.hpp"
 #include "db/obj/frNet.h"
 #include "db/obj/frShape.h"
 #include "db/obj/frVia.h"
@@ -49,7 +49,7 @@ bool CustomRouteWorker::routeNet(crNet* cNet, crPatternEnum policy,
                                  std::vector<crMazeType>& path) const {
     const_cast<CustomRouteWorker*>(this)->clearRouteConnFigs(cNet);
 
-    crMazeRouter router(patternGraph.get(), cNet, policy);
+    crPatternRouter router(patternGraph.get(), cNet, policy);
     if (!router.searchPath()) {
         path.clear();
         std::cout << "CANNOT FIND" << std::endl;
@@ -303,7 +303,8 @@ void CustomRouteWorker::endRemoveNetsPatchWire(frPatchWire* patchWire) const {
     patchWire->getNet()->removePatchWire(patchWire);
 }
 
-void CustomRouteWorker::endAddNets(const std::vector<crNet*>& routedNets) const {
+void CustomRouteWorker::endAddNets(
+    const std::vector<crNet*>& routedNets) const {
     if (!design) {
         return;
     }
@@ -341,7 +342,8 @@ void CustomRouteWorker::endAddNetsPathSeg(crPathSeg* pathSeg) const {
     auto frPath = std::make_unique<frPathSeg>();
     auto begin = pathSeg->getBegin();
     auto end = pathSeg->getEnd();
-    if ((begin.x() > end.x()) || (begin.x() == end.x() && begin.y() > end.y())) {
+    if ((begin.x() > end.x()) ||
+        (begin.x() == end.x() && begin.y() > end.y())) {
         std::swap(begin, end);
     }
     frPath->setPoints(begin, end);

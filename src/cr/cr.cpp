@@ -8,7 +8,6 @@ void CustomRoute::run() {
         workers.push_back(
             std::make_unique<CustomRouteWorker>(this, routeTasks));
     }
-    std::cout << workers.front()->getPatternGraph()->getNumNodes() << std::endl;
     std::cout << workers.front()->getPatternGraph()->getXCoords().size() *
                      workers.front()->getPatternGraph()->getYCoords().size() *
                      workers.front()->getPatternGraph()->getZCoords().size()
