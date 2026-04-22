@@ -119,6 +119,12 @@ frCoord crMazeRouter::getNextPathCost(const Wavefront& curr,
             edgeCost *= bottomLayerPenaltyCoeff;
         }
         nextCost += edgeCost;
+        if (graph->hasNonPrefCost(currNode, dir)) {
+            nextCost += edgeCost * CR_NONPREF_ROUTE_PENALTY;
+        }
+        if (graph->hasDRCCost(currNode, dir)) {
+            nextCost += edgeCost * CR_SPACING_DRC_PENALTY;
+        }
         if (policy == crPatternEnum::L && isTurn(curr.state.lastDir, dir) &&
             curr.state.turnCount >= 1) {
             nextCost += CR_L_SHAPE_EXTRA_TURN_PENALTY;
@@ -340,7 +346,11 @@ void crMazeRouter::printPath() const {
                   << " (x " << pt.x() << " y " << pt.y() << " l "
                   << layerNum << ")"
                   << " dir=" << getDirName(stepDir)
-                  << " turnCount=" << turnCount << std::endl;
+                  << " turnCount=" << turnCount;
+        if (i > 0 && graph->hasDRCCost(path[i - 1], stepDir)) {
+            std::cout << " drcCost=1";
+        }
+        std::cout << std::endl;
     }
 }
 

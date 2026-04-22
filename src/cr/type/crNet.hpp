@@ -12,6 +12,7 @@ class crNet : public crBlockObject {
    public:
     crNet() : crBlockObject(), pins(), routeConnFigs(), terms(), net(nullptr) {}
     // getters
+    frBlockObjectEnum typeId() const override { return crcNet; }
     const std::vector<std::unique_ptr<crPin>>& getPins() const { return pins; }
     const std::vector<std::unique_ptr<crConnFig>>& getRouteConnFigs() const { return routeConnFigs; }
     const std::set<frBlockObject*>& getTerms() const { return terms; }
@@ -25,6 +26,11 @@ class crNet : public crBlockObject {
         _pin->setNet(this);
         pins.push_back(std::move(_pin));
     }
+    void addRouteConnFig(std::unique_ptr<crConnFig>& connFig) {
+        connFig->addToNet(this);
+        routeConnFigs.push_back(std::move(connFig));
+    }
+    void clearRouteConnFigs() { routeConnFigs.clear(); }
    protected:
     std::vector<std::unique_ptr<crPin>> pins;
     std::vector<std::unique_ptr<crConnFig>> routeConnFigs;

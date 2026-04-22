@@ -11,7 +11,10 @@ namespace fr {
 class crMazeRouter {
    public:
     crMazeRouter(crPatternGraph* graphIn, crNet* netIn, crPatternEnum policyIn)
-        : graph(graphIn), net(netIn), policy(policyIn), path() {}
+        : graph(graphIn),
+          net(netIn),
+          policy(policyIn),
+          path() {}
 
     bool searchPath();
     const std::vector<crMazeType>& getPath() const { return path; }

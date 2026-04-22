@@ -3,7 +3,12 @@
 #include <cr/cr.hpp>
 #include <cr/graph/crPatternGraph.hpp>
 #include <cr/type/crNet.hpp>
+#include "cr/type/crVia.hpp"
+#include "db/obj/frNet.h"
+#include "db/obj/frShape.h"
+#include "db/obj/frVia.h"
 #include <map>
+#include <set>
 #include "frBaseTypes.h"
 #include "db/infra/frBox.h"
 #include "db/obj/frTrackPattern.h"
@@ -56,6 +61,25 @@ class CustomRouteWorker {
     void initPatternGraphL(crNet* cNet, const std::vector<frCoord>& xCoords,
                            const std::vector<frCoord>& yCoords,
                            std::vector<crPatternPoint>& points) const;
+    void clearRouteConnFigs(crNet* cNet);
+    void writePathToNet(crNet* cNet, const std::vector<crMazeType>& path) const;
+    void writePathSegToNet(crNet* cNet, const crMazeType& beginMazeIdx,
+                           const crMazeType& endMazeIdx) const;
+    void writeViaToNet(crNet* cNet, const crMazeType& beginMazeIdx,
+                       const crMazeType& endMazeIdx) const;
+    frViaDef* getViaDefForPath(crNet* cNet, const crMazeType& beginMazeIdx,
+                               const crMazeType& endMazeIdx) const;
+    frViaDef* getAccessPointViaDef(const crNet* cNet, const frPoint& origin,
+                                   frLayerNum layerNum,
+                                   frDirEnum dir) const;
+    void endRemoveNets(
+        const std::set<frNet*, frBlockObjectComp>& modifiedNets) const;
+    void endRemoveNetsPathSeg(frPathSeg* pathSeg) const;
+    void endRemoveNetsVia(frVia* via) const;
+    void endRemoveNetsPatchWire(frPatchWire* patchWire) const;
+    void endAddNets(const std::vector<crNet*>& routedNets) const;
+    void endAddNetsPathSeg(crPathSeg* pathSeg) const;
+    void endAddNetsVia(crVia* via) const;
 
     frDesign* design;
     std::vector<std::unique_ptr<crNet>> nets;

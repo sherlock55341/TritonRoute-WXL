@@ -5,13 +5,16 @@
 #include <unordered_map>
 #include <vector>
 #include "db/tech/frTechObject.h"
+#include "db/infra/frBox.h"
 #include "frBaseTypes.h"
+#include "../type/crFig.hpp"
 #include "../type/crMazeType.hpp"
 
 namespace fr {
 
 class CustomRouteWorker;
 class frDesign;
+class crPathSeg;
 
 class crPatternGraph {
    public:
@@ -21,7 +24,9 @@ class crPatternGraph {
           yDim(0),
           zDim(0),
           nodes(),
-          nodeMap() {}
+          nodeMap(),
+          drcEdges(),
+          nonPrefEdges() {}
 
     const std::vector<crMazeType>& getNodes() const { return nodes; }
     std::vector<crMazeType>& getNodes() { return nodes; }
@@ -60,6 +65,15 @@ class crPatternGraph {
     std::uint64_t getNodeKey(const crMazeType& mazeIdx) const;
     bool getNextMazeIdx(const crMazeType& curr, frDirEnum dir,
                         crMazeType& next) const;
+    bool hasNonPrefCost(const crMazeType& node, frDirEnum dir) const;
+    void addNonPrefCost(const crMazeType& node, frDirEnum dir);
+    void subNonPrefCost(const crMazeType& node, frDirEnum dir);
+    bool hasDRCCost(const crMazeType& node, frDirEnum dir) const;
+    void addDRCCost(const crMazeType& node, frDirEnum dir);
+    void subDRCCost(const crMazeType& node, frDirEnum dir);
+    void initDRCCost();
+    void addPathCost(const crConnFig* connFig);
+    void subPathCost(const crConnFig* connFig);
 
    protected:
     template <typename T>
@@ -68,6 +82,17 @@ class crPatternGraph {
     crIndex_t getCoordIdx(const std::vector<T>& coords, T coord) const;
     bool isValidMazeIdx(const crMazeType& mazeIdx) const;
     std::uint64_t getMapKey(const crMazeType& mazeIdx) const;
+    std::uint64_t getEdgeKey(const crMazeType& node, frDirEnum dir) const;
+    frCoord getMinSpacing(const frBox& box, frLayerNum layerNum) const;
+    frBox getPlanarEdgeBox(const crMazeType& curr, const crMazeType& next) const;
+    bool hasShortViolation(const frBox& edgeBox, frLayerNum layerNum) const;
+    bool hasSpacingViolation(const frBox& edgeBox, frLayerNum layerNum) const;
+    bool isExternalObject(frBlockObject* obj) const;
+    bool isPlanarNonPrefDir(frLayerNum layerNum, frDirEnum dir) const;
+    void initNonPrefCost();
+    void initPlanarDRCCost();
+    void modPathCost(const crConnFig* connFig, bool isAdd);
+    void modPathSegCost(const crPathSeg* pathSeg, bool isAdd);
 
     CustomRouteWorker* worker;
     std::size_t xDim;
@@ -78,6 +103,8 @@ class crPatternGraph {
     std::vector<frLayerNum> zCoords;
     std::vector<crMazeType> nodes;
     std::unordered_map<std::uint64_t, int> nodeMap;
+    std::unordered_map<std::uint64_t, int> drcEdges;
+    std::unordered_map<std::uint64_t, int> nonPrefEdges;
 };
 
 }  // namespace fr

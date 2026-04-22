@@ -109,3 +109,72 @@ Recommended implementation sequence:
 - Reuse `drAccessPattern` only as a reference or adapter, not as the core model.
 - Prefer a small end-to-end prototype over early optimization or incremental DRC.
 - Start with a minimal reproducible testcase before running full designs.
+
+## Current `src/cr` Status
+
+The current `src/cr/` implementation has intentionally adopted only a subset of
+the `dr` flow. The following are implemented:
+
+- global Hanan axes in `crPatternGraph`, with only selected pattern points
+  materialized as nodes
+- policy-driven maze search in `crMazeRouter`
+- graph-owned planar `DRCCost` marking for basic short/spacing influence
+- graph-owned planar non-preferred-direction cost marking, following DR's
+  "wrong-way is allowed but penalized" model instead of hard forbidding it
+- graph-owned planar `DRCCost` uses increment/decrement counting semantics,
+  following the `dr` style of additive removable cost instead of bool/set
+  marking
+- incremental `routeNet` flow:
+  1. remove old route conn figs from pattern-graph cost
+  2. search for a new path
+  3. write the path back as `crPathSeg`
+  4. add the new route conn figs back into pattern-graph cost
+- planar `crPathSeg` writeback into the source `frNet`, with matching
+  insertion/removal in the global `frRegionQuery`
+- vertical `crVia` writeback into the source `frNet`, with matching
+  insertion/removal in the global `frRegionQuery`
+- centralized writeback flow in `CustomRouteWorker`: route search populates only
+  local `crConnFig`s first, then a final end-stage removes old DB objects from
+  `frRegionQuery`/`frNet` inside `routeBox` and writes back the new shapes/vias
+
+The following parts were intentionally simplified and are not implemented yet:
+
+- no incremental cost removal/addition for `crVia` or `crPatchWire`
+  `crVia` is now written back, but only `crPathSeg` participates in
+  `addPathCost` / `subPathCost`.
+- no split cost channels like `dr` (`shapeCost`, `markerCost`, `blockCost`,
+  `guideCost`)
+  Current `cr` stores a planar `DRCCost` channel plus a planar non-pref
+  penalty channel, but still does not model the other DR cost classes.
+- no cut-spacing, EOL spacing, min-area, via2via forbidden length, or
+  via-turn forbidden length in graph cost
+  The current graph cost only checks basic planar short/spacing.
+- no history-cost / marker-cost flow like `dr`
+  There is no equivalent of route-queue marker decay/addition.
+- no full DRC-faithful geometry reasoning
+  Current short/spacing checks use bbox-based approximations on existing
+  objects queried from the region query.
+- no patch-metal generation or post-search min-area repair
+- no full rip-up/reroute lifecycle
+  Current flow supports replacing customdr-owned planar `frPathSeg` writeback
+  for the same local `crNet`; broader victim-net rip-up/requeue is not
+  implemented.
+
+## Working Notes
+
+- Implemented: `CustomRouteWorker` now writes generated `frPathSeg`s into the
+  source `frNet` and inserts/removes them from the global `frRegionQuery`.
+- Implemented: `CustomRouteWorker` now writes vertical path transitions as
+  `crVia`/`frVia`, using pin-AP one-cut viaDefs when available and otherwise
+  falling back to the cut layer's default viaDef.
+- Implemented: planar non-preferred-direction routing is now penalized in
+  `crMazeRouter`, using a graph-owned edge-cost channel instead of hard
+  blocking wrong-way edges.
+- Implemented: writeback is centralized. `crNet` keeps only local
+  `routeConnFigs`; end-stage cleanup now queries global `frRegionQuery` inside
+  `routeBox` and removes old `frPathSeg`/`frVia`/`frPatchWire` for the routed
+  target nets before adding new `frPathSeg`/`frVia`.
+- Simplification: writeback now covers `frPathSeg` and `frVia`; no
+  `frPatchWire` generation is added yet.
+- TODO: add via-aware graph cost and richer viaDef selection beyond the first
+  AP-provided one-cut candidate / default viaDef fallback.

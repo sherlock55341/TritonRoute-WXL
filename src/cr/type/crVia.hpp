@@ -102,6 +102,7 @@ class crVia : public crPinFig {
         return box;
     }
     // setters
+    void setOrigin(const frPoint& _origin) { origin = _origin; }
     void setViaDef(frViaDef* _viaDef) { viaDef = _viaDef; }
     void setOwner(crBlockObject* _owner) { owner = _owner; }
     void setBeginMazeIdx(const crMazeType& _beginMazeIdx) {
