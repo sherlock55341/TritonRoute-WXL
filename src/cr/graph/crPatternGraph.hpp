@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <vector>
 #include "db/tech/frTechObject.h"
 #include "db/infra/frBox.h"
@@ -15,6 +16,7 @@ namespace fr {
 class CustomRouteWorker;
 class frDesign;
 class frBlockObject;
+class frViaDef;
 class crPathSeg;
 class crVia;
 
@@ -61,6 +63,9 @@ class crPatternGraph {
     void addDRCCost(const crMazeType& node, frDirEnum dir);
     void subDRCCost(const crMazeType& node, frDirEnum dir);
     void initDRCCost();
+    void setSVia(const crMazeType& node, frViaDef* viaDef);
+    bool isSVia(const crMazeType& node) const;
+    frViaDef* getSViaDef(const crMazeType& node) const;
     void addPathCost(const crConnFig* connFig);
     void subPathCost(const crConnFig* connFig);
 
@@ -84,8 +89,16 @@ class crPatternGraph {
     bool isPlanarNonPrefDir(frLayerNum layerNum, frDirEnum dir) const;
     void modMetalShapeCost(const frBox& srcBox, frLayerNum layerNum,
                            bool isAdd);
+    void modMetalShapeViaCost(const frBox& srcBox, frLayerNum layerNum,
+                              bool isUpperVia, bool isAdd);
+    void modMetalShapeAllCost(const frBox& srcBox, frLayerNum layerNum,
+                              bool isAdd);
     void modViaShapeCost(const frBox& cutBox, frLayerNum lowerLayerNum,
                          bool isAdd);
+    void modEolSpacingCost(const frBox& srcBox, frLayerNum layerNum, bool isAdd,
+                           bool skipVia = false);
+    void modEolSpacingCostHelper(const frBox& testBox, frLayerNum layerNum,
+                                 int eolType, bool isAdd);
     void modFrObjCost(frBlockObject* obj, bool isAdd);
     void initExternalDRCCost();
     void modPathCost(const crConnFig* connFig, bool isAdd);
@@ -101,6 +114,7 @@ class crPatternGraph {
     std::vector<frLayerNum> zCoords;
     std::vector<std::uint16_t> planarDrcCosts;
     std::vector<std::uint16_t> viaDrcCosts;
+    std::map<crMazeType, frViaDef*> sViaDefs;
 };
 
 }  // namespace fr

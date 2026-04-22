@@ -59,11 +59,33 @@ void CustomRouteWorker::initPatternGraph() {
     patternGraph->setCoords(std::move(xCoords), std::move(yCoords),
                             std::move(zCoords));
 
+    for (auto& cNet : nets) {
+        for (auto& pin : cNet->getPins()) {
+            for (auto& ap : pin->getAccessPoints()) {
+                if (!ap->hasUpAccessViaDef()) {
+                    continue;
+                }
+
+                auto pt = ap->getPt();
+                auto layerNum = ap->getLayerIdx();
+                if (!patternGraph->hasMazeIdx(pt.x(), pt.y(), layerNum)) {
+                    continue;
+                }
+
+                const auto& oneCutViaDefs = ap->getUpViaDefs()[0];
+                if (!oneCutViaDefs.empty()) {
+                    patternGraph->setSVia(
+                        patternGraph->getMazeIdx(pt.x(), pt.y(), layerNum),
+                        oneCutViaDefs.front());
+                }
+            }
+        }
+    }
 }
 
 void CustomRouteWorker::collectPatternGraphCoordsL(
-    crNet* cNet, std::vector<frCoord>& xCoords, std::vector<frCoord>& yCoords)
-    const {
+    crNet* cNet, std::vector<frCoord>& xCoords,
+    std::vector<frCoord>& yCoords) const {
     if (!cNet || cNet->getPins().size() != 2) {
         return;
     }
@@ -85,8 +107,8 @@ void CustomRouteWorker::collectPatternGraphCoordsL(
 
 void CustomRouteWorker::initPatternGraphL(
     crNet* cNet, const std::vector<frCoord>& xCoords,
-    const std::vector<frCoord>& yCoords, std::vector<crPatternPoint>& points)
-    const {
+    const std::vector<frCoord>& yCoords,
+    std::vector<crPatternPoint>& points) const {
     if (!cNet || cNet->getPins().size() != 2) {
         return;
     }
@@ -123,7 +145,7 @@ void CustomRouteWorker::initPatternGraphL(
         points.push_back({xCoord, yCoord});
     };
     auto addHorizontalSegment = [&](frCoord yCoord, frCoord xCoord1,
-                                   frCoord xCoord2) {
+                                    frCoord xCoord2) {
         auto lo = std::min(xCoord1, xCoord2);
         auto hi = std::max(xCoord1, xCoord2);
         auto begin = std::lower_bound(xCoords.begin(), xCoords.end(), lo);

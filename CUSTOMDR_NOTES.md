@@ -132,6 +132,13 @@ the `dr` flow. The following are implemented:
 - graph-owned planar `DRCCost` uses increment/decrement counting semantics,
   following the `dr` style of additive removable cost instead of bool/set
   marking
+- graph-owned via `DRCCost` marks default-via placement points whose adjacent
+  metal shape would short or violate the layer min-spacing table, following the
+  same add/sub cost model as planar `DRCCost`
+- EOL spacing graph cost marks planar and default-via candidate points in the
+  EOL windows generated from routed metal and via enclosure rectangles
+- graph-owned SVia table maps pin access maze points to their first one-cut
+  access viaDef so quick DRC and writeback use the same special via footprint
 - incremental `routeNet` flow:
   1. remove old route conn figs from pattern-graph cost
   2. search for a new path
@@ -147,16 +154,18 @@ the `dr` flow. The following are implemented:
 
 The following parts were intentionally simplified and are not implemented yet:
 
-- no incremental cost removal/addition for `crVia` or `crPatchWire`
-  `crVia` is now written back, but only `crPathSeg` participates in
-  `addPathCost` / `subPathCost`.
+- no incremental cost removal/addition for `crPatchWire`
+  `crVia` is written back and participates in `addPathCost` / `subPathCost`,
+  but `frPatchWire` generation is not added yet.
 - no split cost channels like `dr` (`shapeCost`, `markerCost`, `blockCost`,
   `guideCost`)
   Current `cr` stores a planar `DRCCost` channel plus a planar non-pref
   penalty channel, but still does not model the other DR cost classes.
-- no cut-spacing, EOL spacing, min-area, via2via forbidden length, or
-  via-turn forbidden length in graph cost
-  The current graph cost only checks basic planar short/spacing.
+- no cut-spacing, min-area, via2via forbidden length, or via-turn forbidden
+  length in graph cost
+  The current graph cost checks planar metal short/spacing, via adjacent-metal
+  short/spacing, and EOL spacing windows with default-via plus pin-AP SVia
+  footprints, but does not model the richer DR rule set.
 - no history-cost / marker-cost flow like `dr`
   There is no equivalent of route-queue marker decay/addition.
 - no full DRC-faithful geometry reasoning
@@ -184,11 +193,20 @@ The following parts were intentionally simplified and are not implemented yet:
 - Implemented: `crPatternGraph` no longer sparsely inserts nodes. The graph is
   now a full `xCoords x yCoords x zCoords` grid, and router traversal only
   checks `mazeIdx` validity.
+- Implemented: `crPatternGraph` updates via `DRCCost` when a metal shape would
+  conflict with a default-via metal footprint on the layer above or below,
+  aligning the quick cost flow with DR's planar plus via min-spacing updates.
+- Implemented: `crPatternGraph` updates EOL `DRCCost` for planar and default-via
+  candidates from path segments and via enclosure rectangles, following DR's
+  `modEolSpacingCost` structure.
+- Implemented: `crPatternGraph` stores SVia access viaDefs keyed by lower-layer
+  maze index. Via min-spacing, EOL via candidate filtering, and final via
+  writeback prefer the SVia viaDef before falling back to default viaDefs.
 - Implemented: writeback is centralized. `crNet` keeps only local
   `routeConnFigs`; end-stage cleanup now queries global `frRegionQuery` inside
   `routeBox` and removes old `frPathSeg`/`frVia`/`frPatchWire` for the routed
   target nets before adding new `frPathSeg`/`frVia`.
 - Simplification: writeback now covers `frPathSeg` and `frVia`; no
   `frPatchWire` generation is added yet.
-- TODO: add via-aware graph cost and richer viaDef selection beyond the first
-  AP-provided one-cut candidate / default viaDef fallback.
+- TODO: add richer viaDef-aware graph cost beyond the first AP-provided one-cut
+  candidate / default viaDef fallback.

@@ -199,6 +199,11 @@ frViaDef* CustomRouteWorker::getViaDefForPath(
     auto endLayerNum = patternGraph->getLayerNum(endMazeIdx);
     auto origin = patternGraph->getPoint(beginMazeIdx);
     auto dir = (endLayerNum > beginLayerNum) ? frDirEnum::U : frDirEnum::D;
+    auto lowerMazeIdx = (dir == frDirEnum::U) ? beginMazeIdx : endMazeIdx;
+    if (auto sViaDef = patternGraph->getSViaDef(lowerMazeIdx)) {
+        return sViaDef;
+    }
+
     auto accessViaDef = getAccessPointViaDef(cNet, origin, beginLayerNum, dir);
     if (accessViaDef) {
         return accessViaDef;

@@ -61,6 +61,7 @@ void crPatternGraph::clear() {
     zCoords.clear();
     planarDrcCosts.clear();
     viaDrcCosts.clear();
+    sViaDefs.clear();
 }
 
 template <typename T>
@@ -286,6 +287,25 @@ void crPatternGraph::subDRCCost(const crMazeType& node, frDirEnum dir) {
     --planarDrcCosts[idx];
 }
 
+void crPatternGraph::setSVia(const crMazeType& node, frViaDef* viaDef) {
+    if (!viaDef || !isValidMazeIdx(node)) {
+        return;
+    }
+    sViaDefs[node] = viaDef;
+}
+
+bool crPatternGraph::isSVia(const crMazeType& node) const {
+    return isValidMazeIdx(node) && sViaDefs.find(node) != sViaDefs.end();
+}
+
+frViaDef* crPatternGraph::getSViaDef(const crMazeType& node) const {
+    if (!isValidMazeIdx(node)) {
+        return nullptr;
+    }
+    auto it = sViaDefs.find(node);
+    return it == sViaDefs.end() ? nullptr : it->second;
+}
+
 frCoord crPatternGraph::getMinSpacing(const frBox& box,
                                       frLayerNum layerNum) const {
     auto tech = getTech();
@@ -431,6 +451,157 @@ void crPatternGraph::modMetalShapeCost(const frBox& srcBox, frLayerNum layerNum,
     }
 }
 
+void crPatternGraph::modMetalShapeViaCost(const frBox& srcBox,
+                                          frLayerNum layerNum, bool isUpperVia,
+                                          bool isAdd) {
+    if (xDim == 0 || yDim == 0 || zDim == 0 || !hasMazeZCoord(layerNum)) {
+        return;
+    }
+
+    auto z = getCoordIdx(zCoords, layerNum);
+    if (z < 0) {
+        return;
+    }
+
+    auto tech = getTech();
+    auto layer = tech ? tech->getLayer(layerNum) : nullptr;
+    if (!tech || !layer) {
+        return;
+    }
+
+    frLayerNum cutLayerNum = isUpperVia ? layerNum + 1 : layerNum - 1;
+    if (cutLayerNum < tech->getBottomLayerNum() ||
+        cutLayerNum > tech->getTopLayerNum()) {
+        return;
+    }
+
+    auto cutLayer = tech->getLayer(cutLayerNum);
+    auto viaDef = cutLayer ? cutLayer->getDefaultViaDef() : nullptr;
+    if (!viaDef) {
+        return;
+    }
+
+    frVia via(viaDef);
+    frBox viaBox;
+    if (isUpperVia) {
+        via.getLayer1BBox(viaBox);
+    } else {
+        via.getLayer2BBox(viaBox);
+    }
+
+    auto con = layer->getMinSpacing();
+    if (!con) {
+        return;
+    }
+
+    frCoord width1 = srcBox.width();
+    frCoord length1 = srcBox.length();
+    frCoord width2 = viaBox.width();
+    frCoord length2 = viaBox.length();
+    frCoord bloatDist = 0;
+    if (con->typeId() == frConstraintTypeEnum::frcSpacingConstraint) {
+        bloatDist = static_cast<frSpacingConstraint*>(con)->getMinSpacing();
+    } else if (con->typeId() ==
+               frConstraintTypeEnum::frcSpacingTablePrlConstraint) {
+        bloatDist = static_cast<frSpacingTablePrlConstraint*>(con)->find(
+            std::max(width1, width2), length2);
+    } else if (con->typeId() ==
+               frConstraintTypeEnum::frcSpacingTableTwConstraint) {
+        bloatDist = static_cast<frSpacingTableTwConstraint*>(con)->find(
+            width1, width2, length2);
+    } else {
+        return;
+    }
+
+    frBox searchBox(srcBox.left() - bloatDist - viaBox.right() + 1,
+                    srcBox.bottom() - bloatDist - viaBox.top() + 1,
+                    srcBox.right() + bloatDist - viaBox.left() - 1,
+                    srcBox.top() + bloatDist - viaBox.bottom() - 1);
+
+    auto xBegin =
+        std::lower_bound(xCoords.begin(), xCoords.end(), searchBox.left());
+    auto xEnd =
+        std::upper_bound(xCoords.begin(), xCoords.end(), searchBox.right());
+    auto yBegin =
+        std::lower_bound(yCoords.begin(), yCoords.end(), searchBox.bottom());
+    auto yEnd =
+        std::upper_bound(yCoords.begin(), yCoords.end(), searchBox.top());
+
+    frTransform xform;
+    frBox testBox;
+    frVia sVia;
+    frBox sViaBox;
+    for (auto xIt = xBegin; xIt != xEnd; ++xIt) {
+        auto xIdx = static_cast<crIndex_t>(xIt - xCoords.begin());
+        for (auto yIt = yBegin; yIt != yEnd; ++yIt) {
+            auto yIdx = static_cast<crIndex_t>(yIt - yCoords.begin());
+            crMazeType node(xIdx, yIdx, isUpperVia ? z : z - 1);
+            if (!isValidMazeIdx(node)) {
+                continue;
+            }
+
+            auto pt = frPoint(*xIt, *yIt);
+            xform.set(pt);
+            testBox.set(viaBox);
+            if (auto sViaDef = getSViaDef(node)) {
+                sVia.setViaDef(sViaDef);
+                if (isUpperVia) {
+                    sVia.getLayer1BBox(sViaBox);
+                } else {
+                    sVia.getLayer2BBox(sViaBox);
+                }
+                testBox.set(sViaBox);
+            }
+            testBox.transform(xform);
+
+            frCoord reqDist = 0;
+            frCoord dx = 0;
+            frCoord dy = 0;
+            frCoord distSquare = getBoxDistSquare(srcBox, testBox);
+            auto rawDx = std::max(srcBox.left(), testBox.left()) -
+                         std::min(srcBox.right(), testBox.right());
+            auto rawDy = std::max(srcBox.bottom(), testBox.bottom()) -
+                         std::min(srcBox.top(), testBox.top());
+            dx = std::max(rawDx, static_cast<frCoord>(0));
+            dy = std::max(rawDy, static_cast<frCoord>(0));
+            frCoord prl = std::max(dx, dy);
+            if (dx == 0 && dy > 0) {
+                prl = viaBox.right() - viaBox.left();
+            } else if (dx > 0 && dy == 0) {
+                prl = viaBox.top() - viaBox.bottom();
+            }
+
+            if (con->typeId() == frConstraintTypeEnum::frcSpacingConstraint) {
+                reqDist =
+                    static_cast<frSpacingConstraint*>(con)->getMinSpacing();
+            } else if (con->typeId() ==
+                       frConstraintTypeEnum::frcSpacingTablePrlConstraint) {
+                reqDist = static_cast<frSpacingTablePrlConstraint*>(con)->find(
+                    std::max(width1, width2), prl);
+            } else if (con->typeId() ==
+                       frConstraintTypeEnum::frcSpacingTableTwConstraint) {
+                reqDist = static_cast<frSpacingTableTwConstraint*>(con)->find(
+                    width1, width2, prl);
+            }
+
+            if (srcBox.overlaps(testBox) || distSquare < reqDist * reqDist) {
+                if (isAdd) {
+                    addDRCCost(node, frDirEnum::U);
+                } else {
+                    subDRCCost(node, frDirEnum::U);
+                }
+            }
+        }
+    }
+}
+
+void crPatternGraph::modMetalShapeAllCost(const frBox& srcBox,
+                                          frLayerNum layerNum, bool isAdd) {
+    modMetalShapeCost(srcBox, layerNum, isAdd);
+    modMetalShapeViaCost(srcBox, layerNum, true, isAdd);
+    modMetalShapeViaCost(srcBox, layerNum, false, isAdd);
+}
+
 void crPatternGraph::modViaShapeCost(const frBox& cutBox,
                                      frLayerNum lowerLayerNum, bool isAdd) {
     if (xDim == 0 || yDim == 0 || zDim == 0 || !hasMazeZCoord(lowerLayerNum)) {
@@ -463,6 +634,164 @@ void crPatternGraph::modViaShapeCost(const frBox& cutBox,
                 addDRCCost(node, frDirEnum::U);
             } else {
                 subDRCCost(node, frDirEnum::U);
+            }
+        }
+    }
+}
+
+void crPatternGraph::modEolSpacingCostHelper(const frBox& testBox,
+                                             frLayerNum layerNum, int eolType,
+                                             bool isAdd) {
+    if (xDim == 0 || yDim == 0 || zDim == 0 || !hasMazeZCoord(layerNum)) {
+        return;
+    }
+
+    auto z = getCoordIdx(zCoords, layerNum);
+    if (z < 0) {
+        return;
+    }
+
+    auto tech = getTech();
+    auto layer = tech ? tech->getLayer(layerNum) : nullptr;
+    if (!tech || !layer) {
+        return;
+    }
+
+    frBox searchBox;
+    frBox viaBox;
+    frDirEnum costDir = frDirEnum::E;
+    if (eolType == 0) {
+        auto halfWidth = layer->getWidth() / 2;
+        searchBox.set(
+            testBox.left() - halfWidth + 1, testBox.bottom() - halfWidth + 1,
+            testBox.right() + halfWidth - 1, testBox.top() + halfWidth - 1);
+    } else {
+        frLayerNum cutLayerNum = (eolType == 1) ? layerNum - 1 : layerNum + 1;
+        if (cutLayerNum < tech->getBottomLayerNum() ||
+            cutLayerNum > tech->getTopLayerNum()) {
+            return;
+        }
+
+        auto cutLayer = tech->getLayer(cutLayerNum);
+        auto viaDef = cutLayer ? cutLayer->getDefaultViaDef() : nullptr;
+        if (!viaDef) {
+            return;
+        }
+
+        frVia via(viaDef);
+        if (eolType == 1) {
+            via.getLayer2BBox(viaBox);
+            costDir = frDirEnum::D;
+        } else {
+            via.getLayer1BBox(viaBox);
+            costDir = frDirEnum::U;
+        }
+        searchBox.set(testBox.left() - viaBox.right() + 1,
+                      testBox.bottom() - viaBox.top() + 1,
+                      testBox.right() - viaBox.left() - 1,
+                      testBox.top() - viaBox.bottom() - 1);
+    }
+
+    auto xBegin =
+        std::lower_bound(xCoords.begin(), xCoords.end(), searchBox.left());
+    auto xEnd =
+        std::upper_bound(xCoords.begin(), xCoords.end(), searchBox.right());
+    auto yBegin =
+        std::lower_bound(yCoords.begin(), yCoords.end(), searchBox.bottom());
+    auto yEnd =
+        std::upper_bound(yCoords.begin(), yCoords.end(), searchBox.top());
+
+    frTransform xform;
+    frBox shiftedViaBox;
+    frVia sVia;
+    frBox sViaBox;
+    for (auto xIt = xBegin; xIt != xEnd; ++xIt) {
+        auto xIdx = static_cast<crIndex_t>(xIt - xCoords.begin());
+        for (auto yIt = yBegin; yIt != yEnd; ++yIt) {
+            auto yIdx = static_cast<crIndex_t>(yIt - yCoords.begin());
+            crMazeType node(xIdx, yIdx, z);
+            if (eolType == 1) {
+                --node.z;
+            }
+            if (!isValidMazeIdx(node)) {
+                continue;
+            }
+
+            if (eolType != 0) {
+                auto pt = frPoint(*xIt, *yIt);
+                xform.set(pt);
+                shiftedViaBox.set(viaBox);
+                if (auto sViaDef = getSViaDef(node)) {
+                    sVia.setViaDef(sViaDef);
+                    if (eolType == 1) {
+                        sVia.getLayer2BBox(sViaBox);
+                    } else {
+                        sVia.getLayer1BBox(sViaBox);
+                    }
+                    shiftedViaBox.set(sViaBox);
+                }
+                shiftedViaBox.transform(xform);
+                if (!shiftedViaBox.overlaps(testBox, false)) {
+                    continue;
+                }
+            }
+
+            if (isAdd) {
+                addDRCCost(node, costDir);
+            } else {
+                subDRCCost(node, costDir);
+            }
+        }
+    }
+}
+
+void crPatternGraph::modEolSpacingCost(const frBox& srcBox, frLayerNum layerNum,
+                                       bool isAdd, bool skipVia) {
+    auto tech = getTech();
+    auto layer = tech ? tech->getLayer(layerNum) : nullptr;
+    if (!layer || !layer->hasEolSpacing()) {
+        return;
+    }
+
+    frBox testBox;
+    for (auto con : layer->getEolSpacing()) {
+        auto eolSpace = con->getMinSpacing();
+        auto eolWidth = con->getEolWidth();
+        auto eolWithin = con->getEolWithin();
+
+        if (srcBox.width() < eolWidth) {
+            testBox.set(srcBox.left() - eolWithin, srcBox.top(),
+                        srcBox.right() + eolWithin, srcBox.top() + eolSpace);
+            modEolSpacingCostHelper(testBox, layerNum, 0, isAdd);
+            if (!skipVia) {
+                modEolSpacingCostHelper(testBox, layerNum, 1, isAdd);
+                modEolSpacingCostHelper(testBox, layerNum, 2, isAdd);
+            }
+
+            testBox.set(srcBox.left() - eolWithin, srcBox.bottom() - eolSpace,
+                        srcBox.right() + eolWithin, srcBox.bottom());
+            modEolSpacingCostHelper(testBox, layerNum, 0, isAdd);
+            if (!skipVia) {
+                modEolSpacingCostHelper(testBox, layerNum, 1, isAdd);
+                modEolSpacingCostHelper(testBox, layerNum, 2, isAdd);
+            }
+        }
+
+        if (srcBox.length() < eolWidth) {
+            testBox.set(srcBox.right(), srcBox.bottom() - eolWithin,
+                        srcBox.right() + eolSpace, srcBox.top() + eolWithin);
+            modEolSpacingCostHelper(testBox, layerNum, 0, isAdd);
+            if (!skipVia) {
+                modEolSpacingCostHelper(testBox, layerNum, 1, isAdd);
+                modEolSpacingCostHelper(testBox, layerNum, 2, isAdd);
+            }
+
+            testBox.set(srcBox.left() - eolSpace, srcBox.bottom() - eolWithin,
+                        srcBox.left(), srcBox.top() + eolWithin);
+            modEolSpacingCostHelper(testBox, layerNum, 0, isAdd);
+            if (!skipVia) {
+                modEolSpacingCostHelper(testBox, layerNum, 1, isAdd);
+                modEolSpacingCostHelper(testBox, layerNum, 2, isAdd);
             }
         }
     }
@@ -501,7 +830,7 @@ void crPatternGraph::modFrObjCost(frBlockObject* obj, bool isAdd) {
         auto* shape = static_cast<frShape*>(obj);
         frBox box;
         shape->getBBox(box);
-        modMetalShapeCost(box, shape->getLayerNum(), isAdd);
+        modMetalShapeAllCost(box, shape->getLayerNum(), isAdd);
         return;
     }
 
@@ -514,9 +843,9 @@ void crPatternGraph::modFrObjCost(frBlockObject* obj, bool isAdd) {
 
         frBox box;
         via->getLayer1BBox(box);
-        modMetalShapeCost(box, viaDef->getLayer1Num(), isAdd);
+        modMetalShapeAllCost(box, viaDef->getLayer1Num(), isAdd);
         via->getLayer2BBox(box);
-        modMetalShapeCost(box, viaDef->getLayer2Num(), isAdd);
+        modMetalShapeAllCost(box, viaDef->getLayer2Num(), isAdd);
         via->getCutBBox(box);
         modViaShapeCost(box, viaDef->getLayer1Num(), isAdd);
     }
@@ -566,7 +895,19 @@ void crPatternGraph::modPathSegCost(const crPathSeg* pathSeg, bool isAdd) {
         return;
     }
 
-    modMetalShapeCost(pathSeg->getBBox(), pathSeg->getLayerNum(), isAdd);
+    modMetalShapeAllCost(pathSeg->getBBox(), pathSeg->getLayerNum(), isAdd);
+    auto layer =
+        getTech() ? getTech()->getLayer(pathSeg->getLayerNum()) : nullptr;
+    if (layer) {
+        auto begin = pathSeg->getBegin();
+        auto end = pathSeg->getEnd();
+        auto isHorizontal = begin.y() == end.y();
+        auto isHLayer = layer->getDir() == frcHorzPrefRoutingDir;
+        if (isHLayer == isHorizontal) {
+            modEolSpacingCost(pathSeg->getBBox(), pathSeg->getLayerNum(),
+                              isAdd);
+        }
+    }
 }
 
 void crPatternGraph::modViaCost(const crVia* via, bool isAdd) {
@@ -575,9 +916,13 @@ void crPatternGraph::modViaCost(const crVia* via, bool isAdd) {
     }
 
     auto* viaDef = via->getViaDef();
-    modMetalShapeCost(via->getLowerLayerFigBBox(), viaDef->getLayer1Num(),
+    modMetalShapeAllCost(via->getLowerLayerFigBBox(), viaDef->getLayer1Num(),
+                         isAdd);
+    modEolSpacingCost(via->getLowerLayerFigBBox(), viaDef->getLayer1Num(),
                       isAdd);
-    modMetalShapeCost(via->getUpperLayerFigBBox(), viaDef->getLayer2Num(),
+    modMetalShapeAllCost(via->getUpperLayerFigBBox(), viaDef->getLayer2Num(),
+                         isAdd);
+    modEolSpacingCost(via->getUpperLayerFigBBox(), viaDef->getLayer2Num(),
                       isAdd);
     modViaShapeCost(via->getCutFigBBox(), viaDef->getLayer1Num(), isAdd);
 }
