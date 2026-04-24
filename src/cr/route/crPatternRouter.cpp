@@ -202,7 +202,7 @@ frCoord crPatternRouter::getPlanarSegmentCost(const crMazeType& begin,
             cost += edgeLength * SHAPECOST;
         }
         if (graph->hasDRCCost(curr, dir)) {
-            cost += CR_SPACING_DRC_PENALTY;
+            cost += edgeLength * DRCCOST;
         }
         if (graph->hasMarkerCost(curr, dir)) {
             cost += edgeLength * MARKERCOST;
@@ -397,7 +397,7 @@ frCoord crPatternRouter::getViaSegmentCost(const crMazeType& begin,
             cost += edgeLength * SHAPECOST;
         }
         if (graph->hasDRCCost(curr, dir)) {
-            cost += CR_SPACING_DRC_PENALTY;
+            cost += edgeLength * DRCCOST;
         }
         if (graph->hasMarkerCost(curr, dir)) {
             cost += edgeLength * MARKERCOST;

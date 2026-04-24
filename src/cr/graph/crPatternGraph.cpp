@@ -115,6 +115,11 @@ void clearDrcBits(std::uint64_t& word) {
     setBits(word, {kDrcViaOffset, kCounterWidth}, 0);
 }
 
+void clearShapeBits(std::uint64_t& word) {
+    setBits(word, {kShapePlanarOffset, kCounterWidth}, 0);
+    setBits(word, {kShapeViaOffset, kCounterWidth}, 0);
+}
+
 }  // namespace
 
 frDesign* crPatternGraph::getDesign() const {
@@ -514,6 +519,16 @@ frCoord getBoxDistSquare(const frBox& lhs, const frBox& rhs) {
     return dx * dx + dy * dy;
 }
 
+frCoord getPointBoxDistSquare(const frPoint& point, const frBox& box) {
+    auto dx = std::max(
+        std::max(box.left(), point.x()) - std::min(box.right(), point.x()),
+        static_cast<frCoord>(0));
+    auto dy = std::max(
+        std::max(box.bottom(), point.y()) - std::min(box.top(), point.y()),
+        static_cast<frCoord>(0));
+    return dx * dx + dy * dy;
+}
+
 }  // namespace
 
 frBox crPatternGraph::getPlanarEdgeBox(const crMazeType& curr,
@@ -564,8 +579,28 @@ bool crPatternGraph::isExternalObject(frBlockObject* obj) const {
     return false;
 }
 
+void crPatternGraph::modTypedCost(const crMazeType& node, frDirEnum dir,
+                                  int type) {
+    switch (type) {
+        case 0:
+            subDRCCost(node, dir);
+            break;
+        case 1:
+            addDRCCost(node, dir);
+            break;
+        case 2:
+            subShapeCost(node, dir);
+            break;
+        case 3:
+            addShapeCost(node, dir);
+            break;
+        default:
+            break;
+    }
+}
+
 void crPatternGraph::modMetalShapeCost(const frBox& srcBox, frLayerNum layerNum,
-                                       bool isAdd) {
+                                       int type) {
     if (xDim == 0 || yDim == 0 || zDim == 0 || !hasMazeZCoord(layerNum)) {
         return;
     }
@@ -602,24 +637,27 @@ void crPatternGraph::modMetalShapeCost(const frBox& srcBox, frLayerNum layerNum,
             auto yIdx = static_cast<crIndex_t>(yIt - yCoords.begin());
             crMazeType curr(xIdx, yIdx, z);
             auto pt = getPoint(curr);
-            frBox testBox(pt.x() - halfWidth, pt.y() - halfWidth,
-                          pt.x() + halfWidth, pt.y() + halfWidth);
-            if (!srcBox.overlaps(testBox) &&
-                getBoxDistSquare(srcBox, testBox) >= spacingSquare) {
+            frPoint pt1(pt.x() + halfWidth, pt.y() - halfWidth);
+            frPoint pt2(pt.x() + halfWidth, pt.y() + halfWidth);
+            frPoint pt3(pt.x() - halfWidth, pt.y() - halfWidth);
+            frPoint pt4(pt.x() - halfWidth, pt.y() + halfWidth);
+            auto distSquare = std::min(getPointBoxDistSquare(pt1, srcBox),
+                                       getPointBoxDistSquare(pt2, srcBox));
+            distSquare =
+                std::min(distSquare, getPointBoxDistSquare(pt3, srcBox));
+            distSquare =
+                std::min(distSquare, getPointBoxDistSquare(pt4, srcBox));
+            if (distSquare >= spacingSquare) {
                 continue;
             }
-            if (isAdd) {
-                addDRCCost(curr, frDirEnum::E);
-            } else {
-                subDRCCost(curr, frDirEnum::E);
-            }
+            modTypedCost(curr, frDirEnum::E, type);
         }
     }
 }
 
 void crPatternGraph::modMetalShapeViaCost(const frBox& srcBox,
                                           frLayerNum layerNum, bool isUpperVia,
-                                          bool isAdd) {
+                                          int type) {
     if (xDim == 0 || yDim == 0 || zDim == 0 || !hasMazeZCoord(layerNum)) {
         return;
     }
@@ -751,25 +789,21 @@ void crPatternGraph::modMetalShapeViaCost(const frBox& srcBox,
             }
 
             if (srcBox.overlaps(testBox) || distSquare < reqDist * reqDist) {
-                if (isAdd) {
-                    addDRCCost(node, frDirEnum::U);
-                } else {
-                    subDRCCost(node, frDirEnum::U);
-                }
+                modTypedCost(node, frDirEnum::U, type);
             }
         }
     }
 }
 
 void crPatternGraph::modMetalShapeAllCost(const frBox& srcBox,
-                                          frLayerNum layerNum, bool isAdd) {
-    modMetalShapeCost(srcBox, layerNum, isAdd);
-    modMetalShapeViaCost(srcBox, layerNum, true, isAdd);
-    modMetalShapeViaCost(srcBox, layerNum, false, isAdd);
+                                          frLayerNum layerNum, int type) {
+    modMetalShapeCost(srcBox, layerNum, type);
+    modMetalShapeViaCost(srcBox, layerNum, true, type);
+    modMetalShapeViaCost(srcBox, layerNum, false, type);
 }
 
 void crPatternGraph::modViaShapeCost(const frBox& cutBox,
-                                     frLayerNum lowerLayerNum, bool isAdd) {
+                                     frLayerNum lowerLayerNum, int type) {
     if (xDim == 0 || yDim == 0 || zDim == 0 || !hasMazeZCoord(lowerLayerNum)) {
         return;
     }
@@ -796,18 +830,14 @@ void crPatternGraph::modViaShapeCost(const frBox& cutBox,
             if (!cutBox.contains(pt)) {
                 continue;
             }
-            if (isAdd) {
-                addDRCCost(node, frDirEnum::U);
-            } else {
-                subDRCCost(node, frDirEnum::U);
-            }
+            modTypedCost(node, frDirEnum::U, type);
         }
     }
 }
 
 void crPatternGraph::modEolSpacingCostHelper(const frBox& testBox,
                                              frLayerNum layerNum, int eolType,
-                                             bool isAdd) {
+                                             int type) {
     if (xDim == 0 || yDim == 0 || zDim == 0 || !hasMazeZCoord(layerNum)) {
         return;
     }
@@ -902,17 +932,13 @@ void crPatternGraph::modEolSpacingCostHelper(const frBox& testBox,
                 }
             }
 
-            if (isAdd) {
-                addDRCCost(node, costDir);
-            } else {
-                subDRCCost(node, costDir);
-            }
+            modTypedCost(node, costDir, type);
         }
     }
 }
 
 void crPatternGraph::modEolSpacingCost(const frBox& srcBox, frLayerNum layerNum,
-                                       bool isAdd, bool skipVia) {
+                                       int type, bool skipVia) {
     auto tech = getTech();
     auto layer = tech ? tech->getLayer(layerNum) : nullptr;
     if (!layer || !layer->hasEolSpacing()) {
@@ -928,36 +954,36 @@ void crPatternGraph::modEolSpacingCost(const frBox& srcBox, frLayerNum layerNum,
         if (srcBox.width() < eolWidth) {
             testBox.set(srcBox.left() - eolWithin, srcBox.top(),
                         srcBox.right() + eolWithin, srcBox.top() + eolSpace);
-            modEolSpacingCostHelper(testBox, layerNum, 0, isAdd);
+            modEolSpacingCostHelper(testBox, layerNum, 0, type);
             if (!skipVia) {
-                modEolSpacingCostHelper(testBox, layerNum, 1, isAdd);
-                modEolSpacingCostHelper(testBox, layerNum, 2, isAdd);
+                modEolSpacingCostHelper(testBox, layerNum, 1, type);
+                modEolSpacingCostHelper(testBox, layerNum, 2, type);
             }
 
             testBox.set(srcBox.left() - eolWithin, srcBox.bottom() - eolSpace,
                         srcBox.right() + eolWithin, srcBox.bottom());
-            modEolSpacingCostHelper(testBox, layerNum, 0, isAdd);
+            modEolSpacingCostHelper(testBox, layerNum, 0, type);
             if (!skipVia) {
-                modEolSpacingCostHelper(testBox, layerNum, 1, isAdd);
-                modEolSpacingCostHelper(testBox, layerNum, 2, isAdd);
+                modEolSpacingCostHelper(testBox, layerNum, 1, type);
+                modEolSpacingCostHelper(testBox, layerNum, 2, type);
             }
         }
 
         if (srcBox.length() < eolWidth) {
             testBox.set(srcBox.right(), srcBox.bottom() - eolWithin,
                         srcBox.right() + eolSpace, srcBox.top() + eolWithin);
-            modEolSpacingCostHelper(testBox, layerNum, 0, isAdd);
+            modEolSpacingCostHelper(testBox, layerNum, 0, type);
             if (!skipVia) {
-                modEolSpacingCostHelper(testBox, layerNum, 1, isAdd);
-                modEolSpacingCostHelper(testBox, layerNum, 2, isAdd);
+                modEolSpacingCostHelper(testBox, layerNum, 1, type);
+                modEolSpacingCostHelper(testBox, layerNum, 2, type);
             }
 
             testBox.set(srcBox.left() - eolSpace, srcBox.bottom() - eolWithin,
                         srcBox.left(), srcBox.top() + eolWithin);
-            modEolSpacingCostHelper(testBox, layerNum, 0, isAdd);
+            modEolSpacingCostHelper(testBox, layerNum, 0, type);
             if (!skipVia) {
-                modEolSpacingCostHelper(testBox, layerNum, 1, isAdd);
-                modEolSpacingCostHelper(testBox, layerNum, 2, isAdd);
+                modEolSpacingCostHelper(testBox, layerNum, 1, type);
+                modEolSpacingCostHelper(testBox, layerNum, 2, type);
             }
         }
     }
@@ -986,7 +1012,7 @@ bool crPatternGraph::isPlanarNonPrefDir(frLayerNum layerNum,
     return false;
 }
 
-void crPatternGraph::modFrObjCost(frBlockObject* obj, bool isAdd) {
+void crPatternGraph::modFrObjCost(frBlockObject* obj, int type) {
     if (!obj || !isExternalObject(obj)) {
         return;
     }
@@ -996,7 +1022,7 @@ void crPatternGraph::modFrObjCost(frBlockObject* obj, bool isAdd) {
         auto* shape = static_cast<frShape*>(obj);
         frBox box;
         shape->getBBox(box);
-        modMetalShapeAllCost(box, shape->getLayerNum(), isAdd);
+        modMetalShapeAllCost(box, shape->getLayerNum(), type);
         return;
     }
 
@@ -1009,11 +1035,11 @@ void crPatternGraph::modFrObjCost(frBlockObject* obj, bool isAdd) {
 
         frBox box;
         via->getLayer1BBox(box);
-        modMetalShapeAllCost(box, viaDef->getLayer1Num(), isAdd);
+        modMetalShapeAllCost(box, viaDef->getLayer1Num(), type);
         via->getLayer2BBox(box);
-        modMetalShapeAllCost(box, viaDef->getLayer2Num(), isAdd);
+        modMetalShapeAllCost(box, viaDef->getLayer2Num(), type);
         via->getCutBBox(box);
-        modViaShapeCost(box, viaDef->getLayer1Num(), isAdd);
+        modViaShapeCost(box, viaDef->getLayer1Num(), type);
     }
 }
 
@@ -1026,43 +1052,44 @@ void crPatternGraph::initExternalDRCCost() {
     std::vector<frBlockObject*> result;
     design->getRegionQuery()->queryDRObj(worker->getExtBox(), result);
     for (auto* obj : result) {
-        modFrObjCost(obj, true);
+        modFrObjCost(obj, 1);
     }
 }
 
 void crPatternGraph::initDRCCost() {
     for (auto& word : bits) {
         clearDrcBits(word);
+        clearShapeBits(word);
     }
     initExternalDRCCost();
 }
 
 void crPatternGraph::addPathCost(const crConnFig* connFig) {
-    modPathCost(connFig, true);
+    modPathCost(connFig, 1);
 }
 
 void crPatternGraph::subPathCost(const crConnFig* connFig) {
-    modPathCost(connFig, false);
+    modPathCost(connFig, 0);
 }
 
-void crPatternGraph::modPathCost(const crConnFig* connFig, bool isAdd) {
+void crPatternGraph::modPathCost(const crConnFig* connFig, int type) {
     if (!connFig) {
         return;
     }
 
     if (connFig->typeId() == crcPathSeg) {
-        modPathSegCost(static_cast<const crPathSeg*>(connFig), isAdd);
+        modPathSegCost(static_cast<const crPathSeg*>(connFig), type);
     } else if (connFig->typeId() == crcVia) {
-        modViaCost(static_cast<const crVia*>(connFig), isAdd);
+        modViaCost(static_cast<const crVia*>(connFig), type);
     }
 }
 
-void crPatternGraph::modPathSegCost(const crPathSeg* pathSeg, bool isAdd) {
+void crPatternGraph::modPathSegCost(const crPathSeg* pathSeg, int type) {
     if (!pathSeg || !pathSeg->hasMazeIdx()) {
         return;
     }
 
-    modMetalShapeAllCost(pathSeg->getBBox(), pathSeg->getLayerNum(), isAdd);
+    modMetalShapeAllCost(pathSeg->getBBox(), pathSeg->getLayerNum(), type);
     auto layer =
         getTech() ? getTech()->getLayer(pathSeg->getLayerNum()) : nullptr;
     if (layer) {
@@ -1071,27 +1098,26 @@ void crPatternGraph::modPathSegCost(const crPathSeg* pathSeg, bool isAdd) {
         auto isHorizontal = begin.y() == end.y();
         auto isHLayer = layer->getDir() == frcHorzPrefRoutingDir;
         if (isHLayer == isHorizontal) {
-            modEolSpacingCost(pathSeg->getBBox(), pathSeg->getLayerNum(),
-                              isAdd);
+            modEolSpacingCost(pathSeg->getBBox(), pathSeg->getLayerNum(), type);
         }
     }
 }
 
-void crPatternGraph::modViaCost(const crVia* via, bool isAdd) {
+void crPatternGraph::modViaCost(const crVia* via, int type) {
     if (!via || !via->getViaDef()) {
         return;
     }
 
     auto* viaDef = via->getViaDef();
     modMetalShapeAllCost(via->getLowerLayerFigBBox(), viaDef->getLayer1Num(),
-                         isAdd);
+                         type);
     modEolSpacingCost(via->getLowerLayerFigBBox(), viaDef->getLayer1Num(),
-                      isAdd);
+                      type);
     modMetalShapeAllCost(via->getUpperLayerFigBBox(), viaDef->getLayer2Num(),
-                         isAdd);
+                         type);
     modEolSpacingCost(via->getUpperLayerFigBBox(), viaDef->getLayer2Num(),
-                      isAdd);
-    modViaShapeCost(via->getCutFigBBox(), viaDef->getLayer1Num(), isAdd);
+                      type);
+    modViaShapeCost(via->getCutFigBBox(), viaDef->getLayer1Num(), type);
 }
 
 void crPatternGraph::build(CustomRouteWorker* worker) {

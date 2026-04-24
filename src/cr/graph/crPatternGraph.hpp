@@ -19,7 +19,6 @@ class frBlockObject;
 class frViaDef;
 class crPathSeg;
 class crVia;
-
 enum class crCostClass { Grid, Shape, Drc, Marker, Block };
 
 class crPatternGraph {
@@ -100,23 +99,23 @@ class crPatternGraph {
                            const crMazeType& next) const;
     bool isExternalObject(frBlockObject* obj) const;
     bool isPlanarNonPrefDir(frLayerNum layerNum, frDirEnum dir) const;
-    void modMetalShapeCost(const frBox& srcBox, frLayerNum layerNum,
-                           bool isAdd);
+    void modTypedCost(const crMazeType& node, frDirEnum dir, int type);
+    void modMetalShapeCost(const frBox& srcBox, frLayerNum layerNum, int type);
     void modMetalShapeViaCost(const frBox& srcBox, frLayerNum layerNum,
-                              bool isUpperVia, bool isAdd);
+                              bool isUpperVia, int type);
     void modMetalShapeAllCost(const frBox& srcBox, frLayerNum layerNum,
-                              bool isAdd);
+                              int type);
     void modViaShapeCost(const frBox& cutBox, frLayerNum lowerLayerNum,
-                         bool isAdd);
-    void modEolSpacingCost(const frBox& srcBox, frLayerNum layerNum, bool isAdd,
+                         int type);
+    void modEolSpacingCost(const frBox& srcBox, frLayerNum layerNum, int type,
                            bool skipVia = false);
     void modEolSpacingCostHelper(const frBox& testBox, frLayerNum layerNum,
-                                 int eolType, bool isAdd);
-    void modFrObjCost(frBlockObject* obj, bool isAdd);
+                                 int eolType, int type);
+    void modFrObjCost(frBlockObject* obj, int type);
     void initExternalDRCCost();
-    void modPathCost(const crConnFig* connFig, bool isAdd);
-    void modPathSegCost(const crPathSeg* pathSeg, bool isAdd);
-    void modViaCost(const crVia* via, bool isAdd);
+    void modPathCost(const crConnFig* connFig, int type);
+    void modPathSegCost(const crPathSeg* pathSeg, int type);
+    void modViaCost(const crVia* via, int type);
 
     CustomRouteWorker* worker;
     std::size_t xDim;

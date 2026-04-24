@@ -123,7 +123,9 @@ the `dr` flow. The following are implemented:
 - policy-driven routing in `crPatternRouter`; current `L` policy enumerates
   candidate bend locations instead of running full maze expansion, and no
   longer keeps unused Dijkstra-style search state for `L`
-- graph-owned planar `DRCCost` marking for basic short/spacing influence
+- graph-owned planar quick-cost marking follows DR's typed cost update model:
+  the same influence-region helper can update `DRCCost` or `ShapeCost`
+  depending on caller context
 - planar non-preferred-direction cost is derived on demand from layer preferred
   direction, following DR's "wrong-way is allowed but penalized" model instead
   of hard forbidding it
@@ -162,8 +164,9 @@ The following parts were intentionally simplified and are not implemented yet:
   but `frPatchWire` generation is not added yet.
 - limited producers for DR-like cost channels
   Current `cr` has DR-like quick-cost storage and router cost reads for
-  grid/shape/DRC/marker/block channels, but most non-DRC channels still do not
-  have full producer flows equivalent to DR.
+  grid/shape/DRC/marker/block channels, and the graph helpers support DR-like
+  typed `DRCCost`/`ShapeCost` updates. Marker/block/guide-style producers are
+  still not equivalent to DR.
 - no cut-spacing, min-area, via2via forbidden length, or via-turn forbidden
   length in graph cost
   The current graph cost checks planar metal short/spacing, via adjacent-metal
@@ -211,6 +214,16 @@ The following parts were intentionally simplified and are not implemented yet:
 - Implemented: `crPatternRouter` now reads grid/shape/DRC/marker/block cost
   channels for planar and via segments while keeping the existing pattern-route
   search structure.
+- Implemented: `crPatternGraph` quick-cost producers now follow DR's
+  `type 0/1/2/3` update convention: sub/add `DRCCost` and sub/add `ShapeCost`
+  share the same spacing/EOL/via influence helpers, with caller context
+  selecting the target cost channel.
+- Implemented: planar metal quick-cost marking now uses a DR-like
+  candidate-width corner-to-box distance test instead of the earlier
+  footprint-overlap versus spacing-window split.
+- Implemented: CR DRC edge weighting now follows DR's length-scaled formula:
+  affected planar/via edges charge `edgeLength * DRCCOST` instead of a fixed
+  `CR_SPACING_DRC_PENALTY` per edge.
 - Implemented: writeback is centralized. `crNet` keeps only local
   `routeConnFigs`; end-stage cleanup now queries global `frRegionQuery` inside
   `routeBox` and removes old `frPathSeg`/`frVia`/`frPatchWire` for the routed
