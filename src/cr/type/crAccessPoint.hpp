@@ -8,6 +8,9 @@
 namespace fr {
 class crPin;
 class frViaDef;
+
+// CR copy of a PA access point. Coordinates are physical database coordinates;
+// mazeIdx is filled only after crPatternGraph creates its coordinate arrays.
 class crAccessPoint : public crBlockObject {
    public:
     crAccessPoint()
@@ -19,19 +22,28 @@ class crAccessPoint : public crBlockObject {
           validAccess(6, false),
           upViaDefs(),
           downViaDefs() {}
-    // getters
+
+    // Return the CR object type for access points.
     frBlockObjectEnum typeId() const override { return crcAccessPoint; }
+    // Return the transformed physical access point location.
     frPoint getPt() const { return pt; }
+    // Return the routing layer where this access point lies.
     frLayerNum getLayerIdx() const { return layerIdx; }
+    // Return the graph index assigned after crPatternGraph setup.
     crMazeType getMazeIdx() const { return mazeIdx; }
+    // Return the owning crPin back-pointer.
     crPin* getPin() const { return pin; }
+    // Return directional access flags in E/S/W/N/U/D order.
     const std::vector<bool>& getValidAccess() const { return validAccess; }
+    // Return candidate upward viaDefs grouped by cut-count index 0/1.
     const std::array<std::vector<frViaDef*>, 2>& getUpViaDefs() const {
         return upViaDefs;
     }
+    // Return candidate downward viaDefs grouped by cut-count index 0/1.
     const std::array<std::vector<frViaDef*>, 2>& getDownViaDefs() const {
         return downViaDefs;
     }
+    // Return whether the access point permits entry in the requested direction.
     bool hasValidAccess(const frDirEnum& dir) const {
         switch (dir) {
             case frDirEnum::E:
@@ -56,17 +68,23 @@ class crAccessPoint : public crBlockObject {
                 return false;
         }
     }
+    // Return whether at least one upward access viaDef was copied from PA.
     bool hasUpAccessViaDef() const {
         return upViaDefs[0].size() + upViaDefs[1].size() > 0;
     }
+    // Return whether at least one downward access viaDef was copied from PA.
     bool hasDownAccessViaDef() const {
         return downViaDefs[0].size() + downViaDefs[1].size() > 0;
     }
-    // setters
+    // Set the owning crPin back-pointer; crPin still owns this object.
     void setPin(crPin* in) { pin = in; }
+    // Set the transformed physical access point location.
     void setPt(frPoint in) { pt = in; }
+    // Set the routing layer for this access point.
     void setLayerIdx(frLayerNum in) { layerIdx = in; }
+    // Set the graph index assigned by crPatternGraph.
     void setMazeIdx(crMazeType in) { mazeIdx = in; }
+    // Set one directional access flag in E/S/W/N/U/D order.
     void setValidAccess(const frDirEnum& dir, bool in) {
         switch (dir) {
             case frDirEnum::E:
@@ -91,20 +109,29 @@ class crAccessPoint : public crBlockObject {
                 break;
         }
     }
+    // Add an upward viaDef for cutNum index 0/1; viaDef is tech-owned.
     void addUpViaDef(int cutNum, frViaDef* in) {
         upViaDefs[cutNum].push_back(in);
     }
+    // Add a downward viaDef for cutNum index 0/1; viaDef is tech-owned.
     void addDownViaDef(int cutNum, frViaDef* in) {
         downViaDefs[cutNum].push_back(in);
     }
 
    protected:
+    // Physical database coordinate after instance transform is applied.
     frPoint pt;
+    // Database routing layer number of pt.
     frLayerNum layerIdx;
+    // Graph index for pt/layerIdx; empty until graph coordinate setup.
     crMazeType mazeIdx;
+    // Non-owning parent pin back-pointer.
     crPin* pin;
+    // Directional access flags in E/S/W/N/U/D order.
     std::vector<bool> validAccess;
+    // Upward viaDefs copied from PA, grouped by one-cut/two-cut index.
     std::array<std::vector<frViaDef*>, 2> upViaDefs;
+    // Downward viaDefs copied from PA, grouped by one-cut/two-cut index.
     std::array<std::vector<frViaDef*>, 2> downViaDefs;
 };
 }  // namespace fr

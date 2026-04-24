@@ -141,6 +141,10 @@ void crPatternGraph::setDims(std::size_t _xDim, std::size_t _yDim,
 void crPatternGraph::setCoords(std::vector<frCoord> xCoordsIn,
                                std::vector<frCoord> yCoordsIn,
                                std::vector<frLayerNum> zCoordsIn) {
+    // Flow:
+    // 1. Sort and deduplicate physical coordinate arrays.
+    // 2. Publish dimensions derived from the coordinate arrays.
+    // 3. Allocate one DR-like bitfield word per dense graph node.
     std::sort(xCoordsIn.begin(), xCoordsIn.end());
     std::sort(yCoordsIn.begin(), yCoordsIn.end());
     std::sort(zCoordsIn.begin(), zCoordsIn.end());
@@ -382,6 +386,8 @@ bool crPatternGraph::hasNonPrefCost(const crMazeType& node,
 
 bool crPatternGraph::hasCost(const crMazeType& node, frDirEnum dir,
                              crCostClass costClass) const {
+    // Cost storage follows DR's E/N/U canonical direction convention. W/S/D
+    // are normalized to the neighboring E/N/U storage node before reading bits.
     auto canonical = getCanonicalCostNode(node, dir);
     if (!isValidMazeIdx(canonical)) {
         return false;
@@ -394,6 +400,8 @@ bool crPatternGraph::hasCost(const crMazeType& node, frDirEnum dir,
 
 void crPatternGraph::addCost(const crMazeType& node, frDirEnum dir,
                              crCostClass costClass) {
+    // Additive counters allow cost removal to mirror insertion when local
+    // routes are ripped up or replaced.
     auto canonical = getCanonicalCostNode(node, dir);
     if (!isValidMazeIdx(canonical)) {
         return;
@@ -581,6 +589,8 @@ bool crPatternGraph::isExternalObject(frBlockObject* obj) const {
 
 void crPatternGraph::modTypedCost(const crMazeType& node, frDirEnum dir,
                                   int type) {
+    // DR-compatible type convention:
+    // 0=sub DRC, 1=add DRC, 2=sub shape, 3=add shape.
     switch (type) {
         case 0:
             subDRCCost(node, dir);
@@ -605,6 +615,12 @@ void crPatternGraph::modMetalShapeCost(const frBox& srcBox, frLayerNum layerNum,
         return;
     }
 
+    // Flow:
+    // 1. Compute the layer spacing requirement and candidate wire half-width.
+    // 2. Visit graph points whose candidate-width box can fall inside the
+    //    spacing influence window.
+    // 3. Use the DR-like corner-to-box distance test to decide affected points.
+    // 4. Apply the caller-selected DRC/shape typed cost update.
     auto z = getCoordIdx(zCoords, layerNum);
     if (z < 0) {
         return;
@@ -662,6 +678,11 @@ void crPatternGraph::modMetalShapeViaCost(const frBox& srcBox,
         return;
     }
 
+    // Flow:
+    // 1. Build the default-via metal box on the layer adjacent to srcBox.
+    // 2. Enumerate graph via candidate origins in the spacing search window.
+    // 3. Override the default via footprint with AP-provided SVia when present.
+    // 4. Apply typed cost to candidates that overlap or violate spacing.
     auto z = getCoordIdx(zCoords, layerNum);
     if (z < 0) {
         return;
@@ -808,6 +829,8 @@ void crPatternGraph::modViaShapeCost(const frBox& cutBox,
         return;
     }
 
+    // Mark via candidate origins whose point lies inside an existing cut box.
+    // Full cut spacing/mincut modeling remains a follow-up item.
     auto z = getCoordIdx(zCoords, lowerLayerNum);
     if (z < 0 || static_cast<std::size_t>(z + 1) >= zDim) {
         return;
@@ -842,6 +865,8 @@ void crPatternGraph::modEolSpacingCostHelper(const frBox& testBox,
         return;
     }
 
+    // eolType 0 checks planar candidates on layerNum. eolType 1/2 checks down
+    // and up via candidates whose via enclosure overlaps the EOL test window.
     auto z = getCoordIdx(zCoords, layerNum);
     if (z < 0) {
         return;
@@ -945,6 +970,10 @@ void crPatternGraph::modEolSpacingCost(const frBox& srcBox, frLayerNum layerNum,
         return;
     }
 
+    // Flow:
+    // 1. For each EOL rule, derive windows on short-width or short-length ends.
+    // 2. Mark planar candidates in the EOL windows.
+    // 3. Optionally mark via candidates whose enclosures overlap the windows.
     frBox testBox;
     for (auto con : layer->getEolSpacing()) {
         auto eolSpace = con->getMinSpacing();
@@ -1017,6 +1046,8 @@ void crPatternGraph::modFrObjCost(frBlockObject* obj, int type) {
         return;
     }
 
+    // Convert existing DB routing objects into graph quick-cost influence.
+    // The caller decides whether the affected region updates DRC or shape bits.
     if (obj->typeId() == frcPathSeg || obj->typeId() == frcRect ||
         obj->typeId() == frcPatchWire) {
         auto* shape = static_cast<frShape*>(obj);
@@ -1049,6 +1080,9 @@ void crPatternGraph::initExternalDRCCost() {
         return;
     }
 
+    // Query all existing DB route objects in extBox and initialize graph quick
+    // cost for objects that do not belong to the CR nets currently being
+    // routed.
     std::vector<frBlockObject*> result;
     design->getRegionQuery()->queryDRObj(worker->getExtBox(), result);
     for (auto* obj : result) {
@@ -1057,6 +1091,9 @@ void crPatternGraph::initExternalDRCCost() {
 }
 
 void crPatternGraph::initDRCCost() {
+    // Flow:
+    // 1. Clear DRC and shape counters while preserving other cost channels.
+    // 2. Rebuild quick cost from existing DB routing in the worker extBox.
     for (auto& word : bits) {
         clearDrcBits(word);
         clearShapeBits(word);
@@ -1089,6 +1126,8 @@ void crPatternGraph::modPathSegCost(const crPathSeg* pathSeg, int type) {
         return;
     }
 
+    // Route path segments affect planar spacing, adjacent via candidates, and
+    // EOL windows when the segment follows the preferred routing direction.
     modMetalShapeAllCost(pathSeg->getBBox(), pathSeg->getLayerNum(), type);
     auto layer =
         getTech() ? getTech()->getLayer(pathSeg->getLayerNum()) : nullptr;
@@ -1108,6 +1147,8 @@ void crPatternGraph::modViaCost(const crVia* via, int type) {
         return;
     }
 
+    // A via contributes quick cost through both metal enclosure boxes and the
+    // cut-box occupancy point on the lower routing layer.
     auto* viaDef = via->getViaDef();
     modMetalShapeAllCost(via->getLowerLayerFigBBox(), viaDef->getLayer1Num(),
                          type);

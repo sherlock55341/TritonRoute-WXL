@@ -224,6 +224,10 @@ The following parts were intentionally simplified and are not implemented yet:
 - Implemented: CR DRC edge weighting now follows DR's length-scaled formula:
   affected planar/via edges charge `edgeLength * DRCCOST` instead of a fixed
   `CR_SPACING_DRC_PENALTY` per edge.
+- Implemented: `src/cr` documentation comments now describe core class
+  responsibilities, member ownership/back-pointers, function side effects, and
+  algorithm flows for graph construction, pattern routing, quick-cost updates,
+  and DB writeback.
 - Implemented: writeback is centralized. `crNet` keeps only local
   `routeConnFigs`; end-stage cleanup now queries global `frRegionQuery` inside
   `routeBox` and removes old `frPathSeg`/`frVia`/`frPatchWire` for the routed

@@ -5,14 +5,17 @@
 #include "db/infra/frPoint.h"
 
 namespace fr {
+
+// Base object for the custom-route object hierarchy. It keeps CR objects in
+// the same frBlockObject type system as the rest of TritonRoute while allowing
+// CR-specific typeIds.
 class crBlockObject : public frBlockObject {
    public:
-    // constructors
     crBlockObject() {}
     virtual ~crBlockObject() {}
-    // getters
-    // setters
-    // others
+
+    // Return the CR base object type; subclasses override this with specific
+    // CR enum values.
     frBlockObjectEnum typeId() const { return crcBlockObject; }
 };
 }  // namespace fr

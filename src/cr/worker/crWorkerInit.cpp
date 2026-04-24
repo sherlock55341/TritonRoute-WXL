@@ -18,6 +18,11 @@ void CustomRouteWorker::initPatternGraph() {
         return;
     }
 
+    // Flow:
+    // 1. Collect all routing layers for z coordinates.
+    // 2. Collect policy-specific x/y coordinates from selected nets.
+    // 3. Add routeBox/extBox boundaries, deduplicate, and allocate the graph.
+    // 4. Back-annotate AP-provided one-cut upward viaDefs as graph SVias.
     std::vector<frCoord> xCoords;
     std::vector<frCoord> yCoords;
     std::vector<frLayerNum> zCoords;
@@ -86,6 +91,8 @@ void CustomRouteWorker::initPatternGraph() {
 void CustomRouteWorker::collectPatternGraphCoordsL(
     crNet* cNet, std::vector<frCoord>& xCoords,
     std::vector<frCoord>& yCoords) const {
+    // L routing only needs endpoint AP x/y axes; candidate bends are formed by
+    // crossing one endpoint x coordinate with the other endpoint y coordinate.
     if (!cNet || cNet->getPins().size() != 2) {
         return;
     }
@@ -109,6 +116,12 @@ void CustomRouteWorker::initPatternGraphL(
     crNet* cNet, const std::vector<frCoord>& xCoords,
     const std::vector<frCoord>& yCoords,
     std::vector<crPatternPoint>& points) const {
+    // Flow:
+    // 1. Split AP coordinates by source/destination pin.
+    // 2. Deduplicate each pin's x/y coordinate sets.
+    // 3. Add all graph points on the two possible L-shape corridors.
+    // This helper builds candidate physical points only; dense graph allocation
+    // happens in initPatternGraph.
     if (!cNet || cNet->getPins().size() != 2) {
         return;
     }
@@ -189,6 +202,10 @@ void CustomRouteWorker::initPatternGraphL(
 }
 
 void CustomRouteWorker::initNet(frNet* _net) {
+    // Flow:
+    // 1. Create a CR-local net with a back-pointer to the source frNet.
+    // 2. Copy every instTerm/term into one CR pin with copied PA access points.
+    // 3. Store the CR net under worker ownership.
     auto net = std::make_unique<crNet>();
     net->setNet(_net);
     for (auto instTerm : _net->getInstTerms()) {
@@ -201,6 +218,11 @@ void CustomRouteWorker::initNet(frNet* _net) {
 }
 
 void CustomRouteWorker::initNetTerm(crNet* cNet, frBlockObject* term) {
+    // Flow:
+    // 1. Resolve frInstTerm/frTerm to the true frTerm and instance transform.
+    // 2. Select the instance pin-access index used by PA.
+    // 3. Copy every frAccessPoint into crAccessPoint, applying the instance
+    //    shift transform and preserving directional/via access metadata.
     auto cPin = std::make_unique<crPin>();
     cPin->setFrTerm(term);
     cNet->getTerms().insert(term);
@@ -270,6 +292,10 @@ void CustomRouteWorker::initNetTerm(crNet* cNet, frBlockObject* term) {
 }
 
 void CustomRouteWorker::initRouteBox() {
+    // Flow:
+    // 1. Compute the bounding box of all copied access points.
+    // 2. Choose a margin from the maximum relevant routing pitch.
+    // 3. Build routeBox for writeback cleanup and extBox for region-query cost.
     frCoord xl = std::numeric_limits<frCoord>::max();
     frCoord yl = std::numeric_limits<frCoord>::max();
     frCoord xh = std::numeric_limits<frCoord>::min();
@@ -320,6 +346,8 @@ void CustomRouteWorker::initTrackCoordsPin(
     crNet* cNet,
     std::map<frCoord, std::map<frLayerNum, frTrackPattern*> >& xMap,
     std::map<frCoord, std::map<frLayerNum, frTrackPattern*> >& yMap) {
+    // Add AP-aligned tracks on the AP layer and one adjacent routing layer so
+    // endpoint via transitions can be represented in the graph coordinates.
     for (auto& pin : cNet->getPins()) {
         for (auto& ap : pin->getAccessPoints()) {
             auto pt = ap->getPt();
@@ -354,6 +382,10 @@ void CustomRouteWorker::initTrackCoordsPin(
 void CustomRouteWorker::initTrackCoords(
     std::map<frCoord, std::map<frLayerNum, frTrackPattern*> >& xMap,
     std::map<frCoord, std::map<frLayerNum, frTrackPattern*> >& yMap) {
+    // Flow:
+    // 1. Seed maps with route/ext box boundaries.
+    // 2. Add AP-aligned coordinates for every CR net.
+    // 3. Add technology track coordinates inside extBox.
     yMap[routeBox.bottom()][-10] = nullptr;
     yMap[routeBox.top()][-10] = nullptr;
     yMap[extBox.bottom()][-10] = nullptr;

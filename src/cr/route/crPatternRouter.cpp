@@ -33,6 +33,10 @@ const char* getDirName(frDirEnum dir) {
 }  // namespace
 
 bool crPatternRouter::searchPath() {
+    // Flow:
+    // 1. Clear any previous path.
+    // 2. Dispatch to the selected pattern-search policy.
+    // 3. Print debug details when a route is found.
     path.clear();
     bool found = false;
     switch (policy) {
@@ -54,6 +58,11 @@ bool crPatternRouter::searchPathL() {
         return false;
     }
 
+    // Flow:
+    // 1. Collect valid source/destination AP maze indices.
+    // 2. For every AP pair and routing layer, build both L-bend candidates.
+    // 3. Score unique candidates and keep the lowest-cost path.
+    // 4. Publish the winning path if one was found.
     std::vector<crMazeType> srcs;
     std::vector<crMazeType> dsts;
     if (!initEndpoints(srcs, dsts)) {
@@ -111,6 +120,8 @@ bool crPatternRouter::searchPathL() {
 
 bool crPatternRouter::initEndpoints(std::vector<crMazeType>& srcs,
                                     std::vector<crMazeType>& dsts) const {
+    // Convert copied AP physical points into graph nodes. Sets remove duplicate
+    // APs that map to the same maze index.
     srcs.clear();
     dsts.clear();
     std::set<crMazeType> srcSet;
@@ -163,6 +174,10 @@ frCoord crPatternRouter::getPlanarSegmentCost(const crMazeType& begin,
         return std::numeric_limits<frCoord>::max();
     }
 
+    // Flow:
+    // 1. Start with physical Manhattan length and bottom-layer penalty.
+    // 2. Apply non-preferred-direction penalty for the segment direction.
+    // 3. Walk every graph edge in the segment and add DR-like cost channels.
     auto beginPt = graph->getPoint(begin);
     auto endPt = graph->getPoint(end);
     auto cost =
@@ -221,6 +236,9 @@ bool crPatternRouter::buildLPath(const crMazeType& src,
                                  const crMazeType& dstRoute,
                                  const crMazeType& dst,
                                  std::vector<crMazeType>& candidate) const {
+    // Candidate topology:
+    // src -> vertical stack to route layer -> first planar leg -> second
+    // planar leg -> vertical stack to dst.
     candidate.clear();
     if (!graph || !graph->hasNode(src) || !graph->hasNode(srcRoute) ||
         !graph->hasNode(mid) || !graph->hasNode(dstRoute) ||
@@ -330,6 +348,10 @@ frCoord crPatternRouter::getPathCost(
         return std::numeric_limits<frCoord>::max();
     }
 
+    // Flow:
+    // 1. Scan the node sequence and keep collinear planar/via runs together.
+    // 2. Flush each run into getSegmentCost.
+    // 3. Accumulate segment costs, aborting on invalid geometry.
     frCoord cost = 0;
     std::size_t segBegin = 0;
     for (std::size_t i = 2; i <= candidate.size(); ++i) {
@@ -376,6 +398,7 @@ frCoord crPatternRouter::getViaSegmentCost(const crMazeType& begin,
     frCoord cost = 0;
     auto curr = begin;
     auto dir = (begin.z < end.z) ? frDirEnum::U : frDirEnum::D;
+    // Walk every vertical graph edge and charge via plus DR-like cost channels.
     while (!(curr == end)) {
         crMazeType next;
         if (!graph->getNextMazeIdx(curr, dir, next)) {

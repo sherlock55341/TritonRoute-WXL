@@ -27,6 +27,11 @@ CustomRouteWorker::CustomRouteWorker(
 }
 
 void CustomRouteWorker::route() {
+    // Flow:
+    // 1. Route each CR net independently and keep only successful nets.
+    // 2. Collect source frNets whose DB routing must be replaced.
+    // 3. Remove old DB route objects in routeBox, then write local CR results
+    //    back into frNet/frRegionQuery.
     std::vector<crNet*> routedNets;
     std::set<frNet*, frBlockObjectComp> modifiedNets;
     for (std::size_t i = 0; i < nets.size() && i < policies.size(); ++i) {
@@ -47,6 +52,10 @@ void CustomRouteWorker::route() {
 
 bool CustomRouteWorker::routeNet(crNet* cNet, crPatternEnum policy,
                                  std::vector<crMazeType>& path) const {
+    // Flow:
+    // 1. Remove local route figures and subtract their graph quick cost.
+    // 2. Search a policy-specific pattern route on the shared graph.
+    // 3. Convert the winning maze path into local CR route figures.
     const_cast<CustomRouteWorker*>(this)->clearRouteConnFigs(cNet);
 
     crPatternRouter router(patternGraph.get(), cNet, policy);
@@ -65,6 +74,8 @@ void CustomRouteWorker::clearRouteConnFigs(crNet* cNet) {
         return;
     }
 
+    // Subtract quick cost before destroying the local route figures that
+    // identify which graph edges/vias were occupied.
     for (auto& connFig : cNet->getRouteConnFigs()) {
         patternGraph->subPathCost(connFig.get());
     }
@@ -77,6 +88,11 @@ void CustomRouteWorker::writePathToNet(
         return;
     }
 
+    // Flow:
+    // 1. Walk the maze path once and merge consecutive planar steps with the
+    //    same direction into one crPathSeg.
+    // 2. Emit each vertical same-x/y transition as one crVia.
+    // 3. Add graph quick cost for the newly created local route figures.
     auto getPlanarDir = [](const crMazeType& lhs, const crMazeType& rhs) {
         if (lhs.z != rhs.z) {
             return frDirEnum::UNKNOWN;
@@ -130,6 +146,9 @@ void CustomRouteWorker::writePathToNet(
 void CustomRouteWorker::writePathSegToNet(crNet* cNet,
                                           const crMazeType& beginMazeIdx,
                                           const crMazeType& endMazeIdx) const {
+    // Convert a same-layer maze run into a local path segment. The local object
+    // is not inserted into frNet until endAddNets, so failed later routing can
+    // still be discarded without touching the design DB.
     if (!cNet || !patternGraph || beginMazeIdx == endMazeIdx ||
         beginMazeIdx.z != endMazeIdx.z) {
         return;
@@ -166,6 +185,8 @@ void CustomRouteWorker::writePathSegToNet(crNet* cNet,
 void CustomRouteWorker::writeViaToNet(crNet* cNet,
                                       const crMazeType& beginMazeIdx,
                                       const crMazeType& endMazeIdx) const {
+    // Convert one vertical maze transition into a local via. The selected
+    // viaDef is resolved before local route ownership is transferred to crNet.
     if (!cNet || !patternGraph || beginMazeIdx == endMazeIdx ||
         beginMazeIdx.x != endMazeIdx.x || beginMazeIdx.y != endMazeIdx.y ||
         beginMazeIdx.z == endMazeIdx.z) {
@@ -191,6 +212,10 @@ void CustomRouteWorker::writeViaToNet(crNet* cNet,
 frViaDef* CustomRouteWorker::getViaDefForPath(
     crNet* cNet, const crMazeType& beginMazeIdx,
     const crMazeType& endMazeIdx) const {
+    // Flow:
+    // 1. Prefer graph-level SVia annotation produced from pin access.
+    // 2. Fall back to an access-point viaDef at the same origin/layer/dir.
+    // 3. Fall back to the cut layer's default viaDef.
     if (!patternGraph || !design || !cNet) {
         return nullptr;
     }
@@ -218,6 +243,8 @@ frViaDef* CustomRouteWorker::getAccessPointViaDef(const crNet* cNet,
                                                   const frPoint& origin,
                                                   frLayerNum layerNum,
                                                   frDirEnum dir) const {
+    // Scan copied access points for an exact physical origin/layer match and
+    // return the first one-cut viaDef in the requested vertical direction.
     if (!cNet) {
         return nullptr;
     }
@@ -252,6 +279,10 @@ void CustomRouteWorker::endRemoveNets(
         return;
     }
 
+    // Flow:
+    // 1. Query old DB route objects inside routeBox.
+    // 2. Filter objects to modified source frNets only.
+    // 3. Remove each object from both region query and frNet ownership.
     std::vector<frBlockObject*> result;
     design->getRegionQuery()->queryDRObj(routeBox, result);
     for (auto* obj : result) {
@@ -314,6 +345,10 @@ void CustomRouteWorker::endAddNets(
         return;
     }
 
+    // Flow:
+    // 1. Iterate local route figures on each successfully routed CR net.
+    // 2. Convert local crPathSeg/crVia into DB frPathSeg/frVia objects.
+    // 3. Insert new DB objects into frNet and frRegionQuery.
     for (auto* cNet : routedNets) {
         if (!cNet || !cNet->getNet()) {
             continue;

@@ -3,6 +3,10 @@
 
 namespace fr {
 void CustomRoute::run() {
+    // Flow:
+    // 1. Build one worker for the current task batch.
+    // 2. Print dense graph size for current debug visibility.
+    // 3. Delegate routing and DB writeback to the worker.
     std::vector<std::unique_ptr<CustomRouteWorker>> workers;
     if (!routeTasks.empty()) {
         workers.push_back(
