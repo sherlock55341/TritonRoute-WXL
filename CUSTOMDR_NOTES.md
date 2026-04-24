@@ -129,6 +129,9 @@ the `dr` flow. The following are implemented:
   of hard forbidding it
 - graph-owned edge cost channels use DR-like normalized edge keys, so opposite
   directions share the same physical edge cost
+- graph-owned quick-cost storage now uses one DR-like `bits` vector per grid
+  node instead of separate cost vectors, with bit ranges aligned to DR's
+  block/grid/DRC/marker/shape cost layout
 - graph-owned planar `DRCCost` uses increment/decrement counting semantics,
   following the `dr` style of additive removable cost instead of bool/set
   marking
@@ -157,10 +160,10 @@ The following parts were intentionally simplified and are not implemented yet:
 - no incremental cost removal/addition for `crPatchWire`
   `crVia` is written back and participates in `addPathCost` / `subPathCost`,
   but `frPatchWire` generation is not added yet.
-- no split cost channels like `dr` (`shapeCost`, `markerCost`, `blockCost`,
-  `guideCost`)
-  Current `cr` stores a planar `DRCCost` channel plus a planar non-pref
-  penalty channel, but still does not model the other DR cost classes.
+- limited producers for DR-like cost channels
+  Current `cr` has DR-like quick-cost storage and router cost reads for
+  grid/shape/DRC/marker/block channels, but most non-DRC channels still do not
+  have full producer flows equivalent to DR.
 - no cut-spacing, min-area, via2via forbidden length, or via-turn forbidden
   length in graph cost
   The current graph cost checks planar metal short/spacing, via adjacent-metal
@@ -202,6 +205,12 @@ The following parts were intentionally simplified and are not implemented yet:
 - Implemented: `crPatternGraph` stores SVia access viaDefs keyed by lower-layer
   maze index. Via min-spacing, EOL via candidate filtering, and final via
   writeback prefer the SVia viaDef before falling back to default viaDefs.
+- Implemented: `crPatternGraph` now stores quick costs in one DR-like `bits`
+  vector, with block/grid/DRC/marker/shape fields mapped to the same bit ranges
+  used by `FlexGridGraph`.
+- Implemented: `crPatternRouter` now reads grid/shape/DRC/marker/block cost
+  channels for planar and via segments while keeping the existing pattern-route
+  search structure.
 - Implemented: writeback is centralized. `crNet` keeps only local
   `routeConnFigs`; end-stage cleanup now queries global `frRegionQuery` inside
   `routeBox` and removes old `frPathSeg`/`frVia`/`frPatchWire` for the routed

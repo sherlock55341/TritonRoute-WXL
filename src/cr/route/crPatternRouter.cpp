@@ -191,8 +191,24 @@ frCoord crPatternRouter::getPlanarSegmentCost(const crMazeType& begin,
         if (!graph->getNextMazeIdx(curr, dir, next)) {
             return std::numeric_limits<frCoord>::max();
         }
+        auto currPt = graph->getPoint(curr);
+        auto nextPt = graph->getPoint(next);
+        auto edgeLength = std::abs(currPt.x() - nextPt.x()) +
+                          std::abs(currPt.y() - nextPt.y());
+        if (graph->hasGridCost(curr, dir)) {
+            cost += edgeLength * GRIDCOST;
+        }
+        if (graph->hasShapeCost(curr, dir)) {
+            cost += edgeLength * SHAPECOST;
+        }
         if (graph->hasDRCCost(curr, dir)) {
             cost += CR_SPACING_DRC_PENALTY;
+        }
+        if (graph->hasMarkerCost(curr, dir)) {
+            cost += edgeLength * MARKERCOST;
+        }
+        if (graph->hasBlockCost(curr, dir)) {
+            cost += edgeLength * BLOCKCOST;
         }
         curr = next;
     }
@@ -372,7 +388,23 @@ frCoord crPatternRouter::getViaSegmentCost(const crMazeType& begin,
         if (!lowerLayer) {
             return std::numeric_limits<frCoord>::max();
         }
-        cost += lowerLayer->getPitch() * VIACOST;
+        auto edgeLength = lowerLayer->getPitch();
+        cost += edgeLength * VIACOST;
+        if (graph->hasGridCost(curr, dir)) {
+            cost += edgeLength * GRIDCOST;
+        }
+        if (graph->hasShapeCost(curr, dir)) {
+            cost += edgeLength * SHAPECOST;
+        }
+        if (graph->hasDRCCost(curr, dir)) {
+            cost += CR_SPACING_DRC_PENALTY;
+        }
+        if (graph->hasMarkerCost(curr, dir)) {
+            cost += edgeLength * MARKERCOST;
+        }
+        if (graph->hasBlockCost(curr, dir)) {
+            cost += edgeLength * BLOCKCOST;
+        }
         curr = next;
     }
     return cost;

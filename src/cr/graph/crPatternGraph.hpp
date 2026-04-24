@@ -20,15 +20,11 @@ class frViaDef;
 class crPathSeg;
 class crVia;
 
+enum class crCostClass { Grid, Shape, Drc, Marker, Block };
+
 class crPatternGraph {
    public:
-    crPatternGraph()
-        : worker(nullptr),
-          xDim(0),
-          yDim(0),
-          zDim(0),
-          planarDrcCosts(),
-          viaDrcCosts() {}
+    crPatternGraph() : worker(nullptr), xDim(0), yDim(0), zDim(0), bits() {}
 
     std::size_t getNumNodes() const { return getGridCapacity(); }
     const std::vector<frCoord>& getXCoords() const { return xCoords; }
@@ -59,9 +55,21 @@ class crPatternGraph {
     bool getNextMazeIdx(const crMazeType& curr, frDirEnum dir,
                         crMazeType& next) const;
     bool hasNonPrefCost(const crMazeType& node, frDirEnum dir) const;
+    bool hasGridCost(const crMazeType& node, frDirEnum dir) const;
+    bool hasShapeCost(const crMazeType& node, frDirEnum dir) const;
     bool hasDRCCost(const crMazeType& node, frDirEnum dir) const;
+    bool hasMarkerCost(const crMazeType& node, frDirEnum dir) const;
+    bool hasBlockCost(const crMazeType& node, frDirEnum dir) const;
+    void addGridCost(const crMazeType& node, frDirEnum dir);
+    void subGridCost(const crMazeType& node, frDirEnum dir);
+    void addShapeCost(const crMazeType& node, frDirEnum dir);
+    void subShapeCost(const crMazeType& node, frDirEnum dir);
     void addDRCCost(const crMazeType& node, frDirEnum dir);
     void subDRCCost(const crMazeType& node, frDirEnum dir);
+    void addMarkerCost(const crMazeType& node, frDirEnum dir);
+    void subMarkerCost(const crMazeType& node, frDirEnum dir);
+    void addBlockCost(const crMazeType& node, frDirEnum dir);
+    void subBlockCost(const crMazeType& node, frDirEnum dir);
     void initDRCCost();
     void setSVia(const crMazeType& node, frViaDef* viaDef);
     bool isSVia(const crMazeType& node) const;
@@ -79,6 +87,11 @@ class crPatternGraph {
     std::size_t getGridIdx(const crMazeType& mazeIdx) const;
     std::size_t getPlanarCostIdx(const crMazeType& node) const;
     std::size_t getViaCostIdx(const crMazeType& node, frDirEnum dir) const;
+    crMazeType getCanonicalCostNode(crMazeType node, frDirEnum dir) const;
+    bool hasCost(const crMazeType& node, frDirEnum dir,
+                 crCostClass costClass) const;
+    void addCost(const crMazeType& node, frDirEnum dir, crCostClass costClass);
+    void subCost(const crMazeType& node, frDirEnum dir, crCostClass costClass);
     std::uint64_t getMapKey(const crMazeType& mazeIdx) const;
     std::uint64_t getEdgeKey(const crMazeType& node, frDirEnum dir) const;
     std::uint64_t getCostEdgeKey(crMazeType node, frDirEnum dir) const;
@@ -112,8 +125,7 @@ class crPatternGraph {
     std::vector<frCoord> xCoords;
     std::vector<frCoord> yCoords;
     std::vector<frLayerNum> zCoords;
-    std::vector<std::uint16_t> planarDrcCosts;
-    std::vector<std::uint16_t> viaDrcCosts;
+    std::vector<std::uint64_t> bits;
     std::map<crMazeType, frViaDef*> sViaDefs;
 };
 

@@ -15,6 +15,108 @@
 
 namespace fr {
 
+namespace {
+
+constexpr unsigned kBlockCostE = 3;
+constexpr unsigned kBlockCostN = 4;
+constexpr unsigned kBlockCostU = 5;
+constexpr unsigned kGridCostE = 12;
+constexpr unsigned kGridCostN = 13;
+constexpr unsigned kGridCostU = 14;
+constexpr unsigned kDrcPlanarOffset = 16;
+constexpr unsigned kDrcViaOffset = 24;
+constexpr unsigned kMarkerPlanarOffset = 32;
+constexpr unsigned kMarkerViaOffset = 40;
+constexpr unsigned kShapeViaOffset = 48;
+constexpr unsigned kShapePlanarOffset = 56;
+constexpr unsigned kCounterWidth = 8;
+
+struct crCostBitRange {
+    unsigned offset;
+    unsigned width;
+};
+
+bool isViaDir(frDirEnum dir) {
+    return dir == frDirEnum::U || dir == frDirEnum::D;
+}
+
+crCostBitRange getCostBitRange(crCostClass costClass, frDirEnum dir) {
+    bool isVia = isViaDir(dir);
+    switch (costClass) {
+        case crCostClass::Grid:
+            if (isVia) {
+                return {kGridCostU, 1};
+            }
+            return {dir == frDirEnum::N || dir == frDirEnum::S ? kGridCostN
+                                                               : kGridCostE,
+                    1};
+        case crCostClass::Shape:
+            return {isVia ? kShapeViaOffset : kShapePlanarOffset,
+                    kCounterWidth};
+        case crCostClass::Drc:
+            return {isVia ? kDrcViaOffset : kDrcPlanarOffset, kCounterWidth};
+        case crCostClass::Marker:
+            return {isVia ? kMarkerViaOffset : kMarkerPlanarOffset,
+                    kCounterWidth};
+        case crCostClass::Block:
+            if (isVia) {
+                return {kBlockCostU, 1};
+            }
+            return {dir == frDirEnum::N || dir == frDirEnum::S ? kBlockCostN
+                                                               : kBlockCostE,
+                    1};
+    }
+    return {kDrcPlanarOffset, kCounterWidth};
+}
+
+std::uint64_t getMask(unsigned width) {
+    return (std::uint64_t{1} << width) - 1;
+}
+
+std::uint16_t getBits(std::uint64_t word, crCostBitRange range) {
+    return static_cast<std::uint16_t>((word >> range.offset) &
+                                      getMask(range.width));
+}
+
+void setBits(std::uint64_t& word, crCostBitRange range, std::uint16_t value) {
+    auto mask = getMask(range.width) << range.offset;
+    word &= ~mask;
+    word |= (static_cast<std::uint64_t>(value) & getMask(range.width))
+            << range.offset;
+}
+
+void addBits(std::uint64_t& word, crCostBitRange range) {
+    if (range.width == 1) {
+        setBits(word, range, 1);
+        return;
+    }
+
+    auto value = getBits(word, range);
+    auto maxValue = getMask(range.width);
+    if (value < maxValue) {
+        setBits(word, range, value + 1);
+    }
+}
+
+void subBits(std::uint64_t& word, crCostBitRange range) {
+    if (range.width == 1) {
+        setBits(word, range, 0);
+        return;
+    }
+
+    auto value = getBits(word, range);
+    if (value > 0) {
+        setBits(word, range, value - 1);
+    }
+}
+
+void clearDrcBits(std::uint64_t& word) {
+    setBits(word, {kDrcPlanarOffset, kCounterWidth}, 0);
+    setBits(word, {kDrcViaOffset, kCounterWidth}, 0);
+}
+
+}  // namespace
+
 frDesign* crPatternGraph::getDesign() const {
     return worker ? worker->getDesign() : nullptr;
 }
@@ -48,8 +150,7 @@ void crPatternGraph::setCoords(std::vector<frCoord> xCoordsIn,
     yCoords = std::move(yCoordsIn);
     zCoords = std::move(zCoordsIn);
     setDims(xCoords.size(), yCoords.size(), zCoords.size());
-    planarDrcCosts.assign(getGridCapacity(), 0);
-    viaDrcCosts.assign(getGridCapacity(), 0);
+    bits.assign(getGridCapacity(), 0);
 }
 
 void crPatternGraph::clear() {
@@ -59,8 +160,7 @@ void crPatternGraph::clear() {
     xCoords.clear();
     yCoords.clear();
     zCoords.clear();
-    planarDrcCosts.clear();
-    viaDrcCosts.clear();
+    bits.clear();
     sViaDefs.clear();
 }
 
@@ -151,6 +251,24 @@ std::size_t crPatternGraph::getViaCostIdx(const crMazeType& node,
     return getGridIdx(canonical);
 }
 
+crMazeType crPatternGraph::getCanonicalCostNode(crMazeType node,
+                                                frDirEnum dir) const {
+    switch (dir) {
+        case frDirEnum::W:
+            --node.x;
+            break;
+        case frDirEnum::S:
+            --node.y;
+            break;
+        case frDirEnum::D:
+            --node.z;
+            break;
+        default:
+            break;
+    }
+    return node;
+}
+
 std::uint64_t crPatternGraph::getMapKey(const crMazeType& mazeIdx) const {
     if (!isValidMazeIdx(mazeIdx)) {
         throw std::invalid_argument("cannot encode empty crMazeType");
@@ -232,20 +350,24 @@ bool crPatternGraph::getNextMazeIdx(const crMazeType& curr, frDirEnum dir,
 }
 
 bool crPatternGraph::hasDRCCost(const crMazeType& node, frDirEnum dir) const {
-    if (dir == frDirEnum::U || dir == frDirEnum::D) {
-        auto idx = getViaCostIdx(node, dir);
-        return idx < viaDrcCosts.size() && viaDrcCosts[idx] > 0;
-    }
+    return hasCost(node, dir, crCostClass::Drc);
+}
 
-    auto canonical = node;
-    if (dir == frDirEnum::W) {
-        --canonical.x;
-    } else if (dir == frDirEnum::S) {
-        --canonical.y;
-    }
+bool crPatternGraph::hasGridCost(const crMazeType& node, frDirEnum dir) const {
+    return hasCost(node, dir, crCostClass::Grid);
+}
 
-    auto idx = getPlanarCostIdx(canonical);
-    return idx < planarDrcCosts.size() && planarDrcCosts[idx] > 0;
+bool crPatternGraph::hasShapeCost(const crMazeType& node, frDirEnum dir) const {
+    return hasCost(node, dir, crCostClass::Shape);
+}
+
+bool crPatternGraph::hasMarkerCost(const crMazeType& node,
+                                   frDirEnum dir) const {
+    return hasCost(node, dir, crCostClass::Marker);
+}
+
+bool crPatternGraph::hasBlockCost(const crMazeType& node, frDirEnum dir) const {
+    return hasCost(node, dir, crCostClass::Block);
 }
 
 bool crPatternGraph::hasNonPrefCost(const crMazeType& node,
@@ -253,38 +375,82 @@ bool crPatternGraph::hasNonPrefCost(const crMazeType& node,
     return isPlanarNonPrefDir(getLayerNum(node), dir);
 }
 
-void crPatternGraph::addDRCCost(const crMazeType& node, frDirEnum dir) {
-    if (dir == frDirEnum::U || dir == frDirEnum::D) {
-        auto idx = getViaCostIdx(node, dir);
-        if (idx < viaDrcCosts.size() &&
-            viaDrcCosts[idx] < std::numeric_limits<std::uint16_t>::max()) {
-            ++viaDrcCosts[idx];
-        }
+bool crPatternGraph::hasCost(const crMazeType& node, frDirEnum dir,
+                             crCostClass costClass) const {
+    auto canonical = getCanonicalCostNode(node, dir);
+    if (!isValidMazeIdx(canonical)) {
+        return false;
+    }
+
+    auto idx = getGridIdx(canonical);
+    return idx < bits.size() &&
+           getBits(bits[idx], getCostBitRange(costClass, dir)) > 0;
+}
+
+void crPatternGraph::addCost(const crMazeType& node, frDirEnum dir,
+                             crCostClass costClass) {
+    auto canonical = getCanonicalCostNode(node, dir);
+    if (!isValidMazeIdx(canonical)) {
         return;
     }
 
-    auto idx = getPlanarCostIdx(node);
-    if (idx < planarDrcCosts.size() &&
-        planarDrcCosts[idx] < std::numeric_limits<std::uint16_t>::max()) {
-        ++planarDrcCosts[idx];
+    auto idx = getGridIdx(canonical);
+    if (idx < bits.size()) {
+        addBits(bits[idx], getCostBitRange(costClass, dir));
     }
 }
 
-void crPatternGraph::subDRCCost(const crMazeType& node, frDirEnum dir) {
-    if (dir == frDirEnum::U || dir == frDirEnum::D) {
-        auto idx = getViaCostIdx(node, dir);
-        if (idx >= viaDrcCosts.size() || viaDrcCosts[idx] == 0) {
-            return;
-        }
-        --viaDrcCosts[idx];
+void crPatternGraph::subCost(const crMazeType& node, frDirEnum dir,
+                             crCostClass costClass) {
+    auto canonical = getCanonicalCostNode(node, dir);
+    if (!isValidMazeIdx(canonical)) {
         return;
     }
 
-    auto idx = getPlanarCostIdx(node);
-    if (idx >= planarDrcCosts.size() || planarDrcCosts[idx] == 0) {
-        return;
+    auto idx = getGridIdx(canonical);
+    if (idx < bits.size()) {
+        subBits(bits[idx], getCostBitRange(costClass, dir));
     }
-    --planarDrcCosts[idx];
+}
+
+void crPatternGraph::addGridCost(const crMazeType& node, frDirEnum dir) {
+    addCost(node, dir, crCostClass::Grid);
+}
+
+void crPatternGraph::subGridCost(const crMazeType& node, frDirEnum dir) {
+    subCost(node, dir, crCostClass::Grid);
+}
+
+void crPatternGraph::addShapeCost(const crMazeType& node, frDirEnum dir) {
+    addCost(node, dir, crCostClass::Shape);
+}
+
+void crPatternGraph::subShapeCost(const crMazeType& node, frDirEnum dir) {
+    subCost(node, dir, crCostClass::Shape);
+}
+
+void crPatternGraph::addDRCCost(const crMazeType& node, frDirEnum dir) {
+    addCost(node, dir, crCostClass::Drc);
+}
+
+void crPatternGraph::subDRCCost(const crMazeType& node, frDirEnum dir) {
+    subCost(node, dir, crCostClass::Drc);
+}
+
+void crPatternGraph::addMarkerCost(const crMazeType& node, frDirEnum dir) {
+    addCost(node, dir, crCostClass::Marker);
+}
+
+void crPatternGraph::subMarkerCost(const crMazeType& node, frDirEnum dir) {
+    subCost(node, dir, crCostClass::Marker);
+}
+
+void crPatternGraph::addBlockCost(const crMazeType& node, frDirEnum dir) {
+    addCost(node, dir, crCostClass::Block);
+}
+
+void crPatternGraph::subBlockCost(const crMazeType& node, frDirEnum dir) {
+    subCost(node, dir, crCostClass::Block);
 }
 
 void crPatternGraph::setSVia(const crMazeType& node, frViaDef* viaDef) {
@@ -865,8 +1031,9 @@ void crPatternGraph::initExternalDRCCost() {
 }
 
 void crPatternGraph::initDRCCost() {
-    std::fill(planarDrcCosts.begin(), planarDrcCosts.end(), 0);
-    std::fill(viaDrcCosts.begin(), viaDrcCosts.end(), 0);
+    for (auto& word : bits) {
+        clearDrcBits(word);
+    }
     initExternalDRCCost();
 }
 
