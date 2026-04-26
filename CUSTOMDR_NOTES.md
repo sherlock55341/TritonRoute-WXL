@@ -232,7 +232,25 @@ The following parts were intentionally simplified and are not implemented yet:
   `routeConnFigs`; end-stage cleanup now queries global `frRegionQuery` inside
   `routeBox` and removes old `frPathSeg`/`frVia`/`frPatchWire` for the routed
   target nets before adding new `frPathSeg`/`frVia`.
+- Implemented: `crAccessPoint` now records CR-local owner context through
+  non-owning `ownerNet` and `ownerTerm` pointers. `initNetTerm` fills these
+  from the source `frNet` and source `frInstTerm`/`frTerm`, so later AP spatial
+  queries can identify same-net APs and pin class without mutating PA's
+  shared `frAccessPoint` objects.
+- Implemented: `CustomRoute` now owns a lazy `crAPRegionQuery` that copies
+  design PA access points into CR-local `crAccessPoint`s and indexes their
+  transformed point by routing layer. The query returns `crAccessPoint*`
+  only; AP direction, pin class, and cost interpretation remain consumer-side
+  logic.
+- Implemented: `crPatternGraph` now consumes the CR AP spatial query during
+  quick-cost initialization. External macro/IO APs with planar E/W/N/S access
+  add DR-like `GridCost` along a `10 * layer width` ray on existing graph
+  coordinates, including local U/D grid cost at affected nodes, so per-net
+  graphs can avoid other nets' APs without adding their AP coordinates.
 - Simplification: writeback now covers `frPathSeg` and `frVia`; no
   `frPatchWire` generation is added yet.
+- TODO: add DR-like stdcell U/off-track AP grid cost. Current AP cost covers
+  macro/IO planar AP access only because `crAccessPoint` does not yet record
+  `onTrackX/onTrackY`.
 - TODO: add richer viaDef-aware graph cost beyond the first AP-provided one-cut
   candidate / default viaDef fallback.

@@ -57,6 +57,8 @@ class CustomRouteWorker {
     crPatternGraph* getPatternGraph() { return patternGraph.get(); }
     // Return the pattern graph owned by this worker for read-only access.
     const crPatternGraph* getPatternGraph() const { return patternGraph.get(); }
+    // Return the parent CR driver, which owns shared CR-local caches.
+    CustomRoute* getCustomRoute() const { return cr; }
     // Route all CR nets and write successful results back to the design DB.
     void route();
     // Route one CR net with a policy and return the selected maze path.

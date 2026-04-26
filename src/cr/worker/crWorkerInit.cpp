@@ -257,6 +257,8 @@ void CustomRouteWorker::initNetTerm(crNet* cNet, frBlockObject* term) {
             auto layerNum = ap->getLayerNum();
 
             auto cAp = std::make_unique<crAccessPoint>();
+            cAp->setOwnerNet(cNet->getNet());
+            cAp->setOwnerTerm(term);
             cAp->setPt(bp);
             cAp->setLayerIdx(layerNum);
 

@@ -2,13 +2,19 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include "db/obj/frBlock.h"
 #include "db/obj/frGuide.h"
+#include "db/obj/frInst.h"
+#include "db/obj/frInstTerm.h"
 #include "db/obj/frInstBlockage.h"
 #include "db/obj/frMarker.h"
+#include "db/obj/frNet.h"
 #include "db/obj/frShape.h"
+#include "db/obj/frTerm.h"
 #include "db/obj/frVia.h"
 #include "db/tech/frConstraint.h"
 #include "frRegionQuery.h"
+#include "cr/type/crAccessPoint.hpp"
 #include "cr/type/crPathSeg.hpp"
 #include "cr/type/crVia.hpp"
 #include "cr/worker/crWorker.hpp"
@@ -118,6 +124,12 @@ void clearDrcBits(std::uint64_t& word) {
 void clearShapeBits(std::uint64_t& word) {
     setBits(word, {kShapePlanarOffset, kCounterWidth}, 0);
     setBits(word, {kShapeViaOffset, kCounterWidth}, 0);
+}
+
+void clearGridBits(std::uint64_t& word) {
+    setBits(word, {kGridCostE, 1}, 0);
+    setBits(word, {kGridCostN, 1}, 0);
+    setBits(word, {kGridCostU, 1}, 0);
 }
 
 }  // namespace
@@ -537,6 +549,56 @@ frCoord getPointBoxDistSquare(const frPoint& point, const frBox& box) {
     return dx * dx + dy * dy;
 }
 
+bool isPlanarAccessDir(frDirEnum dir) {
+    return dir == frDirEnum::E || dir == frDirEnum::W || dir == frDirEnum::N ||
+           dir == frDirEnum::S;
+}
+
+bool isMacroOrIOAccessTerm(frBlockObject* term) {
+    if (!term) {
+        return false;
+    }
+    if (term->typeId() == frcTerm) {
+        return true;
+    }
+    if (term->typeId() != frcInstTerm) {
+        return false;
+    }
+
+    auto* instTerm = static_cast<frInstTerm*>(term);
+    auto* inst = instTerm->getInst();
+    auto* refBlock = inst ? inst->getRefBlock() : nullptr;
+    if (!refBlock) {
+        return false;
+    }
+
+    auto macroClass = refBlock->getMacroClass();
+    return macroClass == MacroClassEnum::BLOCK ||
+           macroClass == MacroClassEnum::PAD ||
+           macroClass == MacroClassEnum::PAD_POWER ||
+           macroClass == MacroClassEnum::RING;
+}
+
+frBox getDirectionalAPCostBox(const frPoint& pt, frDirEnum dir,
+                              frCoord bloatLen, frCoord perpBloat) {
+    switch (dir) {
+        case frDirEnum::E:
+            return frBox(pt.x(), pt.y() - perpBloat, pt.x() + bloatLen,
+                         pt.y() + perpBloat);
+        case frDirEnum::W:
+            return frBox(pt.x() - bloatLen, pt.y() - perpBloat, pt.x(),
+                         pt.y() + perpBloat);
+        case frDirEnum::N:
+            return frBox(pt.x() - perpBloat, pt.y(), pt.x() + perpBloat,
+                         pt.y() + bloatLen);
+        case frDirEnum::S:
+            return frBox(pt.x() - perpBloat, pt.y() - bloatLen,
+                         pt.x() + perpBloat, pt.y());
+        default:
+            return frBox(pt, pt);
+    }
+}
+
 }  // namespace
 
 frBox crPatternGraph::getPlanarEdgeBox(const crMazeType& curr,
@@ -584,6 +646,19 @@ bool crPatternGraph::isExternalObject(frBlockObject* obj) const {
         return true;
     }
 
+    return false;
+}
+
+bool crPatternGraph::isWorkerNet(frNet* net) const {
+    if (!net || !worker) {
+        return false;
+    }
+
+    for (auto& cNet : worker->getNets()) {
+        if (cNet->getNet() == net) {
+            return true;
+        }
+    }
     return false;
 }
 
@@ -1090,15 +1165,99 @@ void crPatternGraph::initExternalDRCCost() {
     }
 }
 
+void crPatternGraph::modAccessPointPlanarGridCost(const crAccessPoint* ap,
+                                                  frDirEnum dir) {
+    if (!ap || !isPlanarAccessDir(dir) || !hasMazeZCoord(ap->getLayerIdx())) {
+        return;
+    }
+
+    // Flow:
+    // 1. Build a DR-like AP grid-cost ray with length 10 * layer width.
+    // 2. Scan only existing CR graph coordinates inside that ray box.
+    // 3. Mark planar movement plus vertical transitions at affected nodes.
+    auto z = getCoordIdx(zCoords, ap->getLayerIdx());
+    if (z < 0) {
+        return;
+    }
+
+    auto layer = getTech() ? getTech()->getLayer(ap->getLayerIdx()) : nullptr;
+    if (!layer) {
+        return;
+    }
+
+    auto pt = ap->getPt();
+    auto bloatLen = static_cast<frCoord>(layer->getWidth()) * 10;
+    auto perpBloat = std::max(static_cast<frCoord>(layer->getWidth()),
+                              static_cast<frCoord>(layer->getPitch() / 2));
+    auto costBox = getDirectionalAPCostBox(pt, dir, bloatLen, perpBloat);
+
+    auto xBegin =
+        std::lower_bound(xCoords.begin(), xCoords.end(), costBox.left());
+    auto xEnd =
+        std::upper_bound(xCoords.begin(), xCoords.end(), costBox.right());
+    auto yBegin =
+        std::lower_bound(yCoords.begin(), yCoords.end(), costBox.bottom());
+    auto yEnd = std::upper_bound(yCoords.begin(), yCoords.end(), costBox.top());
+
+    for (auto xIt = xBegin; xIt != xEnd; ++xIt) {
+        auto xIdx = static_cast<crIndex_t>(xIt - xCoords.begin());
+        for (auto yIt = yBegin; yIt != yEnd; ++yIt) {
+            auto yIdx = static_cast<crIndex_t>(yIt - yCoords.begin());
+            crMazeType node(xIdx, yIdx, z);
+            addGridCost(node, dir);
+            addGridCost(node, frDirEnum::U);
+            addGridCost(node, frDirEnum::D);
+        }
+    }
+}
+
+void crPatternGraph::modAccessPointCost(const crAccessPoint* ap) {
+    if (!ap || isWorkerNet(ap->getOwnerNet()) ||
+        !isMacroOrIOAccessTerm(ap->getOwnerTerm())) {
+        return;
+    }
+
+    for (auto dir : {frDirEnum::E, frDirEnum::W, frDirEnum::N, frDirEnum::S}) {
+        if (ap->hasValidAccess(dir)) {
+            modAccessPointPlanarGridCost(ap, dir);
+        }
+    }
+}
+
+void crPatternGraph::initAPCost() {
+    if (!worker || !worker->getCustomRoute()) {
+        return;
+    }
+
+    // Query the CR AP point index by layer and add grid-cost avoidance for
+    // external macro/IO APs. Stdcell U/off-track AP grid cost remains a TODO.
+    auto* apRegionQuery = worker->getCustomRoute()->getAPRegionQuery();
+    if (!apRegionQuery) {
+        return;
+    }
+
+    std::vector<crAccessPoint*> result;
+    for (auto layerNum : zCoords) {
+        result.clear();
+        apRegionQuery->query(worker->getExtBox(), layerNum, result);
+        for (auto* ap : result) {
+            modAccessPointCost(ap);
+        }
+    }
+}
+
 void crPatternGraph::initDRCCost() {
     // Flow:
-    // 1. Clear DRC and shape counters while preserving other cost channels.
+    // 1. Clear DRC, shape, and AP grid-cost channels.
     // 2. Rebuild quick cost from existing DB routing in the worker extBox.
+    // 3. Rebuild DR-like AP grid-cost avoidance from CR's AP spatial query.
     for (auto& word : bits) {
         clearDrcBits(word);
         clearShapeBits(word);
+        clearGridBits(word);
     }
     initExternalDRCCost();
+    initAPCost();
 }
 
 void crPatternGraph::addPathCost(const crConnFig* connFig) {

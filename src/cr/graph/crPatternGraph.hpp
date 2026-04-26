@@ -16,7 +16,9 @@ namespace fr {
 class CustomRouteWorker;
 class frDesign;
 class frBlockObject;
+class frNet;
 class frViaDef;
+class crAccessPoint;
 class crPathSeg;
 class crVia;
 
@@ -167,6 +169,8 @@ class crPatternGraph {
                            const crMazeType& next) const;
     // Return whether a DB object belongs to a net outside this worker's CR set.
     bool isExternalObject(frBlockObject* obj) const;
+    // Return whether net belongs to the worker's current CR task batch.
+    bool isWorkerNet(frNet* net) const;
     // Return whether dir is non-preferred on layerNum.
     bool isPlanarNonPrefDir(frLayerNum layerNum, frDirEnum dir) const;
     // Apply DR-like typed cost update: 0/1 = sub/add DRC, 2/3 = sub/add shape.
@@ -193,6 +197,12 @@ class crPatternGraph {
     void modFrObjCost(frBlockObject* obj, int type);
     // Query extBox and initialize quick cost from existing DB routing.
     void initExternalDRCCost();
+    // Query CR AP spatial index and initialize AP avoidance grid cost.
+    void initAPCost();
+    // Add DR-like grid cost for one external macro/IO access point.
+    void modAccessPointCost(const crAccessPoint* ap);
+    // Add grid cost along one planar AP access direction.
+    void modAccessPointPlanarGridCost(const crAccessPoint* ap, frDirEnum dir);
     // Update graph quick cost from one local CR route figure.
     void modPathCost(const crConnFig* connFig, int type);
     // Update graph quick cost from one local CR path segment.
