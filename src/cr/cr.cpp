@@ -8,6 +8,7 @@
 #include "db/obj/frNet.h"
 #include "db/obj/frPin.h"
 #include "db/obj/frTerm.h"
+#include "gc/FlexGC.h"
 
 namespace fr {
 
@@ -165,20 +166,75 @@ crAPRegionQuery* CustomRoute::getAPRegionQuery() {
     return apRegionQuery.get();
 }
 
+void CustomRoute::runDRCChecks(const std::vector<frBox>& checkBoxes) const {
+    if (!design || !design->getTopBlock() || !design->getRegionQuery()) {
+        return;
+    }
+
+    // Flow:
+    // 1. For each CR-touched box, remove stale top-level markers in that box.
+    // 2. Run an independent FlexGC pass with extBox/drcBox limited to the box.
+    // 3. Publish only markers whose bbox overlaps the checked box.
+    auto* topBlock = design->getTopBlock();
+    auto* regionQuery = design->getRegionQuery();
+    for (const auto& checkBox : checkBoxes) {
+        std::vector<frMarker*> oldMarkers;
+        regionQuery->queryMarker(checkBox, oldMarkers);
+        for (auto* marker : oldMarkers) {
+            regionQuery->removeMarker(marker);
+            topBlock->removeMarker(marker);
+        }
+
+        FlexGCWorker gcWorker(design);
+        gcWorker.setExtBox(checkBox);
+        gcWorker.setDrcBox(checkBox);
+        gcWorker.init();
+        gcWorker.main();
+
+        std::size_t markerCnt = 0;
+        for (const auto& marker : gcWorker.getMarkers()) {
+            frBox markerBox;
+            marker->getBBox(markerBox);
+            if (!checkBox.overlaps(markerBox)) {
+                continue;
+            }
+            auto newMarker = std::make_unique<frMarker>(*marker);
+            auto* markerPtr = newMarker.get();
+            regionQuery->addMarker(markerPtr);
+            topBlock->addMarker(newMarker);
+            ++markerCnt;
+        }
+
+        std::cout << "CR box DRC violations = " << markerCnt << " box=("
+                  << checkBox.left() << ", " << checkBox.bottom() << ") - ("
+                  << checkBox.right() << ", " << checkBox.top() << ")"
+                  << std::endl;
+    }
+}
+
 void CustomRoute::run() {
     // Flow:
-    // 1. Build one worker for the current task batch.
-    // 2. Print dense graph size for current debug visibility.
-    // 3. Delegate routing and DB writeback to the worker.
-    std::vector<std::unique_ptr<CustomRouteWorker>> workers;
-    if (!routeTasks.empty()) {
-        workers.push_back(
-            std::make_unique<CustomRouteWorker>(this, routeTasks));
+    // 1. Skip CR entirely when no net was requested, leaving existing markers
+    //    untouched.
+    // 2. Build one worker per pending task so each worker owns exactly one net.
+    // 3. Print each dense graph size for current debug visibility.
+    // 4. Route and write back that net before starting the next worker.
+    // 5. Run box-scoped DRC passes after all CR writeback is complete.
+    if (routeTasks.empty()) {
+        return;
     }
-    std::cout << workers.front()->getPatternGraph()->getXCoords().size() *
-                     workers.front()->getPatternGraph()->getYCoords().size() *
-                     workers.front()->getPatternGraph()->getZCoords().size()
-              << std::endl;
-    workers.front()->route();
+
+    std::vector<frBox> checkBoxes;
+    for (const auto& task : routeTasks) {
+        std::vector<std::pair<frNet*, crPatternEnum>> workerTasks{task};
+        CustomRouteWorker worker(this, workerTasks);
+        checkBoxes.push_back(worker.getExtBox());
+        std::cout << worker.getPatternGraph()->getXCoords().size() *
+                         worker.getPatternGraph()->getYCoords().size() *
+                         worker.getPatternGraph()->getZCoords().size()
+                  << std::endl;
+        worker.route();
+    }
+    runDRCChecks(checkBoxes);
 }
 }  // namespace fr

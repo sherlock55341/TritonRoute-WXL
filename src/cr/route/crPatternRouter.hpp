@@ -33,12 +33,22 @@ class crPatternRouter {
     // Collect source/destination access-point maze indices from the two pins.
     bool initEndpoints(std::vector<crMazeType>& srcs,
                        std::vector<crMazeType>& dsts) const;
-    // Build one candidate path: source via stack, first straight segment,
-    // second straight segment, and destination via stack.
-    bool buildLPath(const crMazeType& src, const crMazeType& srcRoute,
-                    const crMazeType& mid, const crMazeType& dstRoute,
-                    const crMazeType& dst,
-                    std::vector<crMazeType>& candidate) const;
+    // Build one same-preferred-direction straight candidate with source and
+    // destination via stacks.
+    bool buildStraightPath(const crMazeType& src, const crMazeType& srcRoute,
+                           const crMazeType& dstRoute, const crMazeType& dst,
+                           std::vector<crMazeType>& candidate) const;
+    // Build one layered L candidate: source via stack, first preferred leg,
+    // bend via stack, second preferred leg, and destination via stack.
+    bool buildLayeredLPath(const crMazeType& src, const crMazeType& firstRoute,
+                           const crMazeType& bendFirst,
+                           const crMazeType& bendSecond,
+                           const crMazeType& secondRoute, const crMazeType& dst,
+                           std::vector<crMazeType>& candidate) const;
+    // Return whether layerNum has horizontal preferred routing direction.
+    bool isHorizontalPreferredLayer(frLayerNum layerNum) const;
+    // Return whether layerNum has vertical preferred routing direction.
+    bool isVerticalPreferredLayer(frLayerNum layerNum) const;
     // Append a same-layer Manhattan segment to candidate.
     bool appendStraightSegment(const crMazeType& begin, const crMazeType& end,
                                std::vector<crMazeType>& candidate) const;

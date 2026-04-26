@@ -221,6 +221,10 @@ The following parts were intentionally simplified and are not implemented yet:
 - Implemented: planar metal quick-cost marking now uses a DR-like
   candidate-width corner-to-box distance test instead of the earlier
   footprint-overlap versus spacing-window split.
+- Implemented: CR L-pattern routing now enumerates horizontal and vertical
+  legs on separate preferred-direction layers. Source, bend, and destination
+  layer changes are connected with via stacks, preventing non-zero L routes
+  from using one routing layer for both horizontal and vertical segments.
 - Implemented: CR DRC edge weighting now follows DR's length-scaled formula:
   affected planar/via edges charge `edgeLength * DRCCOST` instead of a fixed
   `CR_SPACING_DRC_PENALTY` per edge.
@@ -232,6 +236,15 @@ The following parts were intentionally simplified and are not implemented yet:
   `routeConnFigs`; end-stage cleanup now queries global `frRegionQuery` inside
   `routeBox` and removes old `frPathSeg`/`frVia`/`frPatchWire` for the routed
   target nets before adding new `frPathSeg`/`frVia`.
+- Implemented: `CustomRoute::run` now starts one `CustomRouteWorker` per
+  pending task, so each worker builds routeBox/extBox/patternGraph for exactly
+  one source net and writes that net back before the next worker starts.
+- Implemented: after all per-net CR workers finish, `CustomRoute` now runs
+  `FlexGCWorker` only over each worker `extBox`, replaces stale markers inside
+  those checked boxes, and prints one box-scoped DRC violation count per box.
+- Implemented: `CustomRoute::run` now skips post-CR DRC when the CR task list
+  is empty, so a no-op CR invocation does not clear or rewrite existing
+  top-level markers.
 - Implemented: `crAccessPoint` now records CR-local owner context through
   non-owning `ownerNet` and `ownerTerm` pointers. `initNetTerm` fills these
   from the source `frNet` and source `frInstTerm`/`frTerm`, so later AP spatial

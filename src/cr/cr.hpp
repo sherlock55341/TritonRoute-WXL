@@ -65,6 +65,10 @@ class CustomRoute {
     void run();
 
    protected:
+    // Run FlexGC only in CR-touched query boxes after writeback and publish
+    // markers whose bbox overlaps those boxes.
+    void runDRCChecks(const std::vector<frBox>& checkBoxes) const;
+
     // Source design database; owned by the caller/router flow.
     frDesign* design;
 

@@ -5,6 +5,7 @@
 #include <limits>
 #include <set>
 #include "cr/crConfig.hpp"
+#include "db/tech/frLayer.h"
 #include "global.h"
 
 namespace fr {
@@ -60,50 +61,127 @@ bool crPatternRouter::searchPathL() {
 
     // Flow:
     // 1. Collect valid source/destination AP maze indices.
-    // 2. For every AP pair and routing layer, build both L-bend candidates.
-    // 3. Score unique candidates and keep the lowest-cost path.
-    // 4. Publish the winning path if one was found.
+    // 2. Split routing layers into horizontal-preferred and vertical-preferred
+    //    candidates.
+    // 3. Enumerate straight candidates for same-row/same-column endpoints.
+    // 4. Enumerate layered L candidates where horizontal and vertical legs are
+    //    on their own preferred layers, connected by via stacks at src, bend,
+    //    and dst.
+    // 5. Score unique candidates and keep the lowest-cost path.
     std::vector<crMazeType> srcs;
     std::vector<crMazeType> dsts;
     if (!initEndpoints(srcs, dsts)) {
         return false;
     }
 
+    std::vector<frLayerNum> horizontalLayers;
+    std::vector<frLayerNum> verticalLayers;
+    for (auto layerNum : graph->getZCoords()) {
+        if (isHorizontalPreferredLayer(layerNum)) {
+            horizontalLayers.push_back(layerNum);
+        } else if (isVerticalPreferredLayer(layerNum)) {
+            verticalLayers.push_back(layerNum);
+        }
+    }
+
     frCoord bestCost = std::numeric_limits<frCoord>::max();
     std::vector<crMazeType> bestPath;
     std::set<std::vector<crMazeType> > seenPaths;
+
+    auto tryCandidate = [&](std::vector<crMazeType>& candidate) {
+        if (candidate.size() < 2 || !seenPaths.insert(candidate).second) {
+            return;
+        }
+        auto cost = getPathCost(candidate);
+        if (cost < bestCost) {
+            bestCost = cost;
+            bestPath = std::move(candidate);
+        }
+    };
 
     for (const auto& src : srcs) {
         for (const auto& dst : dsts) {
             auto srcPt = graph->getPoint(src);
             auto dstPt = graph->getPoint(dst);
-            for (auto routeLayerNum : graph->getZCoords()) {
-                if (!graph->hasMazeIdx(srcPt.x(), srcPt.y(), routeLayerNum) ||
-                    !graph->hasMazeIdx(dstPt.x(), dstPt.y(), routeLayerNum)) {
-                    continue;
-                }
 
-                auto srcRoute =
-                    graph->getMazeIdx(srcPt.x(), srcPt.y(), routeLayerNum);
-                auto dstRoute =
-                    graph->getMazeIdx(dstPt.x(), dstPt.y(), routeLayerNum);
-
-                for (const auto& mid : {crMazeType(src.x, dst.y, srcRoute.z),
-                                        crMazeType(dst.x, src.y, srcRoute.z)}) {
+            if (srcPt.y() == dstPt.y()) {
+                for (auto hLayerNum : horizontalLayers) {
+                    if (!graph->hasMazeIdx(srcPt.x(), srcPt.y(), hLayerNum) ||
+                        !graph->hasMazeIdx(dstPt.x(), dstPt.y(), hLayerNum)) {
+                        continue;
+                    }
+                    auto srcRoute =
+                        graph->getMazeIdx(srcPt.x(), srcPt.y(), hLayerNum);
+                    auto dstRoute =
+                        graph->getMazeIdx(dstPt.x(), dstPt.y(), hLayerNum);
                     std::vector<crMazeType> candidate;
-                    if (!buildLPath(src, srcRoute, mid, dstRoute, dst,
-                                    candidate) ||
-                        candidate.size() < 2) {
+                    if (buildStraightPath(src, srcRoute, dstRoute, dst,
+                                          candidate)) {
+                        tryCandidate(candidate);
+                    }
+                }
+            }
+
+            if (srcPt.x() == dstPt.x()) {
+                for (auto vLayerNum : verticalLayers) {
+                    if (!graph->hasMazeIdx(srcPt.x(), srcPt.y(), vLayerNum) ||
+                        !graph->hasMazeIdx(dstPt.x(), dstPt.y(), vLayerNum)) {
                         continue;
                     }
-                    if (!seenPaths.insert(candidate).second) {
-                        continue;
+                    auto srcRoute =
+                        graph->getMazeIdx(srcPt.x(), srcPt.y(), vLayerNum);
+                    auto dstRoute =
+                        graph->getMazeIdx(dstPt.x(), dstPt.y(), vLayerNum);
+                    std::vector<crMazeType> candidate;
+                    if (buildStraightPath(src, srcRoute, dstRoute, dst,
+                                          candidate)) {
+                        tryCandidate(candidate);
+                    }
+                }
+            }
+
+            if (srcPt.x() == dstPt.x() || srcPt.y() == dstPt.y()) {
+                continue;
+            }
+
+            for (auto hLayerNum : horizontalLayers) {
+                for (auto vLayerNum : verticalLayers) {
+                    std::vector<crMazeType> candidate;
+                    if (graph->hasMazeIdx(srcPt.x(), srcPt.y(), hLayerNum) &&
+                        graph->hasMazeIdx(dstPt.x(), srcPt.y(), hLayerNum) &&
+                        graph->hasMazeIdx(dstPt.x(), srcPt.y(), vLayerNum) &&
+                        graph->hasMazeIdx(dstPt.x(), dstPt.y(), vLayerNum)) {
+                        auto srcH =
+                            graph->getMazeIdx(srcPt.x(), srcPt.y(), hLayerNum);
+                        auto bendH =
+                            graph->getMazeIdx(dstPt.x(), srcPt.y(), hLayerNum);
+                        auto bendV =
+                            graph->getMazeIdx(dstPt.x(), srcPt.y(), vLayerNum);
+                        auto dstV =
+                            graph->getMazeIdx(dstPt.x(), dstPt.y(), vLayerNum);
+                        if (buildLayeredLPath(src, srcH, bendH, bendV, dstV,
+                                              dst, candidate)) {
+                            tryCandidate(candidate);
+                        }
                     }
 
-                    auto cost = getPathCost(candidate);
-                    if (cost < bestCost) {
-                        bestCost = cost;
-                        bestPath = std::move(candidate);
+                    if (graph->hasMazeIdx(srcPt.x(), srcPt.y(), vLayerNum) &&
+                        graph->hasMazeIdx(srcPt.x(), dstPt.y(), vLayerNum) &&
+                        graph->hasMazeIdx(srcPt.x(), dstPt.y(), hLayerNum) &&
+                        graph->hasMazeIdx(dstPt.x(), dstPt.y(), hLayerNum)) {
+                        auto srcV =
+                            graph->getMazeIdx(srcPt.x(), srcPt.y(), vLayerNum);
+                        auto bendV =
+                            graph->getMazeIdx(srcPt.x(), dstPt.y(), vLayerNum);
+                        auto bendH =
+                            graph->getMazeIdx(srcPt.x(), dstPt.y(), hLayerNum);
+                        auto dstH =
+                            graph->getMazeIdx(dstPt.x(), dstPt.y(), hLayerNum);
+                        candidate.clear();
+                        if (buildLayeredLPath(src, srcV, bendV, bendH, dstH,
+                                              dst, candidate)) {
+                            tryCandidate(candidate);
+                        }
                     }
                 }
             }
@@ -230,35 +308,71 @@ frCoord crPatternRouter::getPlanarSegmentCost(const crMazeType& begin,
     return cost;
 }
 
-bool crPatternRouter::buildLPath(const crMazeType& src,
-                                 const crMazeType& srcRoute,
-                                 const crMazeType& mid,
-                                 const crMazeType& dstRoute,
-                                 const crMazeType& dst,
-                                 std::vector<crMazeType>& candidate) const {
-    // Candidate topology:
-    // src -> vertical stack to route layer -> first planar leg -> second
-    // planar leg -> vertical stack to dst.
+bool crPatternRouter::buildStraightPath(
+    const crMazeType& src, const crMazeType& srcRoute,
+    const crMazeType& dstRoute, const crMazeType& dst,
+    std::vector<crMazeType>& candidate) const {
     candidate.clear();
     if (!graph || !graph->hasNode(src) || !graph->hasNode(srcRoute) ||
-        !graph->hasNode(mid) || !graph->hasNode(dstRoute) ||
-        !graph->hasNode(dst)) {
+        !graph->hasNode(dstRoute) || !graph->hasNode(dst)) {
         return false;
     }
 
     if (!appendViaSegment(src, srcRoute, candidate)) {
         return false;
     }
-    if (!appendStraightSegment(srcRoute, mid, candidate)) {
-        return false;
-    }
-    if (!appendStraightSegment(mid, dstRoute, candidate)) {
+    if (!appendStraightSegment(srcRoute, dstRoute, candidate)) {
         return false;
     }
     if (!appendViaSegment(dstRoute, dst, candidate)) {
         return false;
     }
     return candidate.size() >= 2;
+}
+
+bool crPatternRouter::buildLayeredLPath(
+    const crMazeType& src, const crMazeType& firstRoute,
+    const crMazeType& bendFirst, const crMazeType& bendSecond,
+    const crMazeType& secondRoute, const crMazeType& dst,
+    std::vector<crMazeType>& candidate) const {
+    // Candidate topology:
+    // src -> via stack to first-leg layer -> first preferred planar leg -> bend
+    // via stack -> second preferred planar leg -> via stack to dst.
+    candidate.clear();
+    if (!graph || !graph->hasNode(src) || !graph->hasNode(firstRoute) ||
+        !graph->hasNode(bendFirst) || !graph->hasNode(bendSecond) ||
+        !graph->hasNode(secondRoute) || !graph->hasNode(dst)) {
+        return false;
+    }
+
+    if (!appendViaSegment(src, firstRoute, candidate)) {
+        return false;
+    }
+    if (!appendStraightSegment(firstRoute, bendFirst, candidate)) {
+        return false;
+    }
+    if (!appendViaSegment(bendFirst, bendSecond, candidate)) {
+        return false;
+    }
+    if (!appendStraightSegment(bendSecond, secondRoute, candidate)) {
+        return false;
+    }
+    if (!appendViaSegment(secondRoute, dst, candidate)) {
+        return false;
+    }
+    return candidate.size() >= 2;
+}
+
+bool crPatternRouter::isHorizontalPreferredLayer(frLayerNum layerNum) const {
+    auto tech = graph ? graph->getTech() : nullptr;
+    auto layer = tech ? tech->getLayer(layerNum) : nullptr;
+    return layer && layer->getDir() == frcHorzPrefRoutingDir;
+}
+
+bool crPatternRouter::isVerticalPreferredLayer(frLayerNum layerNum) const {
+    auto tech = graph ? graph->getTech() : nullptr;
+    auto layer = tech ? tech->getLayer(layerNum) : nullptr;
+    return layer && layer->getDir() == frcVertPrefRoutingDir;
 }
 
 bool crPatternRouter::appendStraightSegment(
