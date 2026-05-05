@@ -1,5 +1,6 @@
 #include "crPatternGraph.hpp"
 #include <algorithm>
+#include <map>
 #include <stdexcept>
 #include <utility>
 #include "db/obj/frBlock.h"
@@ -577,6 +578,18 @@ bool isMacroOrIOAccessTerm(frBlockObject* term) {
            macroClass == MacroClassEnum::PAD ||
            macroClass == MacroClassEnum::PAD_POWER ||
            macroClass == MacroClassEnum::RING;
+}
+
+bool isStdCellAccessTerm(frBlockObject* term) {
+    if (!term || term->typeId() != frcInstTerm) {
+        return false;
+    }
+    auto* instTerm = static_cast<frInstTerm*>(term);
+    auto* inst = instTerm->getInst();
+    if (!inst || !inst->getRefBlock()) {
+        return false;
+    }
+    return !isMacroOrIOAccessTerm(term);
 }
 
 frBox getDirectionalAPCostBox(const frPoint& pt, frDirEnum dir,
@@ -1165,9 +1178,33 @@ void crPatternGraph::initExternalDRCCost() {
     }
 }
 
+bool crPatternGraph::hasUpperOnTrackAccess(const crAccessPoint* ap) const {
+    if (!ap || !ap->hasValidAccess(frDirEnum::U)) {
+        return false;
+    }
+
+    auto* tech = getTech();
+    if (!tech || ap->getLayerIdx() + 2 > tech->getTopLayerNum()) {
+        return false;
+    }
+
+    auto* upperLayer = tech->getLayer(ap->getLayerIdx() + 2);
+    if (!upperLayer) {
+        return false;
+    }
+    if (upperLayer->getDir() == frcHorzPrefRoutingDir) {
+        return ap->isOnTrack(true);
+    }
+    if (upperLayer->getDir() == frcVertPrefRoutingDir) {
+        return ap->isOnTrack(false);
+    }
+    return false;
+}
+
 void crPatternGraph::modAccessPointPlanarGridCost(const crAccessPoint* ap,
+                                                  frLayerNum layerNum,
                                                   frDirEnum dir) {
-    if (!ap || !isPlanarAccessDir(dir) || !hasMazeZCoord(ap->getLayerIdx())) {
+    if (!ap || !isPlanarAccessDir(dir) || !hasMazeZCoord(layerNum)) {
         return;
     }
 
@@ -1175,12 +1212,12 @@ void crPatternGraph::modAccessPointPlanarGridCost(const crAccessPoint* ap,
     // 1. Build a DR-like AP grid-cost ray with length 10 * layer width.
     // 2. Scan only existing CR graph coordinates inside that ray box.
     // 3. Mark planar movement plus vertical transitions at affected nodes.
-    auto z = getCoordIdx(zCoords, ap->getLayerIdx());
+    auto z = getCoordIdx(zCoords, layerNum);
     if (z < 0) {
         return;
     }
 
-    auto layer = getTech() ? getTech()->getLayer(ap->getLayerIdx()) : nullptr;
+    auto layer = getTech() ? getTech()->getLayer(layerNum) : nullptr;
     if (!layer) {
         return;
     }
@@ -1211,16 +1248,53 @@ void crPatternGraph::modAccessPointPlanarGridCost(const crAccessPoint* ap,
     }
 }
 
-void crPatternGraph::modAccessPointCost(const crAccessPoint* ap) {
-    if (!ap || isWorkerNet(ap->getOwnerNet()) ||
-        !isMacroOrIOAccessTerm(ap->getOwnerTerm())) {
+void crPatternGraph::modAccessPointStdCellGridCost(const crAccessPoint* ap,
+                                                   bool hasUpperOnTrackAP) {
+    if (!ap || hasUpperOnTrackAP || !ap->hasValidAccess(frDirEnum::U)) {
         return;
     }
 
-    for (auto dir : {frDirEnum::E, frDirEnum::W, frDirEnum::N, frDirEnum::S}) {
-        if (ap->hasValidAccess(dir)) {
-            modAccessPointPlanarGridCost(ap, dir);
+    auto* tech = getTech();
+    if (!tech || ap->getLayerIdx() + 2 > tech->getTopLayerNum()) {
+        return;
+    }
+
+    auto upperLayerNum = ap->getLayerIdx() + 2;
+    auto* upperLayer = tech->getLayer(upperLayerNum);
+    if (!upperLayer) {
+        return;
+    }
+
+    // DR protects stdcell pins that only have off-track upper access by adding
+    // grid cost on both preferred directions of the upper routing layer.
+    if (upperLayer->getDir() == frcHorzPrefRoutingDir && !ap->isOnTrack(true)) {
+        modAccessPointPlanarGridCost(ap, upperLayerNum, frDirEnum::W);
+        modAccessPointPlanarGridCost(ap, upperLayerNum, frDirEnum::E);
+    } else if (upperLayer->getDir() == frcVertPrefRoutingDir &&
+               !ap->isOnTrack(false)) {
+        modAccessPointPlanarGridCost(ap, upperLayerNum, frDirEnum::N);
+        modAccessPointPlanarGridCost(ap, upperLayerNum, frDirEnum::S);
+    }
+}
+
+void crPatternGraph::modAccessPointCost(const crAccessPoint* ap,
+                                        bool hasUpperOnTrackAP) {
+    if (!ap || isWorkerNet(ap->getOwnerNet())) {
+        return;
+    }
+
+    if (isMacroOrIOAccessTerm(ap->getOwnerTerm())) {
+        for (auto dir :
+             {frDirEnum::E, frDirEnum::W, frDirEnum::N, frDirEnum::S}) {
+            if (ap->hasValidAccess(dir)) {
+                modAccessPointPlanarGridCost(ap, ap->getLayerIdx(), dir);
+            }
         }
+        return;
+    }
+
+    if (isStdCellAccessTerm(ap->getOwnerTerm())) {
+        modAccessPointStdCellGridCost(ap, hasUpperOnTrackAP);
     }
 }
 
@@ -1230,19 +1304,34 @@ void crPatternGraph::initAPCost() {
     }
 
     // Query the CR AP point index by layer and add grid-cost avoidance for
-    // external macro/IO APs. Stdcell U/off-track AP grid cost remains a TODO.
+    // external macro/IO planar APs plus stdcell upper off-track APs.
     auto* apRegionQuery = worker->getCustomRoute()->getAPRegionQuery();
     if (!apRegionQuery) {
         return;
     }
 
+    std::vector<crAccessPoint*> accessPoints;
     std::vector<crAccessPoint*> result;
     for (auto layerNum : zCoords) {
         result.clear();
         apRegionQuery->query(worker->getExtBox(), layerNum, result);
         for (auto* ap : result) {
-            modAccessPointCost(ap);
+            if (ap && !isWorkerNet(ap->getOwnerNet())) {
+                accessPoints.push_back(ap);
+            }
         }
+    }
+
+    std::map<frBlockObject*, bool> hasUpperOnTrackAP;
+    for (auto* ap : accessPoints) {
+        if (ap && isStdCellAccessTerm(ap->getOwnerTerm()) &&
+            hasUpperOnTrackAccess(ap)) {
+            hasUpperOnTrackAP[ap->getOwnerTerm()] = true;
+        }
+    }
+
+    for (auto* ap : accessPoints) {
+        modAccessPointCost(ap, hasUpperOnTrackAP[ap->getOwnerTerm()]);
     }
 }
 

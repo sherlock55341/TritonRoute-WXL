@@ -23,7 +23,8 @@ checks with DR where that gives clear behavior.
 ## Current Architecture
 
 - Entry flow: `CustomRoute::run()` owns the task list, AP query, worker launch,
-  and post-CR box-scoped DRC.
+  lightweight CR-task reroute queue, AP query, worker launch, and post-CR
+  box-scoped DRC.
 - Worker unit: each `CustomRouteWorker` is started for exactly one source
   `frNet`, builds that net's routeBox/extBox/pattern graph, routes, and writes
   the result before the next worker starts.
@@ -96,11 +97,18 @@ checks with DR where that gives clear behavior.
   a `10 * layer width` ray on existing graph coordinates, including local U/D
   grid cost at affected nodes.
 - Same-net APs are skipped when adding AP avoidance cost for a worker's graph.
+- Stdcell APs now carry DR-like `onTrackX/onTrackY` flags in `crAccessPoint`,
+  derived from PA access-point type metadata when CR copies APs. If a stdcell
+  term has no upper on-track U-access AP, CR adds DR-like upper-layer grid-cost
+  rays for off-track U-access APs on existing graph coordinates.
 
 ### DRC Flow
 
-- After all pending per-net workers finish, `CustomRoute` runs `FlexGCWorker`
-  only over each worker extBox.
+- After the per-net route queue drains, `CustomRoute` runs `FlexGCWorker` only
+  over exact-unique worker extBoxes.
+- During routing, `CustomRoute` also runs a non-publishing box DRC after each
+  worker writeback. If marker sources identify other nets in the CR task set,
+  those nets are pushed back into the route queue, up to three attempts per net.
 - Stale markers inside checked boxes are replaced, and CR prints one
   box-scoped violation count per checked box.
 - If the CR task list is empty, post-CR DRC is skipped so a no-op CR invocation
@@ -139,29 +147,28 @@ checks with DR where that gives clear behavior.
 - Quick DRC is bbox/influence based and is not a full DRC-faithful geometry
   proof.
 - There is no DR-like history-cost/marker-decay route queue.
-- There is no full rip-up/reroute lifecycle. Inter-net conflicts may be
-  discouraged by cost and reported by post-CR DRC, but CR does not yet repair
-  them automatically.
-- AP avoidance currently covers macro/IO planar AP access. DR-like stdcell
-  U/off-track AP grid cost is still missing because CR APs do not yet record
-  `onTrackX`/`onTrackY`.
+- CR has a lightweight multi-net reroute queue, but it is not a full DR-like
+  rip-up/repair lifecycle. There is no history-cost decay, rollback, marker
+  cost injection, or DRC-clean route acceptance rule, so convergence is not
+  guaranteed.
+- Stdcell AP `onTrackX/onTrackY` is inferred from PA AP type metadata instead
+  of being recomputed from each worker graph. This keeps the AP spatial query
+  reusable across per-net workers, but is not a literal copy of DR's
+  `initMazeIdx_ap()` derivation.
 - Via cost/writeback uses the first AP-provided one-cut viaDef or a default
   viaDef fallback. Richer viaDef-aware graph cost is still pending.
 
 ## Next TODO
 
-1. Validate the preferred-layer L enumeration on a small routed testcase and
-   confirm Metal3 does not receive both horizontal and vertical non-zero L legs
-   from new CR output.
-2. Add DR-like stdcell U/off-track AP grid cost by copying `onTrackX` and
-   `onTrackY`-equivalent context into `crAccessPoint` and extending
-   `initAPCost()`.
-3. Improve viaDef-aware quick cost beyond the first AP SVia/default-via
+1. Improve viaDef-aware quick cost beyond the first AP SVia/default-via
    fallback.
-4. Decide whether CR should add DRC-clean candidate rejection, rollback, or
-   rip-up/repair when post-CR box DRC finds inter-net violations.
-5. Add patch-wire/min-area support if generated route geometry needs it.
-6. Create or identify a minimal regression dataset for CR behavior checks.
+2. Decide whether the lightweight reroute queue should gain DR-like marker
+   history cost or cleaner victim selection, because the current queue can hit
+   the per-net attempt cap without resolving all markers.
+3. Decide whether CR should add DRC-clean candidate rejection or rollback when
+   post-CR box DRC finds inter-net violations.
+4. Add patch-wire/min-area support if generated route geometry needs it.
+5. Create or identify a minimal regression dataset for CR behavior checks.
 
 ## Validation Log
 
@@ -174,6 +181,45 @@ checks with DR where that gives clear behavior.
 - 2026-05-05: This document was reorganized from the earlier mixed architecture
   proposal plus append-only working notes. No C++ behavior was changed by this
   documentation cleanup.
+- 2026-05-05: Added CR-local `onTrackX/onTrackY` AP context and stdcell
+  upper off-track AP grid-cost avoidance. Validation: `clang-format`; `clangd
+  --compile-commands-dir=build --check` on `src/cr/graph/crPatternGraph.cpp`,
+  `src/cr/cr.cpp`, and `src/cr/worker/crWorkerInit.cpp` with only known
+  check-mode tweak noise; `cmake --build build -j --target CustomRoute`;
+  `git diff --check` on touched files including `AGENTS.md`.
+- 2026-05-05: Ran CR on
+  `/home/cyzhao/benchmark/primarius/outdata/pattern_route_lay.def` with
+  `./CustomRoute -lef /home/cyzhao/benchmark/primarius/outdata/ispd18_test1.input.lef
+  -def /home/cyzhao/benchmark/primarius/outdata/pattern_route_lay.def -output
+  pattern_route_lay.output.def` from `build/`. Result: `Finish Normally`;
+  output written under `build/pattern_route_lay.output.def`. CR routed nets
+  `L1`-`L5`; post-CR box DRC counts printed as `4, 18, 4, 12, 12`. Run also
+  printed non-fatal default-via regeneration warnings and duplicate
+  `Via5_FR`/`Via6_FR`/`Via7_FR` definition messages during reference-output
+  generation.
+- 2026-05-05: Added a lightweight multi-net reroute queue in `src/cr/cr.cpp`.
+  `CustomRoute::run()` now routes one net per worker, runs non-publishing
+  box-scoped `FlexGCWorker` DRC after each writeback, extracts CR task nets from
+  marker sources, and re-enqueues conflicting other task nets up to three
+  attempts per net. Final publishing DRC runs over exact-unique touched boxes.
+  Validation: `clang-format -i src/cr/cr.cpp`;
+  `clangd --compile-commands-dir=build --check=src/cr/cr.cpp` with only known
+  `ExtractFunction` check-mode noise; `cmake --build build -j --target
+  CustomRoute`; reran the `pattern_route_lay.def` command from `build/`.
+  Result: `Finish Normally`; queue rerouted `L2` after `L1`, then `L2/L3`
+  around their markers until `L2` reached the three-attempt cap. Final unique
+  box DRC counts printed as `18, 4, 4, 12, 12`, so this first version gives
+  feedback and retry behavior but does not yet guarantee marker cleanup.
+- 2026-05-05: Refactored the lightweight reroute implementation without
+  changing behavior. DRC/marker helpers moved from anonymous namespace functions
+  into `CustomRoute` methods in `src/cr/cr.hpp`/`src/cr/cr.cpp`; queue state in
+  `CustomRoute::run()` is now grouped in a local `RerouteQueue` struct instead
+  of scattered maps/sets/deque plus lambda. Validation: `clang-format -i
+  src/cr/cr.cpp src/cr/cr.hpp`; `clangd --compile-commands-dir=build
+  --check=src/cr/cr.cpp` with only known `ExtractFunction` check-mode noise;
+  `cmake --build build -j --target CustomRoute`; reran the
+  `pattern_route_lay.def` command from `build/`. Result: `Finish Normally` with
+  the same reroute sequence and final unique box DRC counts `18, 4, 4, 12, 12`.
 
 ## Historical Context
 

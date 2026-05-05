@@ -10,8 +10,42 @@
 #include "db/obj/frNet.h"
 #include "db/obj/frPin.h"
 #include "db/obj/frTerm.h"
+#include "db/tech/frLayer.h"
+#include "db/tech/frTechObject.h"
 
 namespace fr {
+
+namespace {
+
+void setAccessPointOnTrack(crAccessPoint* cAp, const frAccessPoint* ap,
+                           frTechObject* tech) {
+    if (!cAp || !ap || !tech) {
+        return;
+    }
+
+    // Keep CR AP on-track flags aligned with the PA AP type metadata. DR uses
+    // the X flag for horizontal preferred layers and the Y flag for vertical
+    // preferred layers.
+    auto setLayerOnTrack = [&](frLayerNum layerNum, frAccessPointEnum type) {
+        auto* layer = tech->getLayer(layerNum);
+        if (!layer) {
+            return;
+        }
+        if (layer->getDir() == frcHorzPrefRoutingDir) {
+            cAp->setOnTrack(type == frAccessPointEnum::frcOnGridAP, true);
+        } else if (layer->getDir() == frcVertPrefRoutingDir) {
+            cAp->setOnTrack(type == frAccessPointEnum::frcOnGridAP, false);
+        }
+    };
+
+    auto layerNum = ap->getLayerNum();
+    setLayerOnTrack(layerNum, ap->getType(true));
+    if (layerNum + 2 <= tech->getTopLayerNum()) {
+        setLayerOnTrack(layerNum + 2, ap->getType(false));
+    }
+}
+
+}  // namespace
 
 void CustomRouteWorker::initPatternGraph() {
     if (!patternGraph) {
@@ -261,6 +295,7 @@ void CustomRouteWorker::initNetTerm(crNet* cNet, frBlockObject* term) {
             cAp->setOwnerTerm(term);
             cAp->setPt(bp);
             cAp->setLayerIdx(layerNum);
+            setAccessPointOnTrack(cAp.get(), ap.get(), design->getTech());
 
             for (auto dir : {frDirEnum::E, frDirEnum::S, frDirEnum::W,
                              frDirEnum::N, frDirEnum::U, frDirEnum::D}) {

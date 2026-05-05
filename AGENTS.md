@@ -24,8 +24,10 @@ CMake requires GCC 7+ compatible C++17 support plus Boost, OpenMP, Bison, and zl
 The `cr/` subsystem is a custom routing module that keeps a lightweight CR
 object model while reusing PA access points, the shared `frDesign` database,
 `frRegionQuery`, and `FlexGCWorker` checks. The current flow is per-net:
-`CustomRoute::run()` starts one `CustomRouteWorker` for each pending source
-`frNet`, and each worker builds its own routeBox/extBox/pattern graph.
+`CustomRoute::run()` starts one `CustomRouteWorker` at a time for a source
+`frNet`, and each worker builds its own routeBox/extBox/pattern graph. A
+lightweight queue can reroute other CR task nets when box-scoped DRC markers
+identify inter-task conflicts.
 
 ### Key Types
 - `crNet` (`src/cr/type/crNet.hpp`) mirrors the source `frNet` for one CR
@@ -50,8 +52,10 @@ object model while reusing PA access points, the shared `frDesign` database,
    and dst layer changes with via stacks.
 6. Write local `crPathSeg`/`crVia` results back into the source `frNet` and keep
    `frRegionQuery` synchronized.
-7. After all CR workers finish, run box-scoped `FlexGCWorker` checks over the
-   worker extBoxes. If there are no CR tasks, skip post-CR DRC.
+7. After each worker writeback, run a non-publishing box-scoped DRC check and
+   re-enqueue conflicting CR task nets up to the per-net attempt cap.
+8. After the queue drains, run publishing box-scoped `FlexGCWorker` checks over
+   exact-unique worker extBoxes. If there are no CR tasks, skip post-CR DRC.
 
 ### Cost and Legality Notes
 - Quick-cost storage uses one DR-like `bits` vector per grid node with
@@ -68,9 +72,11 @@ object model while reusing PA access points, the shared `frDesign` database,
   full rip-up/reroute lifecycle yet.
 - Graph cost still lacks several DR rule classes, including cut-spacing,
   min-area, via2via forbidden length, and via-turn forbidden length.
-- AP avoidance currently handles macro/IO planar AP access; DR-like stdcell
-  U/off-track AP grid cost remains a TODO.
-- Post-CR DRC reports box-scoped violations but does not yet automatically
-  reject, roll back, or repair illegal inter-net results.
+- AP avoidance handles macro/IO planar AP access and stdcell upper off-track
+  U-access grid cost. CR infers AP `onTrackX/onTrackY` from PA AP type
+  metadata rather than recomputing it from each worker graph.
+- The lightweight reroute queue can retry CR task nets involved in box-scoped
+  DRC markers, but CR still does not guarantee convergence or automatically
+  roll back illegal inter-net results.
 
 For the latest working log and TODO list, read `CUSTOMDR_NOTES.md`.

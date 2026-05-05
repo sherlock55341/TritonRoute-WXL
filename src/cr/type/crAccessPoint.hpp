@@ -23,6 +23,8 @@ class crAccessPoint : public crBlockObject {
           pin(nullptr),
           ownerNet(nullptr),
           ownerTerm(nullptr),
+          onTrackX(true),
+          onTrackY(true),
           validAccess(6, false),
           upViaDefs(),
           downViaDefs() {}
@@ -41,6 +43,10 @@ class crAccessPoint : public crBlockObject {
     frNet* getOwnerNet() const { return ownerNet; }
     // Return the source frInstTerm/frTerm that carries this AP.
     frBlockObject* getOwnerTerm() const { return ownerTerm; }
+    // Return whether the AP is on a usable preferred-direction track for the
+    // X-like or Y-like DR AP track flag. In DR convention, horizontal layers
+    // consult the X flag and vertical layers consult the Y flag.
+    bool isOnTrack(bool isX) const { return isX ? onTrackX : onTrackY; }
     // Return directional access flags in E/S/W/N/U/D order.
     const std::vector<bool>& getValidAccess() const { return validAccess; }
     // Return candidate upward viaDefs grouped by cut-count index 0/1.
@@ -90,6 +96,15 @@ class crAccessPoint : public crBlockObject {
     void setOwnerNet(frNet* in) { ownerNet = in; }
     // Set the source frInstTerm/frTerm context; crAccessPoint does not own it.
     void setOwnerTerm(frBlockObject* in) { ownerTerm = in; }
+    // Set one DR-like AP track flag; values are derived from PA access-point
+    // types when the CR AP copy is created.
+    void setOnTrack(bool in, bool isX) {
+        if (isX) {
+            onTrackX = in;
+        } else {
+            onTrackY = in;
+        }
+    }
     // Set the transformed physical access point location.
     void setPt(frPoint in) { pt = in; }
     // Set the routing layer for this access point.
@@ -143,6 +158,10 @@ class crAccessPoint : public crBlockObject {
     frNet* ownerNet;
     // Design-owned frInstTerm/frTerm source, used for pin-class context.
     frBlockObject* ownerTerm;
+    // DR-like AP track flag for horizontal-preferred layers.
+    bool onTrackX;
+    // DR-like AP track flag for vertical-preferred layers.
+    bool onTrackY;
     // Directional access flags in E/S/W/N/U/D order.
     std::vector<bool> validAccess;
     // Upward viaDefs copied from PA, grouped by one-cut/two-cut index.

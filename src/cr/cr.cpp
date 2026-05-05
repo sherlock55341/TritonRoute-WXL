@@ -1,13 +1,20 @@
 #include "cr.hpp"
+#include <deque>
 #include <iterator>
+#include <map>
+#include <memory>
+#include <set>
 #include "worker/crWorker.hpp"
 #include "db/obj/frAccess.h"
 #include "db/obj/frBlock.h"
 #include "db/obj/frInst.h"
 #include "db/obj/frInstTerm.h"
+#include "db/obj/frMarker.h"
 #include "db/obj/frNet.h"
 #include "db/obj/frPin.h"
 #include "db/obj/frTerm.h"
+#include "db/tech/frLayer.h"
+#include "db/tech/frTechObject.h"
 #include "gc/FlexGC.h"
 
 namespace fr {
@@ -19,9 +26,38 @@ box_t getBoostBox(const frBox& box) {
                  point_t(box.right(), box.top()));
 }
 
+void setAccessPointOnTrack(crAccessPoint* cAp, const frAccessPoint* ap,
+                           frTechObject* tech) {
+    if (!cAp || !ap || !tech) {
+        return;
+    }
+
+    // PA records AP quality separately for the AP layer and the layer above.
+    // Map those PA types onto DR's onTrackX/onTrackY convention: horizontal
+    // preferred layers consult the X flag, vertical layers consult the Y flag.
+    auto setLayerOnTrack = [&](frLayerNum layerNum, frAccessPointEnum type) {
+        auto* layer = tech->getLayer(layerNum);
+        if (!layer) {
+            return;
+        }
+        if (layer->getDir() == frcHorzPrefRoutingDir) {
+            cAp->setOnTrack(type == frAccessPointEnum::frcOnGridAP, true);
+        } else if (layer->getDir() == frcVertPrefRoutingDir) {
+            cAp->setOnTrack(type == frAccessPointEnum::frcOnGridAP, false);
+        }
+    };
+
+    auto layerNum = ap->getLayerNum();
+    setLayerOnTrack(layerNum, ap->getType(true));
+    if (layerNum + 2 <= tech->getTopLayerNum()) {
+        setLayerOnTrack(layerNum + 2, ap->getType(false));
+    }
+}
+
 void copyAccessPointToQuery(frNet* net, frBlockObject* term, frInst* inst,
-                            frTerm* trueTerm, crAPRegionQuery* query) {
-    if (!net || !term || !trueTerm || !query) {
+                            frTerm* trueTerm, frTechObject* tech,
+                            crAPRegionQuery* query) {
+    if (!net || !term || !trueTerm || !tech || !query) {
         return;
     }
 
@@ -53,6 +89,7 @@ void copyAccessPointToQuery(frNet* net, frBlockObject* term, frInst* inst,
             cAp->setOwnerTerm(term);
             cAp->setPt(pt);
             cAp->setLayerIdx(ap->getLayerNum());
+            setAccessPointOnTrack(cAp.get(), ap.get(), tech);
 
             for (auto dir : {frDirEnum::E, frDirEnum::S, frDirEnum::W,
                              frDirEnum::N, frDirEnum::U, frDirEnum::D}) {
@@ -130,10 +167,12 @@ void crAPRegionQuery::init(frDesign* design) {
                 continue;
             }
             copyAccessPointToQuery(net.get(), instTerm, instTerm->getInst(),
-                                   instTerm->getTerm(), this);
+                                   instTerm->getTerm(), design->getTech(),
+                                   this);
         }
         for (auto* term : net->getTerms()) {
-            copyAccessPointToQuery(net.get(), term, nullptr, term, this);
+            copyAccessPointToQuery(net.get(), term, nullptr, term,
+                                   design->getTech(), this);
         }
     }
     initialized = true;
@@ -166,6 +205,91 @@ crAPRegionQuery* CustomRoute::getAPRegionQuery() {
     return apRegionQuery.get();
 }
 
+frNet* CustomRoute::getMarkerSourceNet(frBlockObject* src) const {
+    if (!src) {
+        return nullptr;
+    }
+
+    if (src->typeId() == frcNet) {
+        return static_cast<frNet*>(src);
+    }
+    if (src->typeId() == frcInstTerm) {
+        return static_cast<frInstTerm*>(src)->getNet();
+    }
+    if (src->typeId() == frcTerm) {
+        return static_cast<frTerm*>(src)->getNet();
+    }
+    return nullptr;
+}
+
+void CustomRoute::removePublishedMarkersInBox(const frBox& checkBox) const {
+    if (!design || !design->getTopBlock() || !design->getRegionQuery()) {
+        return;
+    }
+
+    auto* topBlock = design->getTopBlock();
+    auto* regionQuery = design->getRegionQuery();
+    std::vector<frMarker*> oldMarkers;
+    regionQuery->queryMarker(checkBox, oldMarkers);
+    for (auto* marker : oldMarkers) {
+        regionQuery->removeMarker(marker);
+        topBlock->removeMarker(marker);
+    }
+}
+
+std::vector<std::unique_ptr<frMarker>> CustomRoute::runBoxDRC(
+    const frBox& checkBox, bool publishMarkers) const {
+    std::vector<std::unique_ptr<frMarker>> markers;
+    if (!design || !design->getTopBlock() || !design->getRegionQuery()) {
+        return markers;
+    }
+
+    if (publishMarkers) {
+        removePublishedMarkersInBox(checkBox);
+    }
+
+    FlexGCWorker gcWorker(design);
+    gcWorker.setExtBox(checkBox);
+    gcWorker.setDrcBox(checkBox);
+    gcWorker.init();
+    gcWorker.main();
+
+    auto* topBlock = design->getTopBlock();
+    auto* regionQuery = design->getRegionQuery();
+    for (const auto& marker : gcWorker.getMarkers()) {
+        frBox markerBox;
+        marker->getBBox(markerBox);
+        if (!checkBox.overlaps(markerBox)) {
+            continue;
+        }
+
+        if (publishMarkers) {
+            auto publishedMarker = std::make_unique<frMarker>(*marker);
+            auto* markerPtr = publishedMarker.get();
+            regionQuery->addMarker(markerPtr);
+            topBlock->addMarker(publishedMarker);
+        }
+
+        markers.push_back(std::make_unique<frMarker>(*marker));
+    }
+    return markers;
+}
+
+std::set<frNet*, frBlockObjectComp> CustomRoute::collectTaskNetsFromMarkers(
+    const std::vector<std::unique_ptr<frMarker>>& markers,
+    const std::set<frNet*, frBlockObjectComp>& taskNets) const {
+    std::set<frNet*, frBlockObjectComp> result;
+    for (const auto& marker : markers) {
+        for (auto* src : marker->getSrcs()) {
+            auto* net = getMarkerSourceNet(src);
+            if (net && taskNets.find(net) != taskNets.end()) {
+                result.insert(net);
+            }
+        }
+    }
+    return result;
+}
+
 void CustomRoute::runDRCChecks(const std::vector<frBox>& checkBoxes) const {
     if (!design || !design->getTopBlock() || !design->getRegionQuery()) {
         return;
@@ -175,37 +299,9 @@ void CustomRoute::runDRCChecks(const std::vector<frBox>& checkBoxes) const {
     // 1. For each CR-touched box, remove stale top-level markers in that box.
     // 2. Run an independent FlexGC pass with extBox/drcBox limited to the box.
     // 3. Publish only markers whose bbox overlaps the checked box.
-    auto* topBlock = design->getTopBlock();
-    auto* regionQuery = design->getRegionQuery();
     for (const auto& checkBox : checkBoxes) {
-        std::vector<frMarker*> oldMarkers;
-        regionQuery->queryMarker(checkBox, oldMarkers);
-        for (auto* marker : oldMarkers) {
-            regionQuery->removeMarker(marker);
-            topBlock->removeMarker(marker);
-        }
-
-        FlexGCWorker gcWorker(design);
-        gcWorker.setExtBox(checkBox);
-        gcWorker.setDrcBox(checkBox);
-        gcWorker.init();
-        gcWorker.main();
-
-        std::size_t markerCnt = 0;
-        for (const auto& marker : gcWorker.getMarkers()) {
-            frBox markerBox;
-            marker->getBBox(markerBox);
-            if (!checkBox.overlaps(markerBox)) {
-                continue;
-            }
-            auto newMarker = std::make_unique<frMarker>(*marker);
-            auto* markerPtr = newMarker.get();
-            regionQuery->addMarker(markerPtr);
-            topBlock->addMarker(newMarker);
-            ++markerCnt;
-        }
-
-        std::cout << "CR box DRC violations = " << markerCnt << " box=("
+        auto markers = runBoxDRC(checkBox, true);
+        std::cout << "CR box DRC violations = " << markers.size() << " box=("
                   << checkBox.left() << ", " << checkBox.bottom() << ") - ("
                   << checkBox.right() << ", " << checkBox.top() << ")"
                   << std::endl;
@@ -216,25 +312,115 @@ void CustomRoute::run() {
     // Flow:
     // 1. Skip CR entirely when no net was requested, leaving existing markers
     //    untouched.
-    // 2. Build one worker per pending task so each worker owns exactly one net.
-    // 3. Print each dense graph size for current debug visibility.
-    // 4. Route and write back that net before starting the next worker.
-    // 5. Run box-scoped DRC passes after all CR writeback is complete.
+    // 2. Put unique task nets into a lightweight reroute queue.
+    // 3. Pop one net at a time, route it with a single-net worker, then run a
+    //    non-publishing box DRC over that worker's extBox.
+    // 4. If the DRC marker sources include other CR task nets, push those nets
+    //    back into the queue until their per-net attempt limit is reached.
+    // 5. Run publishing box-scoped DRC passes after queue convergence.
     if (routeTasks.empty()) {
         return;
     }
 
-    std::vector<frBox> checkBoxes;
-    for (const auto& task : routeTasks) {
-        std::vector<std::pair<frNet*, crPatternEnum>> workerTasks{task};
-        CustomRouteWorker worker(this, workerTasks);
-        checkBoxes.push_back(worker.getExtBox());
-        std::cout << worker.getPatternGraph()->getXCoords().size() *
-                         worker.getPatternGraph()->getYCoords().size() *
-                         worker.getPatternGraph()->getZCoords().size()
-                  << std::endl;
-        worker.route();
+    std::map<frNet*, crPatternEnum, frBlockObjectComp> policies;
+    std::set<frNet*, frBlockObjectComp> taskNets;
+
+    struct RerouteQueue {
+        RerouteQueue(const std::map<frNet*, crPatternEnum, frBlockObjectComp>&
+                         policiesIn,
+                     int maxAttemptsIn)
+            : policies(policiesIn),
+              routeAttempts(),
+              queuedNets(),
+              nets(),
+              maxAttempts(maxAttemptsIn) {}
+
+        bool enqueue(frNet* net, bool pushFront) {
+            if (!net || policies.find(net) == policies.end()) {
+                return false;
+            }
+            if (queuedNets.find(net) != queuedNets.end()) {
+                return false;
+            }
+            if (routeAttempts[net] >= maxAttempts) {
+                std::cout << "[customdr] skip reroute net " << net->getName()
+                          << " attempts=" << routeAttempts[net] << std::endl;
+                return false;
+            }
+
+            if (pushFront) {
+                nets.push_front(net);
+            } else {
+                nets.push_back(net);
+            }
+            queuedNets.insert(net);
+            return true;
+        }
+
+        bool empty() const { return nets.empty(); }
+
+        frNet* pop() {
+            auto* net = nets.front();
+            nets.pop_front();
+            queuedNets.erase(net);
+            return net;
+        }
+
+        int startAttempt(frNet* net) { return ++routeAttempts[net]; }
+
+        const std::map<frNet*, crPatternEnum, frBlockObjectComp>& policies;
+        std::map<frNet*, int, frBlockObjectComp> routeAttempts;
+        std::set<frNet*, frBlockObjectComp> queuedNets;
+        std::deque<frNet*> nets;
+        int maxAttempts;
+    };
+    RerouteQueue rerouteQueue(policies, kMaxRouteAttempts);
+
+    for (const auto& [net, policy] : routeTasks) {
+        if (!net) {
+            continue;
+        }
+        policies[net] = policy;
+        taskNets.insert(net);
+        rerouteQueue.enqueue(net, false);
     }
-    runDRCChecks(checkBoxes);
+
+    std::set<frBox> checkBoxes;
+    while (!rerouteQueue.empty()) {
+        auto* net = rerouteQueue.pop();
+        if (!net || policies.find(net) == policies.end()) {
+            continue;
+        }
+
+        auto attempt = rerouteQueue.startAttempt(net);
+        std::cout << "[customdr] route net " << net->getName()
+                  << " attempt=" << attempt << std::endl;
+
+        std::vector<std::pair<frNet*, crPatternEnum>> workerTasks{
+            {net, policies[net]}};
+        CustomRouteWorker worker(this, workerTasks);
+        checkBoxes.insert(worker.getExtBox());
+        auto graphNodeCount = worker.getPatternGraph()->getXCoords().size() *
+                              worker.getPatternGraph()->getYCoords().size() *
+                              worker.getPatternGraph()->getZCoords().size();
+        std::cout << "[customdr] graph nodes=" << graphNodeCount << std::endl;
+        worker.route();
+
+        auto markers = runBoxDRC(worker.getExtBox(), false);
+        std::cout << "[customdr] incremental DRC net " << net->getName()
+                  << " violations=" << markers.size() << std::endl;
+        auto conflictNets = collectTaskNetsFromMarkers(markers, taskNets);
+        for (auto* conflictNet : conflictNets) {
+            if (conflictNet == net) {
+                continue;
+            }
+            if (rerouteQueue.enqueue(conflictNet, true)) {
+                std::cout << "[customdr] enqueue reroute net "
+                          << conflictNet->getName() << " due to marker near "
+                          << net->getName() << std::endl;
+            }
+        }
+    }
+    runDRCChecks(std::vector<frBox>(checkBoxes.begin(), checkBoxes.end()));
 }
 }  // namespace fr

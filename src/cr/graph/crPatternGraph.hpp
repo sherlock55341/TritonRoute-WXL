@@ -199,10 +199,17 @@ class crPatternGraph {
     void initExternalDRCCost();
     // Query CR AP spatial index and initialize AP avoidance grid cost.
     void initAPCost();
-    // Add DR-like grid cost for one external macro/IO access point.
-    void modAccessPointCost(const crAccessPoint* ap);
-    // Add grid cost along one planar AP access direction.
-    void modAccessPointPlanarGridCost(const crAccessPoint* ap, frDirEnum dir);
+    // Return whether this AP preserves a usable upper-layer track access for a
+    // stdcell term.
+    bool hasUpperOnTrackAccess(const crAccessPoint* ap) const;
+    // Add DR-like grid cost for one external access point.
+    void modAccessPointCost(const crAccessPoint* ap, bool hasUpperOnTrackAP);
+    // Add stdcell upper off-track U-access avoidance cost.
+    void modAccessPointStdCellGridCost(const crAccessPoint* ap,
+                                       bool hasUpperOnTrackAP);
+    // Add grid cost along one planar AP access direction on layerNum.
+    void modAccessPointPlanarGridCost(const crAccessPoint* ap,
+                                      frLayerNum layerNum, frDirEnum dir);
     // Update graph quick cost from one local CR route figure.
     void modPathCost(const crConnFig* connFig, int type);
     // Update graph quick cost from one local CR path segment.

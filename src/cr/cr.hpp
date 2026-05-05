@@ -1,13 +1,18 @@
 #pragma once
 
 #include <memory>
+#include <set>
 #include <vector>
 #include "cr/type/crAccessPoint.hpp"
+#include "db/obj/frBlockObject.h"
 #include "db/tech/frTechObject.h"
 #include "frDesign.h"
 #include "frRegionQuery.h"
 
 namespace fr {
+
+class frMarker;
+class frNet;
 
 // Supported custom-route pattern search policies. `L` means enumerate
 // single-bend rectilinear candidates plus endpoint via transitions.
@@ -65,9 +70,27 @@ class CustomRoute {
     void run();
 
    protected:
+    // Maximum number of route attempts for one CR task net during lightweight
+    // marker-driven reroute.
+    static constexpr int kMaxRouteAttempts = 3;
+
     // Run FlexGC only in CR-touched query boxes after writeback and publish
     // markers whose bbox overlaps those boxes.
     void runDRCChecks(const std::vector<frBox>& checkBoxes) const;
+    // Run one box-scoped FlexGC pass. When publishMarkers is true, replace
+    // top-level markers in checkBox; otherwise return marker copies only for
+    // reroute queue decisions.
+    std::vector<std::unique_ptr<frMarker>> runBoxDRC(const frBox& checkBox,
+                                                     bool publishMarkers) const;
+    // Remove existing top-level markers whose bboxes intersect checkBox.
+    void removePublishedMarkersInBox(const frBox& checkBox) const;
+    // Extract CR task nets appearing in marker source objects.
+    std::set<frNet*, frBlockObjectComp> collectTaskNetsFromMarkers(
+        const std::vector<std::unique_ptr<frMarker>>& markers,
+        const std::set<frNet*, frBlockObjectComp>& taskNets) const;
+    // Map a GC marker source owner object back to its owning frNet when it is a
+    // net, instTerm, or top-level term.
+    frNet* getMarkerSourceNet(frBlockObject* src) const;
 
     // Source design database; owned by the caller/router flow.
     frDesign* design;
