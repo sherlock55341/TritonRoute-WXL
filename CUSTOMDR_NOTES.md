@@ -1,269 +1,184 @@
-# Custom Detailed Routing Notes
+# Custom Route Working Notes
 
-## Goal
+Last updated: 2026-05-05
 
-Build a new `customdr` flow on top of this repository that:
+This file is the repo-local continuation log for the `src/cr` custom routing
+work. Keep it concise and operational so another agent can resume after context
+compaction without rereading the full conversation.
 
-- reuses pin access analysis from `PA`
-- reads design and technology data from the existing database
-- generates restricted-shape routes for selected nets
-- writes routing results back to the database
-- reuses the existing DRC checking flow
+## Purpose
 
-The intent is **not** to deeply integrate with the current `src/dr/` maze router.
+`src/cr` is a custom detailed-routing path that:
 
-## Recommended Architecture
+- reuses PA access points and the existing `frDesign` database
+- routes selected nets with restricted pattern-routing logic
+- writes CR-owned route objects back to `frNet`
+- keeps the global `frRegionQuery` synchronized
+- reuses `FlexGCWorker` for DRC checking
 
-Create a separate directory such as:
+The intent is still to keep CR independent from the full `src/dr` maze-router
+lifecycle while aligning selected data structures, cost semantics, and legality
+checks with DR where that gives clear behavior.
 
-- `src/customdr/CustomDR.h/.cpp`
-- `src/customdr/CustomDRWorker.h/.cpp`
-- `src/customdr/CustomDRDB.h/.cpp`
-- `src/customdr/CustomDRWriteback.h/.cpp`
-- `src/customdr/CustomDRCheck.h/.cpp`
+## Current Architecture
 
-Suggested responsibilities:
+- Entry flow: `CustomRoute::run()` owns the task list, AP query, worker launch,
+  and post-CR box-scoped DRC.
+- Worker unit: each `CustomRouteWorker` is started for exactly one source
+  `frNet`, builds that net's routeBox/extBox/pattern graph, routes, and writes
+  the result before the next worker starts.
+- Local model: `crNet`, `crPin`, `crAccessPoint`, and `crConnFig` mirror the
+  DR object-family pattern without making `drNet` or `drAccessPattern` the CR
+  core model.
+- Graph model: `crPatternGraph` builds a full `xCoords * yCoords * zCoords`
+  grid over selected Hanan/track coordinates and routing layers. Router code
+  checks `crMazeIdx` validity instead of maintaining a separate sparse node map.
+- Routing model: `crPatternRouter` currently implements restricted pattern
+  routing. The `L` policy scores enumerated candidates rather than running full
+  Dijkstra/A* expansion.
+- Writeback model: route search creates local `crConnFig`s first. End-stage
+  cleanup removes old target-net `frPathSeg`/`frVia`/`frPatchWire` objects
+  inside the routeBox from `frNet` and `frRegionQuery`, then writes new
+  `frPathSeg`/`frVia` objects and inserts them into `frRegionQuery`.
 
-- `CustomDRDB`: read `frDesign`, `frNet`, pins, APs, layers, vias, and region data
-- `CustomDRWorker`: implement the custom routing algorithm
-- `CustomDRWriteback`: convert custom route results into database objects
-- `CustomDRCheck`: run legality and DRC checks using existing infrastructure
+## Implemented Behavior
 
-## Object Model Guidance
+### DR-Like Cost Storage
 
-This codebase uses a shared base type system (`frBlockObject`, `frBlockObjectEnum`), but each stage has its own object family (`fr*`, `gr*`, `ta*`, `dr*`, `gc*`).
-
-For `customdr`, prefer:
-
-- input: `frDesign`, `frNet`, `frInstTerm`, `frTerm`, `frAccessPoint`
-- output: `frPathSeg`, `frVia`, `frPatchWire`
-
-Do **not** make `drNet` / `drAccessPattern` the main model unless you plan to reuse the existing detailed router internals. They are useful as references, but they carry DR-specific assumptions and lifecycle state.
-
-A lightweight internal model is preferred, for example:
-
-- `CustomRouteSegment`
-- `CustomRouteVia`
-- `CustomRoute`
-
-## Pin Access
-
-Reuse `PA` results instead of regenerating access candidates.
-
-Useful sources:
-
-- preferred APs: `frInstTerm->getAccessPoints()`
-- full AP candidates: `pin->getPinAccess(inst->getPinAccessIdx())->getAccessPoints()`
-
-Use preferred APs if your router wants a single anchor per pin. Use full AP candidates if your router wants multiple entry options.
-
-## Writeback Strategy
-
-Write final routing results directly into `frNet`:
-
-- `frNet::addShape(...)`
-- `frNet::addVia(...)`
-- `frNet::addPatchWire(...)`
-
-After writeback, update `frRegionQuery` so later geometry queries and DRC see the new objects:
-
-- `design->getRegionQuery()->addDRObj(frShape*)`
-- `design->getRegionQuery()->addDRObj(frVia*)`
-
-If replacing existing routing, remove old routed objects from `frRegionQuery` before deleting or overwriting them.
-
-## DRC Recommendation
-
-Do not implement a separate rule checker.
-
-Preferred choice:
-
-- reuse `FlexGCWorker` for DRC/geometry checking
-
-This is the closest path to the current detailed-routing legality flow and returns markers that are already understood by the repository.
-
-Practical first version:
-
-1. run `PA`
-2. route selected nets in `customdr`
-3. write results into `frNet`
-4. update `frRegionQuery`
-5. run `FlexGCWorker`
-6. inspect markers and export DEF through `Writer::writeFromDR()`
-
-## Development Order
-
-Recommended implementation sequence:
-
-1. Define a minimal internal route representation
-2. Implement database readers for target nets and pin access
-3. Implement one restricted-shape router, such as single-`L` or constrained `Z`
-4. Implement writeback to `frNet`
-5. Add `frRegionQuery` synchronization
-6. Add `FlexGCWorker`-based DRC checking
-7. Add fallback or rollback behavior if custom routing is illegal
-
-## Practical Notes
-
-- Keep `customdr` independent from `src/dr/` unless reuse is clearly beneficial.
-- Reuse `drAccessPattern` only as a reference or adapter, not as the core model.
-- Prefer a small end-to-end prototype over early optimization or incremental DRC.
-- Start with a minimal reproducible testcase before running full designs.
-
-## Current `src/cr` Status
-
-The current `src/cr/` implementation has intentionally adopted only a subset of
-the `dr` flow. The following are implemented:
-
-- global Hanan axes in `crPatternGraph`, with only selected pattern points
-  collected from the target nets and route/ext box bounds
-- full grid instantiation in `crPatternGraph`; every valid
-  `(xCoord, yCoord, routingLayer)` inside the graph dimensions is now treated
-  as an available node, without a separate sparse node map
-- policy-driven routing in `crPatternRouter`; current `L` policy enumerates
-  candidate bend locations instead of running full maze expansion, and no
-  longer keeps unused Dijkstra-style search state for `L`
-- graph-owned planar quick-cost marking follows DR's typed cost update model:
-  the same influence-region helper can update `DRCCost` or `ShapeCost`
-  depending on caller context
-- planar non-preferred-direction cost is derived on demand from layer preferred
-  direction, following DR's "wrong-way is allowed but penalized" model instead
-  of hard forbidding it
-- graph-owned edge cost channels use DR-like normalized edge keys, so opposite
-  directions share the same physical edge cost
-- graph-owned quick-cost storage now uses one DR-like `bits` vector per grid
-  node instead of separate cost vectors, with bit ranges aligned to DR's
-  block/grid/DRC/marker/shape cost layout
-- graph-owned planar `DRCCost` uses increment/decrement counting semantics,
-  following the `dr` style of additive removable cost instead of bool/set
-  marking
-- graph-owned via `DRCCost` marks default-via placement points whose adjacent
-  metal shape would short or violate the layer min-spacing table, following the
-  same add/sub cost model as planar `DRCCost`
-- EOL spacing graph cost marks planar and default-via candidate points in the
-  EOL windows generated from routed metal and via enclosure rectangles
-- graph-owned SVia table maps pin access maze points to their first one-cut
-  access viaDef so quick DRC and writeback use the same special via footprint
-- incremental `routeNet` flow:
-  1. remove old route conn figs from pattern-graph cost
-  2. search for a new path
-  3. write the path back as `crPathSeg`
-  4. add the new route conn figs back into pattern-graph cost
-- planar `crPathSeg` writeback into the source `frNet`, with matching
-  insertion/removal in the global `frRegionQuery`
-- vertical `crVia` writeback into the source `frNet`, with matching
-  insertion/removal in the global `frRegionQuery`
-- centralized writeback flow in `CustomRouteWorker`: route search populates only
-  local `crConnFig`s first, then a final end-stage removes old DB objects from
-  `frRegionQuery`/`frNet` inside `routeBox` and writes back the new shapes/vias
-
-The following parts were intentionally simplified and are not implemented yet:
-
-- no incremental cost removal/addition for `crPatchWire`
-  `crVia` is written back and participates in `addPathCost` / `subPathCost`,
-  but `frPatchWire` generation is not added yet.
-- limited producers for DR-like cost channels
-  Current `cr` has DR-like quick-cost storage and router cost reads for
-  grid/shape/DRC/marker/block channels, and the graph helpers support DR-like
-  typed `DRCCost`/`ShapeCost` updates. Marker/block/guide-style producers are
-  still not equivalent to DR.
-- no cut-spacing, min-area, via2via forbidden length, or via-turn forbidden
-  length in graph cost
-  The current graph cost checks planar metal short/spacing, via adjacent-metal
-  short/spacing, and EOL spacing windows with default-via plus pin-AP SVia
-  footprints, but does not model the richer DR rule set.
-- no history-cost / marker-cost flow like `dr`
-  There is no equivalent of route-queue marker decay/addition.
-- no full DRC-faithful geometry reasoning
-  Current short/spacing checks use bbox-based approximations on existing
-  objects queried from the region query.
-- no patch-metal generation or post-search min-area repair
-- no full rip-up/reroute lifecycle
-  Current flow supports replacing customdr-owned planar `frPathSeg` writeback
-  for the same local `crNet`; broader victim-net rip-up/requeue is not
-  implemented.
-
-## Working Notes
-
-- Implemented: `CustomRouteWorker` now writes generated `frPathSeg`s into the
-  source `frNet` and inserts/removes them from the global `frRegionQuery`.
-- Implemented: `CustomRouteWorker` now writes vertical path transitions as
-  `crVia`/`frVia`, using pin-AP one-cut viaDefs when available and otherwise
-  falling back to the cut layer's default viaDef.
-- Implemented: planar non-preferred-direction routing is now penalized in
-  `crPatternRouter`, using a graph-owned edge-cost channel instead of hard
-  blocking wrong-way edges.
-- Implemented: `L` policy now enumerates candidate bend locations plus
-  endpoint via transitions onto a shared routing layer, and scores those
-  candidates directly instead of using maze search with turn penalties.
-- Implemented: `crPatternGraph` no longer sparsely inserts nodes. The graph is
-  now a full `xCoords x yCoords x zCoords` grid, and router traversal only
-  checks `mazeIdx` validity.
-- Implemented: `crPatternGraph` updates via `DRCCost` when a metal shape would
-  conflict with a default-via metal footprint on the layer above or below,
-  aligning the quick cost flow with DR's planar plus via min-spacing updates.
-- Implemented: `crPatternGraph` updates EOL `DRCCost` for planar and default-via
-  candidates from path segments and via enclosure rectangles, following DR's
-  `modEolSpacingCost` structure.
-- Implemented: `crPatternGraph` stores SVia access viaDefs keyed by lower-layer
-  maze index. Via min-spacing, EOL via candidate filtering, and final via
-  writeback prefer the SVia viaDef before falling back to default viaDefs.
-- Implemented: `crPatternGraph` now stores quick costs in one DR-like `bits`
-  vector, with block/grid/DRC/marker/shape fields mapped to the same bit ranges
+- Quick costs are stored in one DR-like `bits` vector per grid node.
+- Block, grid, DRC, marker, and shape fields are mapped to the same bit ranges
   used by `FlexGridGraph`.
-- Implemented: `crPatternRouter` now reads grid/shape/DRC/marker/block cost
-  channels for planar and via segments while keeping the existing pattern-route
-  search structure.
-- Implemented: `crPatternGraph` quick-cost producers now follow DR's
-  `type 0/1/2/3` update convention: sub/add `DRCCost` and sub/add `ShapeCost`
-  share the same spacing/EOL/via influence helpers, with caller context
-  selecting the target cost channel.
-- Implemented: planar metal quick-cost marking now uses a DR-like
-  candidate-width corner-to-box distance test instead of the earlier
-  footprint-overlap versus spacing-window split.
-- Implemented: CR L-pattern routing now enumerates horizontal and vertical
-  legs on separate preferred-direction layers. Source, bend, and destination
-  layer changes are connected with via stacks, preventing non-zero L routes
-  from using one routing layer for both horizontal and vertical segments.
-- Implemented: CR DRC edge weighting now follows DR's length-scaled formula:
-  affected planar/via edges charge `edgeLength * DRCCOST` instead of a fixed
-  `CR_SPACING_DRC_PENALTY` per edge.
-- Implemented: `src/cr` documentation comments now describe core class
-  responsibilities, member ownership/back-pointers, function side effects, and
-  algorithm flows for graph construction, pattern routing, quick-cost updates,
-  and DB writeback.
-- Implemented: writeback is centralized. `crNet` keeps only local
-  `routeConnFigs`; end-stage cleanup now queries global `frRegionQuery` inside
-  `routeBox` and removes old `frPathSeg`/`frVia`/`frPatchWire` for the routed
-  target nets before adding new `frPathSeg`/`frVia`.
-- Implemented: `CustomRoute::run` now starts one `CustomRouteWorker` per
-  pending task, so each worker builds routeBox/extBox/patternGraph for exactly
-  one source net and writes that net back before the next worker starts.
-- Implemented: after all per-net CR workers finish, `CustomRoute` now runs
-  `FlexGCWorker` only over each worker `extBox`, replaces stale markers inside
-  those checked boxes, and prints one box-scoped DRC violation count per box.
-- Implemented: `CustomRoute::run` now skips post-CR DRC when the CR task list
-  is empty, so a no-op CR invocation does not clear or rewrite existing
-  top-level markers.
-- Implemented: `crAccessPoint` now records CR-local owner context through
-  non-owning `ownerNet` and `ownerTerm` pointers. `initNetTerm` fills these
-  from the source `frNet` and source `frInstTerm`/`frTerm`, so later AP spatial
-  queries can identify same-net APs and pin class without mutating PA's
-  shared `frAccessPoint` objects.
-- Implemented: `CustomRoute` now owns a lazy `crAPRegionQuery` that copies
-  design PA access points into CR-local `crAccessPoint`s and indexes their
-  transformed point by routing layer. The query returns `crAccessPoint*`
-  only; AP direction, pin class, and cost interpretation remain consumer-side
-  logic.
-- Implemented: `crPatternGraph` now consumes the CR AP spatial query during
-  quick-cost initialization. External macro/IO APs with planar E/W/N/S access
-  add DR-like `GridCost` along a `10 * layer width` ray on existing graph
-  coordinates, including local U/D grid cost at affected nodes, so per-net
-  graphs can avoid other nets' APs without adding their AP coordinates.
-- Simplification: writeback now covers `frPathSeg` and `frVia`; no
-  `frPatchWire` generation is added yet.
-- TODO: add DR-like stdcell U/off-track AP grid cost. Current AP cost covers
-  macro/IO planar AP access only because `crAccessPoint` does not yet record
-  `onTrackX/onTrackY`.
-- TODO: add richer viaDef-aware graph cost beyond the first AP-provided one-cut
-  candidate / default viaDef fallback.
+- Edge keys are normalized, so opposite directions share the same physical edge
+  cost.
+- Quick-cost producers use DR's `type 0/1/2/3` convention:
+  sub/add `DRCCost`, then sub/add `ShapeCost`.
+- Router scoring reads grid, shape, DRC, marker, and block channels for planar
+  and via segments.
+- DRC edge weighting follows DR's length-scaled formula:
+  affected planar/via edges charge `edgeLength * DRCCOST`.
+
+### Shape, DRC, and Quick Legality Cost
+
+- Planar metal quick-cost marking uses a DR-like candidate-width
+  corner-to-box distance test.
+- Planar `DRCCost` is additive/removable rather than bool/set marked.
+- Via `DRCCost` marks default-via placement points whose adjacent metal
+  footprint would short or violate min-spacing.
+- EOL spacing cost marks planar and default-via candidates from routed metal
+  and via enclosure rectangles.
+- SVia data maps pin-access maze points to the first AP-provided one-cut
+  access viaDef, and quick DRC/writeback prefer that viaDef before falling back
+  to default viaDefs.
+
+### Preferred-Direction Pattern Routing
+
+- Planar non-preferred direction is still allowed but penalized through graph
+  cost.
+- Non-zero L candidates now split horizontal and vertical legs across separate
+  preferred-direction routing layers.
+- Source, bend, and destination layer changes are connected with via stacks, so
+  the src/dst APs connect to the line segments through actual vertical
+  transitions.
+- A non-zero L candidate should not use one routing layer for both horizontal
+  and vertical segments.
+
+### Access Point Context and Avoidance
+
+- `crAccessPoint` stores CR-local owner context with non-owning `ownerNet` and
+  `ownerTerm` pointers.
+- AP coordinates follow the DR/PA shift-only convention: PA access points for
+  unique instances are already orientation-transformed, so CR adds the
+  instance/top-level shift instead of applying a full transform again.
+- `CustomRoute` owns a lazy `crAPRegionQuery` that copies PA APs into CR-local
+  `crAccessPoint`s and indexes transformed AP points by routing layer.
+- `crPatternGraph` consumes the AP query during quick-cost initialization.
+  External macro/IO APs with planar E/W/N/S access add DR-like `GridCost` along
+  a `10 * layer width` ray on existing graph coordinates, including local U/D
+  grid cost at affected nodes.
+- Same-net APs are skipped when adding AP avoidance cost for a worker's graph.
+
+### DRC Flow
+
+- After all pending per-net workers finish, `CustomRoute` runs `FlexGCWorker`
+  only over each worker extBox.
+- Stale markers inside checked boxes are replaced, and CR prints one
+  box-scoped violation count per checked box.
+- If the CR task list is empty, post-CR DRC is skipped so a no-op CR invocation
+  does not clear or rewrite existing top-level markers.
+
+### Documentation
+
+- `src/cr` comments were expanded to describe core class responsibilities,
+  member ownership/back-pointers, function side effects, and algorithm phases
+  for graph construction, pattern routing, quick-cost updates, and DB
+  writeback.
+
+## Design Decisions and Assumptions
+
+- CR should borrow DR semantics where useful, but not inherit the whole DR
+  worker lifecycle unless a concrete need appears.
+- Per-net graph construction is the default. Other nets are visible through
+  region-query-derived cost and the CR AP spatial query, not by adding every
+  other net's AP coordinate to the graph.
+- `ShapeCost` and `DRCCost` are separate channels. Use `DRCCost` for known
+  short/spacing-style illegality pressure. Use `ShapeCost` for softer
+  occupancy/influence pressure when the geometry is not being classified as a
+  direct rule violation.
+- AP context is stored in CR-local `crAccessPoint` objects, not in PA's shared
+  `frAccessPoint` objects.
+- Final DRC currently reports box-scoped violations after CR. It does not yet
+  drive victim-net rip-up, rollback, or repair routing.
+
+## Known Simplifications and Risks
+
+- No `frPatchWire` generation, post-search min-area repair, or patch-metal
+  cost/writeback flow yet.
+- No cut-spacing, min-area, via2via forbidden length, or via-turn forbidden
+  length modeling in graph cost yet.
+- Marker/block/guide-style producers are not equivalent to DR.
+- Quick DRC is bbox/influence based and is not a full DRC-faithful geometry
+  proof.
+- There is no DR-like history-cost/marker-decay route queue.
+- There is no full rip-up/reroute lifecycle. Inter-net conflicts may be
+  discouraged by cost and reported by post-CR DRC, but CR does not yet repair
+  them automatically.
+- AP avoidance currently covers macro/IO planar AP access. DR-like stdcell
+  U/off-track AP grid cost is still missing because CR APs do not yet record
+  `onTrackX`/`onTrackY`.
+- Via cost/writeback uses the first AP-provided one-cut viaDef or a default
+  viaDef fallback. Richer viaDef-aware graph cost is still pending.
+
+## Next TODO
+
+1. Validate the preferred-layer L enumeration on a small routed testcase and
+   confirm Metal3 does not receive both horizontal and vertical non-zero L legs
+   from new CR output.
+2. Add DR-like stdcell U/off-track AP grid cost by copying `onTrackX` and
+   `onTrackY`-equivalent context into `crAccessPoint` and extending
+   `initAPCost()`.
+3. Improve viaDef-aware quick cost beyond the first AP SVia/default-via
+   fallback.
+4. Decide whether CR should add DRC-clean candidate rejection, rollback, or
+   rip-up/repair when post-CR box DRC finds inter-net violations.
+5. Add patch-wire/min-area support if generated route geometry needs it.
+6. Create or identify a minimal regression dataset for CR behavior checks.
+
+## Validation Log
+
+- 2026-05-05: Recent C++ validation from the CR preferred-layer L-routing work:
+  `clang-format` on `src/cr/route/crPatternRouter.cpp` and `.hpp`;
+  `clangd --compile-commands-dir=build --check=src/cr/route/crPatternRouter.cpp`
+  with only known check-mode tweak noise; `cmake --build build -j --target
+  CustomRoute`; `git diff --check -- src/cr/route/crPatternRouter.cpp
+  src/cr/route/crPatternRouter.hpp CUSTOMDR_NOTES.md`.
+- 2026-05-05: This document was reorganized from the earlier mixed architecture
+  proposal plus append-only working notes. No C++ behavior was changed by this
+  documentation cleanup.
+
+## Historical Context
+
+Early notes proposed a separate `src/customdr` prototype with `CustomDRDB`,
+`CustomDRWorker`, `CustomDRWriteback`, and `CustomDRCheck`. The implementation
+has instead evolved inside `src/cr`, using the existing CR type names and
+subsystem layout. Treat the old `src/customdr` directory proposal as historical
+background, not as the current target structure.

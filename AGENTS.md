@@ -21,49 +21,56 @@ CMake requires GCC 7+ compatible C++17 support plus Boost, OpenMP, Bison, and zl
 ## Custom Route Subsystem (`src/cr/`)
 
 ### Overview
-The `cr/` subsystem is a custom routing module that operates on a single frNet at a time, without the routeBox/extBox region-partitioning used by FlexDR. Its entry point is `CustomRouteWorker`.
+The `cr/` subsystem is a custom routing module that keeps a lightweight CR
+object model while reusing PA access points, the shared `frDesign` database,
+`frRegionQuery`, and `FlexGCWorker` checks. The current flow is per-net:
+`CustomRoute::run()` starts one `CustomRouteWorker` for each pending source
+`frNet`, and each worker builds its own routeBox/extBox/pattern graph.
 
 ### Key Types
-- `crNet` (`src/cr/type/crNet.hpp`) — mirrors `drNet`. Holds `crPin`s, `crConnFig`s, a `terms` set, and a back-pointer to the source `frNet`.
-- `crPin` (`src/cr/type/crPin.hpp`) — mirrors `drPin`. Holds a `frBlockObject*` term reference and a vector of `crAccessPoint`s.
-- `crAccessPoint` (`src/cr/type/crAccessPoint.hpp`) — mirrors `drAccessPattern`. Fields: `pt` (frPoint), `layerIdx`, `mazeIdx` (crMazeType), `validAccess` (6-bool directional flags E/S/W/N/U/D), `upViaDefs[2]`, `downViaDefs[2]`.
-- `crConnFig` (`src/cr/type/crFig.hpp`) — base class for routing geometry results.
+- `crNet` (`src/cr/type/crNet.hpp`) mirrors the source `frNet` for one CR
+  worker and owns local pins plus route result `crConnFig`s before writeback.
+- `crPin` (`src/cr/type/crPin.hpp`) mirrors an instTerm/term and owns its local
+  `crAccessPoint`s.
+- `crAccessPoint` (`src/cr/type/crAccessPoint.hpp`) stores the transformed AP
+  point, layer, derived maze index, directional access flags, access viaDefs,
+  and non-owning owner context (`ownerNet`, `ownerTerm`) for same-net filtering.
+- `crConnFig` (`src/cr/type/crFig.hpp`) is the base for local CR route geometry
+  such as planar path segments and vias.
 
-### Net Initialization (`crWorker.cpp`)
-`initNet(frNet*)` builds a `crNet` from an `frNet` by iterating all instTerms and terms. For each terminal, `initNetTerm` creates a `crPin` and populates its `crAccessPoint`s from the frPin → frPinAccess → frAccessPoint chain, applying the instance transform (`shiftXform`). Unlike FlexDR, there is no routeBox filtering — all access points are included.
+### Current Flow
+1. Build a CR-local net model from the source `frNet` and PA APs.
+2. Build a full `xCoords * yCoords * zCoords` pattern graph over selected Hanan
+   and track coordinates in the worker region.
+3. Backfill each AP's `mazeIdx` after graph construction.
+4. Initialize DR-like graph cost channels, including shape/DRC/grid/AP
+   influence costs from region-query and CR AP-query data.
+5. Enumerate restricted pattern-route candidates. The current L router uses
+   preferred horizontal and vertical layers separately and connects src, bend,
+   and dst layer changes with via stacks.
+6. Write local `crPathSeg`/`crVia` results back into the source `frNet` and keep
+   `frRegionQuery` synchronized.
+7. After all CR workers finish, run box-scoped `FlexGCWorker` checks over the
+   worker extBoxes. If there are no CR tasks, skip post-CR DRC.
 
-### Data Flow: frNet → crNet
-```
-frNet
-├── frInstTerm[] / frTerm[]
-│   └── frTerm::getPins() → frPin[]
-│       └── frPin::getPinAccess(pinAccessIdx) → frPinAccess
-│           └── frPinAccess::getAccessPoints() → frAccessPoint[]
-│               ├── point (transformed by instance shiftXform)
-│               ├── layerNum
-│               ├── accesses[6] (directional flags)
-│               └── viaDefs[][] (by cut number)
-↓
-crNet
-├── crPin[] (one per frInstTerm/frTerm)
-│   └── crAccessPoint[]
-│       ├── pt (transformed)
-│       ├── layerIdx
-│       ├── validAccess[6]
-│       ├── upViaDefs[2], downViaDefs[2]
-│       └── mazeIdx (set later, after gridGraph construction)
-```
+### Cost and Legality Notes
+- Quick-cost storage uses one DR-like `bits` vector per grid node with
+  block/grid/DRC/marker/shape fields aligned to `FlexGridGraph`.
+- Quick-cost updates follow DR's `type 0/1/2/3` convention for sub/add
+  `DRCCost` and sub/add `ShapeCost`.
+- Use `DRCCost` for known short/spacing-style illegality pressure. Use
+  `ShapeCost` for softer occupancy or influence pressure.
+- Planar non-preferred direction is allowed but penalized. Non-zero L routes
+  should not use one routing layer for both horizontal and vertical legs.
 
-### GridGraph Construction (planned)
-The `mazeIdx` field on `crAccessPoint` is not set during `initNet`. It requires a gridGraph to be built first. The DR flow for reference:
+### Known Gaps
+- No patch-wire generation, post-search min-area repair, history-cost flow, or
+  full rip-up/reroute lifecycle yet.
+- Graph cost still lacks several DR rule classes, including cut-spacing,
+  min-area, via2via forbidden length, and via-turn forbidden length.
+- AP avoidance currently handles macro/IO planar AP access; DR-like stdcell
+  U/off-track AP grid cost remains a TODO.
+- Post-CR DRC reports box-scoped violations but does not yet automatically
+  reject, roll back, or repair illegal inter-net results.
 
-1. **Collect coordinates** — from pin access points and existing routing endpoints into `xMap`/`yMap` (keyed by physical coord, valued by `{layerNum → trackPattern*}`). Each access point adds its coord to the pref-dir map of its layer and the adjacent layer (±2).
-2. **Add track coordinates** — iterate design trackPatterns within the bbox, adding all track locations to `xMap`/`yMap`.
-3. **Build grid** (`initGrids`) — flatten `xMap`/`yMap`/`zMap` keys into `xCoords[]`/`yCoords[]`/`zCoords[]` arrays; allocate bit arrays sized xDim × yDim × zDim for costs, A* state, src/dst markers.
-4. **Build edges** (`initEdges`) — for each grid node, determine E/N/U edge existence and cost based on trackPattern and DRC rules.
-5. **Backfill mazeIdx** (`initMazeIdx_ap`) — for each access point, map `(pt, layerNum)` → grid index via `gridGraph.getMazeIdx()`.
-
-For CustomRouteWorker, the bbox can be derived from the bounding box of all pin access points (with margin), rather than a pre-assigned routeBox.
-
-### Region Query and Existing Routing
-frNet shapes (pathSeg, via) are loaded into the global `frRegionQuery` R-tree during `frRegionQuery::initDRObj()`. FlexDRWorker queries this R-tree to discover existing routing within its work area. CustomRouteWorker can query the same R-tree if it needs to be aware of existing routing (e.g., for rip-up reroute), but does not need to for fresh routing.
+For the latest working log and TODO list, read `CUSTOMDR_NOTES.md`.
