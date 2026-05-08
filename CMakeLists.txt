@@ -100,6 +100,11 @@ set (FLEXROUTE_SRC
   ${FLEXROUTE_HOME}/src/rp/FlexRP.cpp
   ${FLEXROUTE_HOME}/src/rp/FlexRP_prep.cpp
   ${FLEXROUTE_HOME}/src/FlexRoute.cpp
+  ${FLEXROUTE_HOME}/src/cr/worker/crWorker.cpp
+  ${FLEXROUTE_HOME}/src/cr/worker/crWorkerInit.cpp
+  ${FLEXROUTE_HOME}/src/cr/graph/crPatternGraph.cpp
+  ${FLEXROUTE_HOME}/src/cr/route/crPatternRouter.cpp
+  ${FLEXROUTE_HOME}/src/cr/cr.cpp
   )
 
 
@@ -226,6 +231,10 @@ target_link_libraries( TritonRoute
   flexroutelib
   )
 
+add_executable( CustomRoute ${FLEXROUTE_HOME}/src/crmain.cpp)
+target_link_libraries( CustomRoute
+ PUBLIC
+ flexroutelib)
 ############################################################
 # Install
 ############################################################
@@ -233,4 +242,3 @@ target_link_libraries( TritonRoute
 install(FILES ${FLEXROUTE_HEADER} DESTINATION include)
 install(TARGETS TritonRoute DESTINATION bin)
 install(TARGETS TritonRoute DESTINATION lib)
-

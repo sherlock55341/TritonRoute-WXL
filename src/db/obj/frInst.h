@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2019, The Regents of the University of California
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -13,12 +13,12 @@
  *     * Neither the name of the University nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
  * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
  * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
@@ -37,62 +37,56 @@
 #include "db/obj/frInstBlockage.h"
 
 namespace fr {
-  class frBlock;
-  class frInst: public frRef {
-  public:
+class frBlock;
+class frInst : public frRef {
+   public:
     // constructors
-    frInst(): frRef(), name(), refBlock(nullptr), instTerms(), instBlockages(), xform(), pinAccessIdx(0) {}
-    //frInst(const frInst &instIn): frRef(), name(instIn.name), cellName(instIn.cellName),
-    //                              instTerms(), xform(instIn.xform) {
-    //  instTerms.clear();
-    //  instTerms.shrink_to_fit();
-    //  for (auto &m: instIn.instTerms) {
-    //    copyInstTerm(m);
-    //  }
-    //}
-    // getters
-    const frString& getName() const {
-      return name;
+    frInst()
+        : frRef(),
+          name(),
+          refBlock(nullptr),
+          instTerms(),
+          instBlockages(),
+          xform(),
+          pinAccessIdx(0) {}
+    // frInst(const frInst &instIn): frRef(), name(instIn.name),
+    // cellName(instIn.cellName),
+    //                               instTerms(), xform(instIn.xform) {
+    //   instTerms.clear();
+    //   instTerms.shrink_to_fit();
+    //   for (auto &m: instIn.instTerms) {
+    //     copyInstTerm(m);
+    //   }
+    // }
+    //  getters
+    const frString &getName() const { return name; }
+    frBlock *getRefBlock() const { return refBlock; }
+    const std::vector<std::unique_ptr<frInstTerm> > &getInstTerms() const {
+        return instTerms;
     }
-    frBlock* getRefBlock() const {
-      return refBlock;
+    std::vector<std::unique_ptr<frInstTerm> > &getInstTerms() {
+        return instTerms;
     }
-    const std::vector<std::unique_ptr<frInstTerm> >& getInstTerms() const {
-      return instTerms;
+    const std::vector<std::unique_ptr<frInstBlockage> > &getInstBlockages()
+        const {
+        return instBlockages;
     }
-    std::vector<std::unique_ptr<frInstTerm> >& getInstTerms() {
-      return instTerms;
+    std::vector<std::unique_ptr<frInstBlockage> > &getInstBlockages() {
+        return instBlockages;
     }
-    const std::vector<std::unique_ptr<frInstBlockage> >& getInstBlockages() const {
-      return instBlockages;
-    }
-    std::vector<std::unique_ptr<frInstBlockage> >& getInstBlockages() {
-      return instBlockages;
-    }
-    int getPinAccessIdx() const {
-      return pinAccessIdx;
-    }
+    int getPinAccessIdx() const { return pinAccessIdx; }
     // setters
-    void setName(const frString &tmpString) {
-      name = tmpString;
-    }
-    void setRefBlock(frBlock* in) {
-      refBlock = in;
-    }
+    void setName(const frString &tmpString) { name = tmpString; }
+    void setRefBlock(frBlock *in) { refBlock = in; }
     void addInstTerm(std::unique_ptr<frInstTerm> &in) {
-      instTerms.push_back(std::move(in));
+        instTerms.push_back(std::move(in));
     }
     void addInstBlockage(std::unique_ptr<frInstBlockage> &in) {
-      instBlockages.push_back(std::move(in));
+        instBlockages.push_back(std::move(in));
     }
-    void setPinAccessIdx(int in) {
-      pinAccessIdx = in;
-    }
+    void setPinAccessIdx(int in) { pinAccessIdx = in; }
     // others
-    frBlockObjectEnum typeId() const override {
-      return frcInst;
-    }
-
+    frBlockObjectEnum typeId() const override { return frcInst; }
 
     /* from frRef
      * getOrient
@@ -103,23 +97,17 @@ namespace fr {
      * setTransform
      */
 
-    frOrient getOrient() const override {
-      return xform.orient();
-    }
-    void setOrient(const frOrient &tmpOrient) override {
-      xform.set(tmpOrient);
-    }
+    frOrient getOrient() const override { return xform.orient(); }
+    void setOrient(const frOrient &tmpOrient) override { xform.set(tmpOrient); }
     void getOrigin(frPoint &tmpOrigin) const override {
-      tmpOrigin.set(xform.xOffset(), xform.yOffset());
+        tmpOrigin.set(xform.xOffset(), xform.yOffset());
     }
-    void setOrigin(const frPoint &tmpPoint) override {
-      xform.set(tmpPoint);
-    }
+    void setOrigin(const frPoint &tmpPoint) override { xform.set(tmpPoint); }
     void getTransform(frTransform &xformIn) const override {
-      xformIn.set(xform.xOffset(), xform.yOffset(), xform.orient());
+        xformIn.set(xform.xOffset(), xform.yOffset(), xform.orient());
     }
     void setTransform(const frTransform &xformIn) override {
-      xform.set(xformIn.xOffset(), xformIn.yOffset(), xformIn.orient());
+        xform.set(xformIn.xOffset(), xformIn.yOffset(), xformIn.orient());
     }
 
     /* from frPinFig
@@ -129,18 +117,10 @@ namespace fr {
      * removeFromPin
      */
 
-    bool hasPin() const override {
-      return false;
-    }
-    frPin* getPin() const override {
-      return nullptr;
-    }
-    void addToPin(frPin* in) override {
-      ;
-    }
-    void removeFromPin() override {
-      ;
-    }
+    bool hasPin() const override { return false; }
+    frPin *getPin() const override { return nullptr; }
+    void addToPin(frPin *in) override { ; }
+    void removeFromPin() override { ; }
 
     /* from frConnFig
      * hasNet
@@ -149,18 +129,10 @@ namespace fr {
      * removeFromNet
      */
 
-    bool hasNet() const override {
-      return false;
-    }
-    frNet* getNet() const override {
-      return nullptr;
-    }
-    void addToNet(frNet* in) override {
-      ;
-    }
-    void removeFromNet() override {
-      ;
-    }
+    bool hasNet() const override { return false; }
+    frNet *getNet() const override { return nullptr; }
+    void addToNet(frNet *in) override { ; }
+    void removeFromNet() override { ; }
 
     /* from frFig
      * getBBox
@@ -169,26 +141,22 @@ namespace fr {
      */
 
     // BX 181204 implemented
-    void getBBox (frBox &boxIn) const override;
-    
-    void move(const frTransform &xform) override {
-      ;
-    }
-    bool overlaps(const frBox &box) const override {
-      return false;
-    }
+    void getBBox(frBox &boxIn) const override;
+
+    void move(const frTransform &xform) override { ; }
+    bool overlaps(const frBox &box) const override { return false; }
     // others
     void getUpdatedXform(frTransform &in, bool noOrient = false) const;
     void getBoundaryBBox(frBox &in) const;
 
-  protected:
-    frString                                       name;
-    frBlock*                                       refBlock;
-    std::vector<std::unique_ptr<frInstTerm> >      instTerms;
-    std::vector<std::unique_ptr<frInstBlockage> >  instBlockages;
-    frTransform                                    xform;
-    int                                            pinAccessIdx;
-  };
-}
+   protected:
+    frString name;
+    frBlock *refBlock;
+    std::vector<std::unique_ptr<frInstTerm> > instTerms;
+    std::vector<std::unique_ptr<frInstBlockage> > instBlockages;
+    frTransform xform;
+    int pinAccessIdx;
+};
+}  // namespace fr
 
 #endif

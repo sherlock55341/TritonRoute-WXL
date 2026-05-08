@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2019, The Regents of the University of California
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -13,12 +13,12 @@
  *     * Neither the name of the University nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
  * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
  * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
@@ -35,69 +35,42 @@
 #include "db/obj/frTerm.h"
 
 namespace fr {
-  class frNet;
-  class frInst;
-  class frAccessPoint;
+class frNet;
+class frInst;
+class frAccessPoint;
 
-  class frInstTerm: public frBlockObject {
-  public:
+class frInstTerm : public frBlockObject {
+   public:
     // constructors
-    frInstTerm(): frBlockObject(), inst(nullptr), term(nullptr), net(nullptr), ap() {}
-    frInstTerm(const frInstTerm &in): frBlockObject(), inst(in.inst), term(in.term), 
-                                      net(in.net), ap() {}
+    frInstTerm()
+        : frBlockObject(), inst(nullptr), term(nullptr), net(nullptr), ap() {}
+    frInstTerm(const frInstTerm& in)
+        : frBlockObject(), inst(in.inst), term(in.term), net(in.net), ap() {}
     // getters
-    bool hasNet() const {
-      return (net);
-    }
-    frNet* getNet() const {
-      return net;
-    }
-    frInst* getInst() const {
-      return inst;
-    }
-    frTerm* getTerm() const {
-      return term;
-    }
-    void addToNet(frNet* in) {
-      net = in;
-    }
-    const std::vector<frAccessPoint*>& getAccessPoints() const {
-      return ap;
-    }
-    std::vector<frAccessPoint*>& getAccessPoints() {
-      return ap;
-    }
-    frAccessPoint* getAccessPoint(int idx = 0) const {
-      return ap[idx];
-    }
+    bool hasNet() const { return (net); }
+    frNet* getNet() const { return net; }
+    frInst* getInst() const { return inst; }
+    frTerm* getTerm() const { return term; }
+    void addToNet(frNet* in) { net = in; }
+    const std::vector<frAccessPoint*>& getAccessPoints() const { return ap; }
+    std::vector<frAccessPoint*>& getAccessPoints() { return ap; }
+    frAccessPoint* getAccessPoint(int idx = 0) const { return ap[idx]; }
     // setters
-    void addToInst(frInst* in) {
-      inst = in;
-    }
+    void addToInst(frInst* in) { inst = in; }
     // do not call from outside
-    void addTerm(frTerm* in) {
-      term = in;
-    }
-    void setAPSize(int size) {
-      ap.resize(size, nullptr);
-    }
-    void setAccessPoint(int idx, frAccessPoint *in) {
-      ap[idx] = in;
-    }
-    void addAccessPoint(frAccessPoint* in) {
-      ap.push_back(in);
-    }
+    void addTerm(frTerm* in) { term = in; }
+    void setAPSize(int size) { ap.resize(size, nullptr); }
+    void setAccessPoint(int idx, frAccessPoint* in) { ap[idx] = in; }
+    void addAccessPoint(frAccessPoint* in) { ap.push_back(in); }
     // others
-    frBlockObjectEnum typeId() const override {
-      return frcInstTerm;
-    }
-  protected:
+    frBlockObjectEnum typeId() const override { return frcInstTerm; }
+
+   protected:
     frInst* inst;
     frTerm* term;
-    frNet*  net;
-    std::vector<frAccessPoint*> ap; // follows pin index
-
-  };
-}
+    frNet* net;
+    std::vector<frAccessPoint*> ap;  // follows pin index
+};
+}  // namespace fr
 
 #endif

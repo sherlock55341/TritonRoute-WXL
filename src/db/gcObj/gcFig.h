@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2019, The Regents of the University of California
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -13,12 +13,12 @@
  *     * Neither the name of the University nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
  * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
  * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
@@ -35,28 +35,28 @@
 #include "db/infra/frTransform.h"
 
 namespace fr {
-  class gcFig: public gcBlockObject {
-  public:
+class gcFig : public gcBlockObject {
+   public:
     // constructors
-    gcFig(): gcBlockObject() {}
-    gcFig(const gcFig& in): gcBlockObject(in) {}
+    gcFig() : gcBlockObject() {}
+    gcFig(const gcFig& in) : gcBlockObject(in) {}
     // getters
-    //virtual void getBBox(frBox &box) const = 0;
-    //virtual void getBBox(box_t &box) const = 0;
+    // virtual void getBBox(frBox &box) const = 0;
+    // virtual void getBBox(box_t &box) const = 0;
     // setters
     // others
-    //frBlockObjectEnum typeId() const override {
+    // frBlockObjectEnum typeId() const override {
     //  return gccFig;
     //}
-  protected:
-  };
+   protected:
+};
 
-  class gcNet;
-  class gcConnFig: public gcFig {
-  public:
+class gcNet;
+class gcConnFig : public gcFig {
+   public:
     // constructors
-    gcConnFig(): gcFig() {}
-    gcConnFig(const gcConnFig &in): gcFig(in) {}
+    gcConnFig() : gcFig() {}
+    gcConnFig(const gcConnFig& in) : gcFig(in) {}
     // getters
     virtual bool hasNet() const = 0;
     virtual gcNet* getNet() const = 0;
@@ -64,7 +64,7 @@ namespace fr {
     virtual void addToNet(gcNet* in) = 0;
     virtual void removeFromNet() = 0;
     // others
-    //frBlockObjectEnum typeId() const override {
+    // frBlockObjectEnum typeId() const override {
     //  return gccConnFig;
     //}
 
@@ -73,14 +73,14 @@ namespace fr {
      * move
      * overlaps
      */
-  protected:
-  };
+   protected:
+};
 
-  class gcPin;
-  class gcPinFig: public gcConnFig {
-  public:
-    gcPinFig(): gcConnFig() {}
-    gcPinFig(const gcPinFig& in): gcConnFig(in) {}
+class gcPin;
+class gcPinFig : public gcConnFig {
+   public:
+    gcPinFig() : gcConnFig() {}
+    gcPinFig(const gcPinFig& in) : gcConnFig(in) {}
     // getters
     virtual bool hasPin() const = 0;
     virtual gcPin* getPin() const = 0;
@@ -88,7 +88,7 @@ namespace fr {
     virtual void addToPin(gcPin* in) = 0;
     virtual void removeFromPin() = 0;
     // others
-    //frBlockObjectEnum typeId() const override {
+    // frBlockObjectEnum typeId() const override {
     //  return gccPinFig;
     //}
 
@@ -104,9 +104,9 @@ namespace fr {
      * move
      * overlaps
      */
-  protected:
-  };
+   protected:
+};
 
-}
+}  // namespace fr
 
 #endif

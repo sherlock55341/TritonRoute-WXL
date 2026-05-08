@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2019, The Regents of the University of California
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -13,12 +13,12 @@
  *     * Neither the name of the University nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
  * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
  * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
@@ -32,36 +32,36 @@
 #include <iostream>
 #include <chrono>
 #include <ctime>
-//#include <boost/io/ios_state.hpp>
+// #include <boost/io/ios_state.hpp>
 
 extern size_t getPeakRSS();
 extern size_t getCurrentRSS();
 
 namespace fr {
-  class frTime {
-  public:
-    frTime(): t0(std::chrono::high_resolution_clock::now()), t(clock()) {}
-    //void begin() {
-    //  t0 = std::chrono::high_resolution_clock::now();
-    //}
-    //void end() {
-    //  t1 = std::chrono::high_resolution_clock::now();
-    //}
-    std::chrono::high_resolution_clock::time_point getT0() const {
-      return t0;
-    }
+class frTime {
+   public:
+    frTime() : t0(std::chrono::high_resolution_clock::now()), t(clock()) {}
+    // void begin() {
+    //   t0 = std::chrono::high_resolution_clock::now();
+    // }
+    // void end() {
+    //   t1 = std::chrono::high_resolution_clock::now();
+    // }
+    std::chrono::high_resolution_clock::time_point getT0() const { return t0; }
     void print();
     bool isExceed(double in) {
-      auto t1        = std::chrono::high_resolution_clock::now();
-      auto time_span = std::chrono::duration_cast<std::chrono::duration<double> >(t1 - t0);
-      return (time_span.count() > in);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        auto time_span =
+            std::chrono::duration_cast<std::chrono::duration<double> >(t1 - t0);
+        return (time_span.count() > in);
     }
-  protected:
+
+   protected:
     std::chrono::high_resolution_clock::time_point t0;
     clock_t t;
-    //std::chrono::high_resolution_clock::time_point t1;
-  };
-}
+    // std::chrono::high_resolution_clock::time_point t1;
+};
+}  // namespace fr
 
-extern std::ostream& operator<<(std::ostream& os, const fr::frTime &t);
+extern std::ostream& operator<<(std::ostream& os, const fr::frTime& t);
 #endif

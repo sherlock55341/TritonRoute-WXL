@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2019, The Regents of the University of California
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -13,12 +13,12 @@
  *     * Neither the name of the University nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
  * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
  * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
@@ -40,344 +40,380 @@ using namespace fr;
 using namespace boost::polygon::operators;
 
 int FlexTAWorker::main() {
-  using namespace std::chrono;
-  high_resolution_clock::time_point t0 = high_resolution_clock::now();
-  if (VERBOSE > 1) {
-    stringstream ss;
-    //cout <<endl <<"start TA worker (BOX/LAYER) " <<routeBox <<" " <<layerNum <<endl;
-    ss <<endl <<"start TA worker (BOX) ("
-       <<routeBox.left()   * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<", "
-       <<routeBox.bottom() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<") ("
-       <<routeBox.right()  * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<", "
-       <<routeBox.top()    * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<") ";
-    if (getDir() == frPrefRoutingDirEnum::frcHorzPrefRoutingDir) {
-      ss <<"H";
-    } else {
-      ss <<"V";
+    using namespace std::chrono;
+    high_resolution_clock::time_point t0 = high_resolution_clock::now();
+    if (VERBOSE > 1) {
+        stringstream ss;
+        // cout <<endl <<"start TA worker (BOX/LAYER) " <<routeBox <<" "
+        // <<layerNum <<endl;
+        ss << endl
+           << "start TA worker (BOX) ("
+           << routeBox.left() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU()
+           << ", "
+           << routeBox.bottom() * 1.0 /
+                  getDesign()->getTopBlock()->getDBUPerUU()
+           << ") ("
+           << routeBox.right() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU()
+           << ", "
+           << routeBox.top() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU()
+           << ") ";
+        if (getDir() == frPrefRoutingDirEnum::frcHorzPrefRoutingDir) {
+            ss << "H";
+        } else {
+            ss << "V";
+        }
+        ss << endl;
+        cout << ss.str();
     }
-    ss <<endl;
-    cout <<ss.str();
-  }
 
+    // assignIroutes();
+    // reassignIroutes();
+    // saveToGuides();
+    // reportCosts();
+    init();
+    high_resolution_clock::time_point t1 = high_resolution_clock::now();
+    assign();
+    high_resolution_clock::time_point t2 = high_resolution_clock::now();
+    end();
+    high_resolution_clock::time_point t3 = high_resolution_clock::now();
 
-  //assignIroutes();
-  //reassignIroutes();
-  //saveToGuides();
-  //reportCosts();
-  init();
-  high_resolution_clock::time_point t1 = high_resolution_clock::now();
-  assign();
-  high_resolution_clock::time_point t2 = high_resolution_clock::now();
-  end();
-  high_resolution_clock::time_point t3 = high_resolution_clock::now();
+    duration<double> time_span0 = duration_cast<duration<double>>(t1 - t0);
+    duration<double> time_span1 = duration_cast<duration<double>>(t2 - t1);
+    duration<double> time_span2 = duration_cast<duration<double>>(t3 - t2);
 
-  duration<double> time_span0 = duration_cast<duration<double>>(t1 - t0);
-  duration<double> time_span1 = duration_cast<duration<double>>(t2 - t1);
-  duration<double> time_span2 = duration_cast<duration<double>>(t3 - t2);
-
-  if (VERBOSE > 1) {
-    stringstream ss;
-    ss   <<"time (INIT/ASSIGN/POST) " <<time_span0.count() <<" " 
-                                      <<time_span1.count() <<" "
-                                      <<time_span2.count() <<" "
-                                      <<endl;
-    cout <<ss.str() <<flush;
-  }
-  return 0;
+    if (VERBOSE > 1) {
+        stringstream ss;
+        ss << "time (INIT/ASSIGN/POST) " << time_span0.count() << " "
+           << time_span1.count() << " " << time_span2.count() << " " << endl;
+        cout << ss.str() << flush;
+    }
+    return 0;
 }
 
 int FlexTAWorker::main_mt() {
-  using namespace std::chrono;
-  high_resolution_clock::time_point t0 = high_resolution_clock::now();
-  if (VERBOSE > 1) {
-    stringstream ss;
-    //cout <<endl <<"start TA worker (BOX/LAYER) " <<routeBox <<" " <<layerNum <<endl;
-    ss <<endl <<"start TA worker (BOX) ("
-       <<routeBox.left()   * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<", "
-       <<routeBox.bottom() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<") ("
-       <<routeBox.right()  * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<", "
-       <<routeBox.top()    * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<") ";
-    if (getDir() == frPrefRoutingDirEnum::frcHorzPrefRoutingDir) {
-      ss <<"H";
-    } else {
-      ss <<"V";
+    using namespace std::chrono;
+    high_resolution_clock::time_point t0 = high_resolution_clock::now();
+    if (VERBOSE > 1) {
+        stringstream ss;
+        // cout <<endl <<"start TA worker (BOX/LAYER) " <<routeBox <<" "
+        // <<layerNum <<endl;
+        ss << endl
+           << "start TA worker (BOX) ("
+           << routeBox.left() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU()
+           << ", "
+           << routeBox.bottom() * 1.0 /
+                  getDesign()->getTopBlock()->getDBUPerUU()
+           << ") ("
+           << routeBox.right() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU()
+           << ", "
+           << routeBox.top() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU()
+           << ") ";
+        if (getDir() == frPrefRoutingDirEnum::frcHorzPrefRoutingDir) {
+            ss << "H";
+        } else {
+            ss << "V";
+        }
+        ss << endl;
+        cout << ss.str();
     }
-    ss <<endl;
-    cout <<ss.str();
-  }
 
+    // assignIroutes();
+    // reassignIroutes();
+    // saveToGuides();
+    // reportCosts();
+    init();
+    high_resolution_clock::time_point t1 = high_resolution_clock::now();
+    assign();
+    high_resolution_clock::time_point t2 = high_resolution_clock::now();
+    // end();
+    high_resolution_clock::time_point t3 = high_resolution_clock::now();
 
-  //assignIroutes();
-  //reassignIroutes();
-  //saveToGuides();
-  //reportCosts();
-  init();
-  high_resolution_clock::time_point t1 = high_resolution_clock::now();
-  assign();
-  high_resolution_clock::time_point t2 = high_resolution_clock::now();
-  //end();
-  high_resolution_clock::time_point t3 = high_resolution_clock::now();
+    duration<double> time_span0 = duration_cast<duration<double>>(t1 - t0);
+    duration<double> time_span1 = duration_cast<duration<double>>(t2 - t1);
+    duration<double> time_span2 = duration_cast<duration<double>>(t3 - t2);
 
-  duration<double> time_span0 = duration_cast<duration<double>>(t1 - t0);
-  duration<double> time_span1 = duration_cast<duration<double>>(t2 - t1);
-  duration<double> time_span2 = duration_cast<duration<double>>(t3 - t2);
-
-  if (VERBOSE > 1) {
-    stringstream ss;
-    ss   <<"time (INIT/ASSIGN/POST) " <<time_span0.count() <<" " 
-                                      <<time_span1.count() <<" "
-                                      <<time_span2.count() <<" "
-                                      <<endl;
-    cout <<ss.str() <<flush;
-  }
-  return 0;
+    if (VERBOSE > 1) {
+        stringstream ss;
+        ss << "time (INIT/ASSIGN/POST) " << time_span0.count() << " "
+           << time_span1.count() << " " << time_span2.count() << " " << endl;
+        cout << ss.str() << flush;
+    }
+    return 0;
 }
 
-int FlexTA::initTA_helper(int iter, int size, int offset, bool isH, int &numPanels) {
-  //frBox dieBox;
-  //getDesign()->getTopBlock()->getBoundaryBBox(dieBox);
+int FlexTA::initTA_helper(int iter, int size, int offset, bool isH,
+                          int &numPanels) {
+    // frBox dieBox;
+    // getDesign()->getTopBlock()->getBoundaryBBox(dieBox);
 
-  auto gCellPatterns = getDesign()->getTopBlock()->getGCellPatterns();
-  auto &xgp = gCellPatterns.at(0);
-  auto &ygp = gCellPatterns.at(1);
-  int sol = 0;
-  numPanels = 0;
-  if (MAX_THREADS == 1) {
-    if (isH) {
-      for (int i = offset; i < (int)ygp.getCount(); i += size) {
-        FlexTAWorker worker(getDesign());
-        frBox beginBox, endBox;
-        getDesign()->getTopBlock()->getGCellBox(frPoint(0, i), beginBox);
-        getDesign()->getTopBlock()->getGCellBox(frPoint((int)xgp.getCount() - 1, 
-                                                        min(i + size - 1, (int)ygp.getCount() - 1)), endBox);
-        frBox routeBox(beginBox.left(), beginBox.bottom(), endBox.right(), endBox.top());
-        frBox extBox;
-        routeBox.bloat(ygp.getSpacing() / 2, extBox);
-        worker.setRouteBox(routeBox);
-        worker.setExtBox(extBox);
-        worker.setDir(frPrefRoutingDirEnum::frcHorzPrefRoutingDir);
-        worker.setTAIter(iter);
-        worker.main();
-        //int numAssigned = worker.getNumAssigned();
-        sol += worker.getNumAssigned();
-        numPanels++;
-        //if (VERBOSE > 0) {
-        //  cout <<"Done with " <<numAssigned <<"horizontal wires";
-        //}
-      }
+    auto gCellPatterns = getDesign()->getTopBlock()->getGCellPatterns();
+    auto &xgp = gCellPatterns.at(0);
+    auto &ygp = gCellPatterns.at(1);
+    int sol = 0;
+    numPanels = 0;
+    if (MAX_THREADS == 1) {
+        if (isH) {
+            for (int i = offset; i < (int)ygp.getCount(); i += size) {
+                FlexTAWorker worker(getDesign());
+                frBox beginBox, endBox;
+                getDesign()->getTopBlock()->getGCellBox(frPoint(0, i),
+                                                        beginBox);
+                getDesign()->getTopBlock()->getGCellBox(
+                    frPoint((int)xgp.getCount() - 1,
+                            min(i + size - 1, (int)ygp.getCount() - 1)),
+                    endBox);
+                frBox routeBox(beginBox.left(), beginBox.bottom(),
+                               endBox.right(), endBox.top());
+                frBox extBox;
+                routeBox.bloat(ygp.getSpacing() / 2, extBox);
+                worker.setRouteBox(routeBox);
+                worker.setExtBox(extBox);
+                worker.setDir(frPrefRoutingDirEnum::frcHorzPrefRoutingDir);
+                worker.setTAIter(iter);
+                worker.main();
+                // int numAssigned = worker.getNumAssigned();
+                sol += worker.getNumAssigned();
+                numPanels++;
+                // if (VERBOSE > 0) {
+                //   cout <<"Done with " <<numAssigned <<"horizontal wires";
+                // }
+            }
+        } else {
+            for (int i = offset; i < (int)xgp.getCount(); i += size) {
+                FlexTAWorker worker(getDesign());
+                frBox beginBox, endBox;
+                getDesign()->getTopBlock()->getGCellBox(frPoint(i, 0),
+                                                        beginBox);
+                getDesign()->getTopBlock()->getGCellBox(
+                    frPoint(min(i + size - 1, (int)xgp.getCount() - 1),
+                            (int)ygp.getCount() - 1),
+                    endBox);
+                frBox routeBox(beginBox.left(), beginBox.bottom(),
+                               endBox.right(), endBox.top());
+                frBox extBox;
+                routeBox.bloat(xgp.getSpacing() / 2, extBox);
+                worker.setRouteBox(routeBox);
+                worker.setExtBox(extBox);
+                worker.setDir(frPrefRoutingDirEnum::frcVertPrefRoutingDir);
+                worker.setTAIter(iter);
+                worker.main();
+                // int numAssigned = worker.getNumAssigned();
+                sol += worker.getNumAssigned();
+                numPanels++;
+                // if (VERBOSE > 0) {
+                //   cout <<"Done with " <<numAssigned <<"vertical wires";
+                // }
+            }
+        }
     } else {
-      for (int i = offset; i < (int)xgp.getCount(); i += size) {
-        FlexTAWorker worker(getDesign());
-        frBox beginBox, endBox;
-        getDesign()->getTopBlock()->getGCellBox(frPoint(i, 0),                       beginBox);
-        getDesign()->getTopBlock()->getGCellBox(frPoint(min(i + size - 1, (int)xgp.getCount() - 1),
-                                                        (int)ygp.getCount() - 1), endBox);
-        frBox routeBox(beginBox.left(), beginBox.bottom(), endBox.right(), endBox.top());
-        frBox extBox;
-        routeBox.bloat(xgp.getSpacing() / 2, extBox);
-        worker.setRouteBox(routeBox);
-        worker.setExtBox(extBox);
-        worker.setDir(frPrefRoutingDirEnum::frcVertPrefRoutingDir);
-        worker.setTAIter(iter);
-        worker.main();
-        //int numAssigned = worker.getNumAssigned();
-        sol += worker.getNumAssigned();
-        numPanels++;
-        //if (VERBOSE > 0) {
-        //  cout <<"Done with " <<numAssigned <<"vertical wires";
-        //}
-      }
-    } 
-  } else {
-    vector<vector<unique_ptr<FlexTAWorker> > > workers;
-    if (isH) {
-      for (int i = offset; i < (int)ygp.getCount(); i += size) {
-        auto uworker = make_unique<FlexTAWorker>(getDesign());
-        auto &worker = *(uworker.get());
-        frBox beginBox, endBox;
-        getDesign()->getTopBlock()->getGCellBox(frPoint(0, i), beginBox);
-        getDesign()->getTopBlock()->getGCellBox(frPoint((int)xgp.getCount() - 1, 
-                                                        min(i + size - 1, (int)ygp.getCount() - 1)), endBox);
-        frBox routeBox(beginBox.left(), beginBox.bottom(), endBox.right(), endBox.top());
-        frBox extBox;
-        routeBox.bloat(ygp.getSpacing() / 2, extBox);
-        worker.setRouteBox(routeBox);
-        worker.setExtBox(extBox);
-        worker.setDir(frPrefRoutingDirEnum::frcHorzPrefRoutingDir);
-        worker.setTAIter(iter);
-        //worker.main();
-        //sol += worker.getNumAssigned();
-        //numPanels++;
-        if (workers.empty() || (int)workers.back().size() >= BATCHSIZETA) {
-          workers.push_back(vector<unique_ptr<FlexTAWorker> >());
+        vector<vector<unique_ptr<FlexTAWorker>>> workers;
+        if (isH) {
+            for (int i = offset; i < (int)ygp.getCount(); i += size) {
+                auto uworker = make_unique<FlexTAWorker>(getDesign());
+                auto &worker = *(uworker.get());
+                frBox beginBox, endBox;
+                getDesign()->getTopBlock()->getGCellBox(frPoint(0, i),
+                                                        beginBox);
+                getDesign()->getTopBlock()->getGCellBox(
+                    frPoint((int)xgp.getCount() - 1,
+                            min(i + size - 1, (int)ygp.getCount() - 1)),
+                    endBox);
+                frBox routeBox(beginBox.left(), beginBox.bottom(),
+                               endBox.right(), endBox.top());
+                frBox extBox;
+                routeBox.bloat(ygp.getSpacing() / 2, extBox);
+                worker.setRouteBox(routeBox);
+                worker.setExtBox(extBox);
+                worker.setDir(frPrefRoutingDirEnum::frcHorzPrefRoutingDir);
+                worker.setTAIter(iter);
+                // worker.main();
+                // sol += worker.getNumAssigned();
+                // numPanels++;
+                if (workers.empty() ||
+                    (int)workers.back().size() >= BATCHSIZETA) {
+                    workers.push_back(vector<unique_ptr<FlexTAWorker>>());
+                }
+                workers.back().push_back(std::move(uworker));
+            }
+        } else {
+            for (int i = offset; i < (int)xgp.getCount(); i += size) {
+                auto uworker = make_unique<FlexTAWorker>(getDesign());
+                auto &worker = *(uworker.get());
+                frBox beginBox, endBox;
+                getDesign()->getTopBlock()->getGCellBox(frPoint(i, 0),
+                                                        beginBox);
+                getDesign()->getTopBlock()->getGCellBox(
+                    frPoint(min(i + size - 1, (int)xgp.getCount() - 1),
+                            (int)ygp.getCount() - 1),
+                    endBox);
+                frBox routeBox(beginBox.left(), beginBox.bottom(),
+                               endBox.right(), endBox.top());
+                frBox extBox;
+                routeBox.bloat(xgp.getSpacing() / 2, extBox);
+                worker.setRouteBox(routeBox);
+                worker.setExtBox(extBox);
+                worker.setDir(frPrefRoutingDirEnum::frcVertPrefRoutingDir);
+                worker.setTAIter(iter);
+                // worker.main();
+                // sol += worker.getNumAssigned();
+                // numPanels++;
+                if (workers.empty() ||
+                    (int)workers.back().size() >= BATCHSIZETA) {
+                    workers.push_back(vector<unique_ptr<FlexTAWorker>>());
+                }
+                workers.back().push_back(std::move(uworker));
+            }
         }
-        workers.back().push_back(std::move(uworker));
-      }
-    } else {
-      for (int i = offset; i < (int)xgp.getCount(); i += size) {
-        auto uworker = make_unique<FlexTAWorker>(getDesign());
-        auto &worker = *(uworker.get());
-        frBox beginBox, endBox;
-        getDesign()->getTopBlock()->getGCellBox(frPoint(i, 0),                       beginBox);
-        getDesign()->getTopBlock()->getGCellBox(frPoint(min(i + size - 1, (int)xgp.getCount() - 1),
-                                                        (int)ygp.getCount() - 1), endBox);
-        frBox routeBox(beginBox.left(), beginBox.bottom(), endBox.right(), endBox.top());
-        frBox extBox;
-        routeBox.bloat(xgp.getSpacing() / 2, extBox);
-        worker.setRouteBox(routeBox);
-        worker.setExtBox(extBox);
-        worker.setDir(frPrefRoutingDirEnum::frcVertPrefRoutingDir);
-        worker.setTAIter(iter);
-        //worker.main();
-        //sol += worker.getNumAssigned();
-        //numPanels++;
-        if (workers.empty() || (int)workers.back().size() >= BATCHSIZETA) {
-          workers.push_back(vector<unique_ptr<FlexTAWorker> >());
-        }
-        workers.back().push_back(std::move(uworker));
-      }
-    } 
 
-
-    omp_set_num_threads(min(8, MAX_THREADS));
-    // parallel execution
-    // multi thread
-    for (auto &workerBatch: workers) {
-      #pragma omp parallel for schedule(dynamic)
-      for (int i = 0; i < (int)workerBatch.size(); i++) {
-        workerBatch[i]->main_mt();
-        #pragma omp critical 
-        {
-          sol += workerBatch[i]->getNumAssigned();
-          numPanels++;
+        omp_set_num_threads(min(8, MAX_THREADS));
+        // parallel execution
+        // multi thread
+        for (auto &workerBatch : workers) {
+#pragma omp parallel for schedule(dynamic)
+            for (int i = 0; i < (int)workerBatch.size(); i++) {
+                workerBatch[i]->main_mt();
+#pragma omp critical
+                {
+                    sol += workerBatch[i]->getNumAssigned();
+                    numPanels++;
+                }
+            }
+            for (int i = 0; i < (int)workerBatch.size(); i++) {
+                workerBatch[i]->end();
+            }
+            workerBatch.clear();
         }
-      }
-      for (int i = 0; i < (int)workerBatch.size(); i++) {
-        workerBatch[i]->end();
-      }
-      workerBatch.clear();
     }
-  }
-  return sol;
+    return sol;
 }
 
 void FlexTA::initTA(int size) {
-  frTime t;
+    frTime t;
 
-  if (VERBOSE > 1) {
-    cout <<endl <<"start initial track assignment ..." <<endl;
-  }
+    if (VERBOSE > 1) {
+        cout << endl << "start initial track assignment ..." << endl;
+    }
 
-  auto bottomLNum = getDesign()->getTech()->getBottomLayerNum();
-  auto bottomLayer = getDesign()->getTech()->getLayer(bottomLNum);
-  if (bottomLayer->getType() != frLayerTypeEnum::ROUTING) {
-    bottomLNum++;
-    bottomLayer = getDesign()->getTech()->getLayer(bottomLNum);
-  }
-  bool isBottomLayerH = (bottomLayer->getDir() == frPrefRoutingDirEnum::frcHorzPrefRoutingDir);
+    auto bottomLNum = getDesign()->getTech()->getBottomLayerNum();
+    auto bottomLayer = getDesign()->getTech()->getLayer(bottomLNum);
+    if (bottomLayer->getType() != frLayerTypeEnum::ROUTING) {
+        bottomLNum++;
+        bottomLayer = getDesign()->getTech()->getLayer(bottomLNum);
+    }
+    bool isBottomLayerH =
+        (bottomLayer->getDir() == frPrefRoutingDirEnum::frcHorzPrefRoutingDir);
 
-  int numAssigned = 0;
-  int numPanels = 0;
+    int numAssigned = 0;
+    int numPanels = 0;
 
-  // H first
-  if (isBottomLayerH) {
-    numAssigned = initTA_helper(0, size, 0, true, numPanels);
-    if (VERBOSE > 0) {
-      cout <<"Done with " <<numAssigned <<" horizontal wires in " <<numPanels <<" frboxes and ";
+    // H first
+    if (isBottomLayerH) {
+        numAssigned = initTA_helper(0, size, 0, true, numPanels);
+        if (VERBOSE > 0) {
+            cout << "Done with " << numAssigned << " horizontal wires in "
+                 << numPanels << " frboxes and ";
+        }
+        numAssigned = initTA_helper(0, size, 0, false, numPanels);
+        if (VERBOSE > 0) {
+            cout << numAssigned << " vertical wires in " << numPanels
+                 << " frboxes." << endl;
+        }
+        // V first
+    } else {
+        numAssigned = initTA_helper(0, size, 0, false, numPanels);
+        if (VERBOSE > 0) {
+            cout << "Done with " << numAssigned << " vertical wires in "
+                 << numPanels << " frboxes and ";
+        }
+        numAssigned = initTA_helper(0, size, 0, true, numPanels);
+        if (VERBOSE > 0) {
+            cout << numAssigned << " horizontal wires in " << numPanels
+                 << " frboxes." << endl;
+        }
     }
-    numAssigned = initTA_helper(0, size, 0, false, numPanels);
-    if (VERBOSE > 0) {
-      cout <<numAssigned <<" vertical wires in " <<numPanels <<" frboxes." <<endl;
-    }
-  // V first
-  } else {
-    numAssigned = initTA_helper(0, size, 0, false, numPanels);
-    if (VERBOSE > 0) {
-      cout <<"Done with " <<numAssigned <<" vertical wires in " <<numPanels <<" frboxes and ";
-    }
-    numAssigned = initTA_helper(0, size, 0, true, numPanels);
-    if (VERBOSE > 0) {
-      cout <<numAssigned <<" horizontal wires in " <<numPanels <<" frboxes." <<endl;
-    }
-  }
 }
 
 void FlexTA::searchRepair(int iter, int size, int offset) {
-  frTime t;
+    frTime t;
 
-  if (VERBOSE > 1) {
-    if (iter == -1) {
-      cout <<endl <<"start polishing ..." <<endl;
+    if (VERBOSE > 1) {
+        if (iter == -1) {
+            cout << endl << "start polishing ..." << endl;
+        } else {
+            cout << endl << "start " << iter;
+            string suffix;
+            if (iter == 1 || (iter > 20 && iter % 10 == 1)) {
+                suffix = "st";
+            } else if (iter == 2 || (iter > 20 && iter % 10 == 2)) {
+                suffix = "nd";
+            } else if (iter == 3 || (iter > 20 && iter % 10 == 3)) {
+                suffix = "rd";
+            } else {
+                suffix = "th";
+            }
+            cout << suffix << " optimization iteration ..." << endl;
+        }
+    }
+    auto bottomLNum = getDesign()->getTech()->getBottomLayerNum();
+    auto bottomLayer = getDesign()->getTech()->getLayer(bottomLNum);
+    if (bottomLayer->getType() != frLayerTypeEnum::ROUTING) {
+        bottomLNum++;
+        bottomLayer = getDesign()->getTech()->getLayer(bottomLNum);
+    }
+    bool isBottomLayerH =
+        (bottomLayer->getDir() == frPrefRoutingDirEnum::frcHorzPrefRoutingDir);
+
+    // int sol = 0;
+    int numAssigned = 0;
+    int numPanels = 0;
+    // H first
+    if (isBottomLayerH) {
+        numAssigned = initTA_helper(iter, size, offset, true, numPanels);
+        if (VERBOSE > 0) {
+            cout << "Done with " << numAssigned << " horizontal wires in "
+                 << numPanels << " frboxes and ";
+        }
+        numAssigned = initTA_helper(iter, size, offset, false, numPanels);
+        if (VERBOSE > 0) {
+            cout << numAssigned << " vertical wires in " << numPanels
+                 << " frboxes." << endl;
+        }
+        // V first
     } else {
-      cout <<endl <<"start " <<iter;
-      string suffix;
-      if (iter == 1 || (iter > 20 && iter % 10 == 1)) {
-        suffix = "st";
-      } else if (iter == 2 || (iter > 20 && iter % 10 == 2)) {
-        suffix = "nd";
-      } else if (iter == 3 || (iter > 20 && iter % 10 == 3)) {
-        suffix = "rd";
-      } else {
-        suffix = "th";
-      }
-      cout <<suffix <<" optimization iteration ..." <<endl;
+        numAssigned = initTA_helper(iter, size, offset, false, numPanels);
+        if (VERBOSE > 0) {
+            cout << "Done with " << numAssigned << " vertical wires in "
+                 << numPanels << " frboxes and ";
+        }
+        numAssigned = initTA_helper(iter, size, offset, true, numPanels);
+        if (VERBOSE > 0) {
+            cout << numAssigned << " horizontal wires in " << numPanels
+                 << " frboxes." << endl;
+        }
     }
-  }
-  auto bottomLNum = getDesign()->getTech()->getBottomLayerNum();
-  auto bottomLayer = getDesign()->getTech()->getLayer(bottomLNum);
-  if (bottomLayer->getType() != frLayerTypeEnum::ROUTING) {
-    bottomLNum++;
-    bottomLayer = getDesign()->getTech()->getLayer(bottomLNum);
-  }
-  bool isBottomLayerH = (bottomLayer->getDir() == frPrefRoutingDirEnum::frcHorzPrefRoutingDir);
-
-  //int sol = 0;
-  int numAssigned = 0;
-  int numPanels = 0;
-  // H first
-  if (isBottomLayerH) {
-    numAssigned = initTA_helper(iter, size, offset, true, numPanels);
-    if (VERBOSE > 0) {
-      cout <<"Done with " <<numAssigned <<" horizontal wires in " <<numPanels <<" frboxes and ";
-    }
-    numAssigned = initTA_helper(iter, size, offset, false, numPanels);
-    if (VERBOSE > 0) {
-      cout <<numAssigned <<" vertical wires in " <<numPanels <<" frboxes." <<endl;
-    }
-  // V first
-  } else {
-    numAssigned = initTA_helper(iter, size, offset, false, numPanels);
-    if (VERBOSE > 0) {
-      cout <<"Done with " <<numAssigned <<" vertical wires in " <<numPanels <<" frboxes and ";
-    }
-    numAssigned = initTA_helper(iter, size, offset, true, numPanels);
-    if (VERBOSE > 0) {
-      cout <<numAssigned <<" horizontal wires in " <<numPanels <<" frboxes." <<endl;
-    }
-  }
 }
 
 int FlexTA::main() {
-  frTime t;
-  if (VERBOSE > 0) {
-    cout <<endl <<endl <<"start track assignment" <<endl;
-  }
-  initTA(50);
-  searchRepair(1, 50, 0);
-  //searchRepair(2, 50, 0);
-  //searchRepair(2, 50, 0);
-  //searchRepair(-1, 50, 0);
+    frTime t;
+    if (VERBOSE > 0) {
+        cout << endl << endl << "start track assignment" << endl;
+    }
+    initTA(50);
+    searchRepair(1, 50, 0);
+    // searchRepair(2, 50, 0);
+    // searchRepair(2, 50, 0);
+    // searchRepair(-1, 50, 0);
 
-  if (VERBOSE > 0) {
-    cout <<endl <<"complete track assignment";
-    //end();
-  }
-  if (VERBOSE > 0) {
-    cout <<endl;
-    t.print();
-    cout <<endl;
-  }
-  return 0;
+    if (VERBOSE > 0) {
+        cout << endl << "complete track assignment";
+        // end();
+    }
+    if (VERBOSE > 0) {
+        cout << endl;
+        t.print();
+        cout << endl;
+    }
+    return 0;
 }
 
 /*
@@ -391,17 +427,18 @@ void FlexTAWorker::getAllGuides() {
     frPoint pt1, pt2;
     guide->getPoints(pt1, pt2);
     if (enableOutput) {
-      cout <<"found guide (" 
-           <<pt1.x() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<", " 
-           <<pt1.y() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<") (" 
-           <<pt2.x() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<", " 
-           <<pt2.y() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<") " 
+      cout <<"found guide ("
+           <<pt1.x() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<", "
+           <<pt1.y() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<") ("
+           <<pt2.x() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<", "
+           <<pt2.y() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<") "
            <<guide->getNet()->getName() << "\n";
     }
     guides.push_back(guide);
     //cout <<endl;
   }
-  sort(guides.begin(), guides.end(), [](const frGuide *a, const frGuide *b) {return *a < *b;});
+  sort(guides.begin(), guides.end(), [](const frGuide *a, const frGuide *b)
+{return *a < *b;});
 }
 */
 
@@ -411,43 +448,43 @@ void FlexTAWorker::getAllTracks() {
   bool enableOutput = false;
   // uPtr for tp
   for (auto &tp: getDesign()->getTopBlock()->getTrackPatterns(layerNum)) {
-    if ((getTech()->getLayers().at(layerNum)->getDir() == frcHorzPrefRoutingDir &&
-         tp->isHorizontal() == false) ||
-        (getTech()->getLayers().at(layerNum)->getDir() == frcVertPrefRoutingDir &&
-         tp->isHorizontal() == true)) {
-      if (enableOutput) {
-        cout <<"TRACKS " <<(tp->isHorizontal() ? string("X ") : string("Y "))
+    if ((getTech()->getLayers().at(layerNum)->getDir() == frcHorzPrefRoutingDir
+&& tp->isHorizontal() == false) ||
+        (getTech()->getLayers().at(layerNum)->getDir() == frcVertPrefRoutingDir
+&& tp->isHorizontal() == true)) { if (enableOutput) { cout <<"TRACKS "
+<<(tp->isHorizontal() ? string("X ") : string("Y "))
              <<tp->getStartCoord() <<" DO " <<tp->getNumTracks() <<" STEP "
-             <<tp->getTrackSpacing() <<" LAYER " <<tp->getLayerNum() 
+             <<tp->getTrackSpacing() <<" LAYER " <<tp->getLayerNum()
              <<" ;" <<endl;
       }
-      if (getTech()->getLayers().at(layerNum)->getDir() == frcHorzPrefRoutingDir) {
-        int trackNum = (routeBox.bottom() - tp->getStartCoord()) / (int)tp->getTrackSpacing();
-        if (trackNum < 0) {
-          trackNum = 0;
+      if (getTech()->getLayers().at(layerNum)->getDir() ==
+frcHorzPrefRoutingDir) { int trackNum = (routeBox.bottom() -
+tp->getStartCoord()) / (int)tp->getTrackSpacing(); if (trackNum < 0) { trackNum
+= 0;
         }
-        if (trackNum * (int)tp->getTrackSpacing() + tp->getStartCoord() < routeBox.bottom()) {
-          trackNum++;
+        if (trackNum * (int)tp->getTrackSpacing() + tp->getStartCoord() <
+routeBox.bottom()) { trackNum++;
         }
-        for (; trackNum < (int)tp->getNumTracks() && trackNum * (int)tp->getTrackSpacing() + tp->getStartCoord() < routeBox.top(); trackNum++) {
+        for (; trackNum < (int)tp->getNumTracks() && trackNum *
+(int)tp->getTrackSpacing() + tp->getStartCoord() < routeBox.top(); trackNum++) {
           unique_ptr<FlexTrack> ft = make_unique<FlexTrack>();
           ft->setTrackPattern(tp.get());
-          ft->setTrackLoc(trackNum * tp->getTrackSpacing() + tp->getStartCoord());
-          tracks.push_back(std::move(ft));
+          ft->setTrackLoc(trackNum * tp->getTrackSpacing() +
+tp->getStartCoord()); tracks.push_back(std::move(ft));
         }
       } else {
-        int trackNum = (routeBox.left() - tp->getStartCoord()) / (int)tp->getTrackSpacing();
-        if (trackNum < 0) {
-          trackNum = 0;
+        int trackNum = (routeBox.left() - tp->getStartCoord()) /
+(int)tp->getTrackSpacing(); if (trackNum < 0) { trackNum = 0;
         }
-        if (trackNum * (int)tp->getTrackSpacing() + tp->getStartCoord() < routeBox.left()) {
-          trackNum++;
+        if (trackNum * (int)tp->getTrackSpacing() + tp->getStartCoord() <
+routeBox.left()) { trackNum++;
         }
-        for (; trackNum < (int)tp->getNumTracks() && trackNum * (int)tp->getTrackSpacing() + tp->getStartCoord() < routeBox.right(); trackNum++) {
-          unique_ptr<FlexTrack> ft = make_unique<FlexTrack>();
+        for (; trackNum < (int)tp->getNumTracks() && trackNum *
+(int)tp->getTrackSpacing() + tp->getStartCoord() < routeBox.right(); trackNum++)
+{ unique_ptr<FlexTrack> ft = make_unique<FlexTrack>();
           ft->setTrackPattern(tp.get());
-          ft->setTrackLoc(trackNum * tp->getTrackSpacing() + tp->getStartCoord());
-          tracks.push_back(std::move(ft));
+          ft->setTrackLoc(trackNum * tp->getTrackSpacing() +
+tp->getStartCoord()); tracks.push_back(std::move(ft));
         }
       }
 
@@ -480,7 +517,7 @@ void FlexTAWorker::genIroutes_setBeginEnd(FlexIroute* iroute, bool isH) {
   frCoord maxBegin    = 0;
   frCoord minEnd      = 0;
   frPoint segBegin, segEnd;
-  
+
   frPoint bp, ep;
   guide->getPoints(bp, ep);
   frPoint cp;
@@ -502,10 +539,10 @@ void FlexTAWorker::genIroutes_setBeginEnd(FlexIroute* iroute, bool isH) {
     }
     if (layerNum - 2 >= 0) {
       rq->queryGuide(box, layerNum - 2, nbrGuides);
-    } 
+    }
     if (layerNum + 2 < (int)design->getTech()->getLayers().size()) {
       rq->queryGuide(box, layerNum + 2, nbrGuides);
-    } 
+    }
     for (auto &guide: nbrGuides) {
       if (guide->getNet() == net) {
         for (auto &connFig: guide->getRoutes()) {
@@ -575,7 +612,7 @@ void FlexTAWorker::genIroutes() {
     genIroutes_setBeginEnd(iroute.get(), isH);
     iroutes.push_back(std::move(iroute));
   }
-  sort(iroutes.begin(), iroutes.end(), 
+  sort(iroutes.begin(), iroutes.end(),
        [](const unique_ptr<FlexIroute> &a, const unique_ptr<FlexIroute> &b) {
          if (a->getEnd() - a->getBegin() == b->getEnd() - b->getBegin()) {
            return *(a->getGuide()) < *(b->getGuide());
@@ -596,7 +633,7 @@ void FlexTAWorker::init() {
   //  ss <<"#guidess = " <<guides.size() <<endl;
   //  cout <<ss.str() <<flush;
   //}
-  //sort(guides.begin(), guides.end(), 
+  //sort(guides.begin(), guides.end(),
   //     [](const weak_ptr<frGuide> &a, const weak_ptr<frGuide> &b) {
   //       frBegin
 
@@ -612,14 +649,14 @@ void FlexTAWorker::init() {
     cout <<ss.str() <<flush;
   }
   getAllTracks();
-  sort(tracks.begin(), tracks.end(), 
+  sort(tracks.begin(), tracks.end(),
        [](const unique_ptr<FlexTrack> &a, const unique_ptr<FlexTrack> &b) {
          return a->getTrackLoc() > b->getTrackLoc();
        }
       );
-  auto last = unique(tracks.begin(), tracks.end(), 
-                     [](const unique_ptr<FlexTrack> &a, const unique_ptr<FlexTrack> &b) {
-                       return a->getTrackLoc() == b->getTrackLoc();
+  auto last = unique(tracks.begin(), tracks.end(),
+                     [](const unique_ptr<FlexTrack> &a, const
+unique_ptr<FlexTrack> &b) { return a->getTrackLoc() == b->getTrackLoc();
                       }
                      );
   tracks.erase(last, tracks.end());
@@ -627,70 +664,79 @@ void FlexTAWorker::init() {
 }
 */
 
-//bool FlexTAWorker::isViaOnPathSeg(const shared_ptr<frPathSeg> &pathSeg, const shared_ptr<frVia> &via) {
-//  frPoint begin, end, viaPoint;
-//  pathSeg->getPoints(begin, end);
-//  via->getOrigin(viaPoint);
-//  // vertical seg
-//  if (begin.x() == end.x() && begin.x() == viaPoint.x() && begin.y() <= viaPoint.y() && end.y() >= viaPoint.y()) {
-//    return true;
-//  }
-//  // horizontal seg
-//  if (begin.y() == end.y() && begin.y() == viaPoint.y() && begin.x() <= viaPoint.x() && end.x() >= viaPoint.x()) {
-//    return true;
-//  }
-//  return false;
-//}
+// bool FlexTAWorker::isViaOnPathSeg(const shared_ptr<frPathSeg> &pathSeg, const
+// shared_ptr<frVia> &via) {
+//   frPoint begin, end, viaPoint;
+//   pathSeg->getPoints(begin, end);
+//   via->getOrigin(viaPoint);
+//   // vertical seg
+//   if (begin.x() == end.x() && begin.x() == viaPoint.x() && begin.y() <=
+//   viaPoint.y() && end.y() >= viaPoint.y()) {
+//     return true;
+//   }
+//   // horizontal seg
+//   if (begin.y() == end.y() && begin.y() == viaPoint.y() && begin.x() <=
+//   viaPoint.x() && end.x() >= viaPoint.x()) {
+//     return true;
+//   }
+//   return false;
+// }
 
-//bool FlexTAWorker::isViaOnTrack(const shared_ptr<FlexTrack> &track, const shared_ptr<frVia> &via) {
-//  frPoint viaPoint;
-//  via->getOrigin(viaPoint);
-//  bool isVerticalLayer = track->getTrackPattern()->isHorizontal();
-//  return ((isVerticalLayer ? viaPoint.x() : viaPoint.y()) == track->getTrackLoc());
-//}
+// bool FlexTAWorker::isViaOnTrack(const shared_ptr<FlexTrack> &track, const
+// shared_ptr<frVia> &via) {
+//   frPoint viaPoint;
+//   via->getOrigin(viaPoint);
+//   bool isVerticalLayer = track->getTrackPattern()->isHorizontal();
+//   return ((isVerticalLayer ? viaPoint.x() : viaPoint.y()) ==
+//   track->getTrackLoc());
+// }
 
-//bool FlexTAWorker::isPathSegOnTrack(const shared_ptr<FlexTrack> &track, const shared_ptr<frPathSeg> &pathSeg) {
-//  frPoint begin, end;
-//  pathSeg->getPoints(begin, end);
-//  bool isVerticalLayer = track->getTrackPattern()->isHorizontal();
-//  if (isVerticalLayer) {
-//    if (begin.x() == end.x() && begin.x() == track->getTrackLoc()) {
-//      return true;
-//    } else {
-//      return false;
-//    }
-//  } else {
-//    if (begin.y() == end.y() && begin.y() == track->getTrackLoc()) {
-//      return true;
-//    } else {
-//      return false;
-//    }
-//  }
-//}
+// bool FlexTAWorker::isPathSegOnTrack(const shared_ptr<FlexTrack> &track, const
+// shared_ptr<frPathSeg> &pathSeg) {
+//   frPoint begin, end;
+//   pathSeg->getPoints(begin, end);
+//   bool isVerticalLayer = track->getTrackPattern()->isHorizontal();
+//   if (isVerticalLayer) {
+//     if (begin.x() == end.x() && begin.x() == track->getTrackLoc()) {
+//       return true;
+//     } else {
+//       return false;
+//     }
+//   } else {
+//     if (begin.y() == end.y() && begin.y() == track->getTrackLoc()) {
+//       return true;
+//     } else {
+//       return false;
+//     }
+//   }
+// }
 
-//bool FlexTAWorker::hasPathSegLimit(const shared_ptr<frGuide> &guide, const shared_ptr<frPathSeg> &pathSeg, 
-//                                   bool checkLowerLayer, bool checkUpperLayer) {
-//  bool init = false;
-//  frCoord limit = 0;
+// bool FlexTAWorker::hasPathSegLimit(const shared_ptr<frGuide> &guide, const
+// shared_ptr<frPathSeg> &pathSeg,
+//                                    bool checkLowerLayer, bool
+//                                    checkUpperLayer) {
+//   bool init = false;
+//   frCoord limit = 0;
 //
-//  auto v = guide->getBeginConn();
-//  getPathSegLimit_helper(guide, pathSeg, checkLowerLayer, checkUpperLayer, true, v, init, limit);
-//  v = guide->getEndConn();
-//  getPathSegLimit_helper(guide, pathSeg, checkLowerLayer, checkUpperLayer, true, v, init, limit);
-//  return init;
-//}
+//   auto v = guide->getBeginConn();
+//   getPathSegLimit_helper(guide, pathSeg, checkLowerLayer, checkUpperLayer,
+//   true, v, init, limit); v = guide->getEndConn();
+//   getPathSegLimit_helper(guide, pathSeg, checkLowerLayer, checkUpperLayer,
+//   true, v, init, limit); return init;
+// }
 
 // onlu used for upper/lower layer, keep existing same-layer connection
-//void FlexTAWorker::getPathSegLimit_helper(const shared_ptr<frGuide> &guide, const shared_ptr<frPathSeg> &pathSeg, 
-//  bool checkLowerLayer, bool checkUpperLayer, bool isBegin, const shared_ptr<frBlockObject> &v, bool &init, 
-//  frCoord &limit) {
+// void FlexTAWorker::getPathSegLimit_helper(const shared_ptr<frGuide> &guide,
+// const shared_ptr<frPathSeg> &pathSeg,
+//  bool checkLowerLayer, bool checkUpperLayer, bool isBegin, const
+//  shared_ptr<frBlockObject> &v, bool &init, frCoord &limit) {
 //
 //  auto net   = guide->getNet();
 //
 //  frPoint begin, end, viaPoint;
 //  pathSeg->getPoints(begin, end);
 //  //auto pathSegLayerNum = pathSeg->getLayerNum();
-//  
+//
 //  frCollection<shared_ptr<frGuide> > connGuides;
 //  if (v->typeId() == frcSteiner) {
 //    static_pointer_cast<frSteiner>(v)->getConnGuides(connGuides);
@@ -706,16 +752,19 @@ void FlexTAWorker::init() {
 //        if (isViaOnPathSeg(pathSeg, via)) {
 //          via->getOrigin(viaPoint);
 //          // assumes always preferred-direction routing
-//          if (getTech()->getLayer(pathSeg->getLayerNum())->getDir() == frcHorzPrefRoutingDir) {
+//          if (getTech()->getLayer(pathSeg->getLayerNum())->getDir() ==
+//          frcHorzPrefRoutingDir) {
 //            if (init) {
-//              limit = isBegin ? min(limit, viaPoint.x()) : max(limit, viaPoint.x());
+//              limit = isBegin ? min(limit, viaPoint.x()) : max(limit,
+//              viaPoint.x());
 //            } else {
 //              limit = viaPoint.x();
 //              init = true;
 //            }
 //          } else {
 //            if (init) {
-//              limit = isBegin ? min(limit, viaPoint.y()) : max(limit, viaPoint.y());
+//              limit = isBegin ? min(limit, viaPoint.y()) : max(limit,
+//              viaPoint.y());
 //            } else {
 //              limit = viaPoint.y();
 //              init = true;
@@ -733,16 +782,19 @@ void FlexTAWorker::init() {
 //        if (isViaOnPathSeg(pathSeg, via)) {
 //          via->getOrigin(viaPoint);
 //          // assumes always preferred-direction routing
-//          if (getTech()->getLayer(pathSeg->getLayerNum())->getDir() == frcHorzPrefRoutingDir) {
+//          if (getTech()->getLayer(pathSeg->getLayerNum())->getDir() ==
+//          frcHorzPrefRoutingDir) {
 //            if (init) {
-//              limit = isBegin ? min(limit, viaPoint.x()) : max(limit, viaPoint.x());
+//              limit = isBegin ? min(limit, viaPoint.x()) : max(limit,
+//              viaPoint.x());
 //            } else {
 //              limit = viaPoint.x();
 //              init = true;
 //            }
 //          } else {
 //            if (init) {
-//              limit = isBegin ? min(limit, viaPoint.y()) : max(limit, viaPoint.y());
+//              limit = isBegin ? min(limit, viaPoint.y()) : max(limit,
+//              viaPoint.y());
 //            } else {
 //              limit = viaPoint.y();
 //              init = true;
@@ -755,75 +807,80 @@ void FlexTAWorker::init() {
 //
 //}
 
-
-//frCoord FlexTAWorker::getPathSegLimit(const shared_ptr<frGuide> &guide, const shared_ptr<frPathSeg> &pathSeg, 
-//                                      bool checkLowerLayer, bool checkUpperLayer, bool isBegin) {
-//  bool init = false;
-//  frCoord limit = 0;
+// frCoord FlexTAWorker::getPathSegLimit(const shared_ptr<frGuide> &guide, const
+// shared_ptr<frPathSeg> &pathSeg,
+//                                       bool checkLowerLayer, bool
+//                                       checkUpperLayer, bool isBegin) {
+//   bool init = false;
+//   frCoord limit = 0;
 //
-//  auto v = guide->getBeginConn();
-//  getPathSegLimit_helper(guide, pathSeg, checkLowerLayer, checkUpperLayer, isBegin, v, init, limit);
-//  v = guide->getEndConn();
-//  getPathSegLimit_helper(guide, pathSeg, checkLowerLayer, checkUpperLayer, isBegin, v, init, limit);
-//  return limit;
-//}
+//   auto v = guide->getBeginConn();
+//   getPathSegLimit_helper(guide, pathSeg, checkLowerLayer, checkUpperLayer,
+//   isBegin, v, init, limit); v = guide->getEndConn();
+//   getPathSegLimit_helper(guide, pathSeg, checkLowerLayer, checkUpperLayer,
+//   isBegin, v, init, limit); return limit;
+// }
 
 // left and bottom can equal
-//bool FlexTAWorker::isTrackInGuide(const shared_ptr<frGuide> &guide, const shared_ptr<FlexTrack> &track) {
+// bool FlexTAWorker::isTrackInGuide(const shared_ptr<frGuide> &guide, const
+// shared_ptr<FlexTrack> &track) {
 //  auto trackLoc = track->getTrackLoc();
 //  frPoint begin, end;
 //  guide->getPoints(begin, end);
 //  // isHorizontal == 1 means vertical layer !!!
 //  bool isVerticalLayer = track->getTrackPattern()->isHorizontal();
 //  auto guideLoc  = isVerticalLayer ? begin.x() : begin.y();
-//  auto guideLow  = guideLoc - (isVerticalLayer ? getGCELLGRIDX() / 2 : getGCELLGRIDY() / 2);
-//  auto guideHigh = guideLoc + (isVerticalLayer ? getGCELLGRIDX() / 2 : getGCELLGRIDY() / 2);
-//  return (trackLoc >= guideLow && trackLoc < guideHigh);
+//  auto guideLow  = guideLoc - (isVerticalLayer ? getGCELLGRIDX() / 2 :
+//  getGCELLGRIDY() / 2); auto guideHigh = guideLoc + (isVerticalLayer ?
+//  getGCELLGRIDX() / 2 : getGCELLGRIDY() / 2); return (trackLoc >= guideLow &&
+//  trackLoc < guideHigh);
 //}
 
-//int FlexTAWorker::getWlenCost_helper(const shared_ptr<FlexIroute> &iroute) {
-//  auto guide = iroute->getGuide();
-//  if (guide && guide->isGlobal()) {
-//    ;
-//  } else {
-//    return 0;
-//  }
-//  frCollection<shared_ptr<frGuide> > connGuides;
-//  frCollection<shared_ptr<frGuide> > connGuides2;
-//  shared_ptr<frSteiner> steiner;
-//  shared_ptr<frSteiner> steiner2;
-//  int wlen = 0;
-//  // left and right steiners
-//  for (int i = 0; i < 2; i++) {
-//    if (i == 0) {
-//      steiner = static_pointer_cast<frSteiner>(guide->getBeginConn());
-//    } else {
-//      steiner = static_pointer_cast<frSteiner>(guide->getEndConn());
-//    }
-//    steiner->getConnGuides(connGuides);
-//    // down and up vias
-//    for (int j = 2; j < 4; j++) {
-//      if (connGuides.at(j)) {
-//        if (j == 2) {
-//          steiner2 = static_pointer_cast<frSteiner>(connGuides.at(j)->getBeginConn());
-//        } else {
-//          steiner2 = static_pointer_cast<frSteiner>(connGuides.at(j)->getEndConn());
-//        }
-//        steiner2->getConnGuides(connGuides2);
-//        if (connGuides2.at(0) && connGuides2.at(0)->isGlobal()) {
-//          wlen -= 1;
-//        }
-//        if (connGuides2.at(1) && connGuides2.at(1)->isGlobal()) {
-//          wlen += 1;
-//        }
-//      }
-//    }
-//  }
-//  return wlen;
-//}
+// int FlexTAWorker::getWlenCost_helper(const shared_ptr<FlexIroute> &iroute) {
+//   auto guide = iroute->getGuide();
+//   if (guide && guide->isGlobal()) {
+//     ;
+//   } else {
+//     return 0;
+//   }
+//   frCollection<shared_ptr<frGuide> > connGuides;
+//   frCollection<shared_ptr<frGuide> > connGuides2;
+//   shared_ptr<frSteiner> steiner;
+//   shared_ptr<frSteiner> steiner2;
+//   int wlen = 0;
+//   // left and right steiners
+//   for (int i = 0; i < 2; i++) {
+//     if (i == 0) {
+//       steiner = static_pointer_cast<frSteiner>(guide->getBeginConn());
+//     } else {
+//       steiner = static_pointer_cast<frSteiner>(guide->getEndConn());
+//     }
+//     steiner->getConnGuides(connGuides);
+//     // down and up vias
+//     for (int j = 2; j < 4; j++) {
+//       if (connGuides.at(j)) {
+//         if (j == 2) {
+//           steiner2 =
+//           static_pointer_cast<frSteiner>(connGuides.at(j)->getBeginConn());
+//         } else {
+//           steiner2 =
+//           static_pointer_cast<frSteiner>(connGuides.at(j)->getEndConn());
+//         }
+//         steiner2->getConnGuides(connGuides2);
+//         if (connGuides2.at(0) && connGuides2.at(0)->isGlobal()) {
+//           wlen -= 1;
+//         }
+//         if (connGuides2.at(1) && connGuides2.at(1)->isGlobal()) {
+//           wlen += 1;
+//         }
+//       }
+//     }
+//   }
+//   return wlen;
+// }
 
 /*
-frUInt4 FlexTAWorker::getWlenCost(FlexIroute* iroute, FlexTrack* track, 
+frUInt4 FlexTAWorker::getWlenCost(FlexIroute* iroute, FlexTrack* track,
                                   bool isH, int wlen_helper) {
 
   //auto &gp = design->getTopBlock()->getGCellPatterns();
@@ -886,11 +943,9 @@ void FlexTAWorker::assignIroutes() {
     for (int i = 0; i < (int)tracks.size(); i++) {
       frUInt4 currCost = 0;
       auto track = tracks.at(i).get();
-      currCost += 100*track->getOverlapCost(iroute->getBegin(), iroute->getEnd());
-      currCost += getWlenCost(iroute, track, isH, wlen_helper);
-      if (currCost < bestCost) {
-        bestTrack = i;
-        bestCost = currCost;
+      currCost += 100*track->getOverlapCost(iroute->getBegin(),
+iroute->getEnd()); currCost += getWlenCost(iroute, track, isH, wlen_helper); if
+(currCost < bestCost) { bestTrack = i; bestCost = currCost;
       }
     }
     if (bestTrack == -1) {
@@ -898,20 +953,18 @@ void FlexTAWorker::assignIroutes() {
       exit(1);
     } else {
       iroute->setTrack(tracks.at(bestTrack).get());
-      tracks.at(bestTrack)->addToOverlapCost(iroute->getBegin(), iroute->getEnd());
-      if (enableOutput) {
-        auto dbu = getDesign()->getTopBlock()->getDBUPerUU();
-        auto layerName = getTech()->getLayer(layerNum)->getName();
-        stringstream ss;
-        if (isH) {
-          ss   <<"assigned ( " 
+      tracks.at(bestTrack)->addToOverlapCost(iroute->getBegin(),
+iroute->getEnd()); if (enableOutput) { auto dbu =
+getDesign()->getTopBlock()->getDBUPerUU(); auto layerName =
+getTech()->getLayer(layerNum)->getName(); stringstream ss; if (isH) { ss
+<<"assigned ( "
                <<iroute->getBegin()                * 1.0 / dbu <<" "
                <<iroute->getTrack()->getTrackLoc() * 1.0 / dbu <<" ) ( "
                <<iroute->getEnd()                  * 1.0 / dbu <<" "
                <<iroute->getTrack()->getTrackLoc() * 1.0 / dbu <<" ) "
                <<layerName <<endl;
         } else {
-          ss   <<"assigned ( " 
+          ss   <<"assigned ( "
                <<iroute->getTrack()->getTrackLoc() * 1.0 / dbu <<" "
                <<iroute->getBegin()                * 1.0 / dbu <<" ) ( "
                <<iroute->getTrack()->getTrackLoc() * 1.0 / dbu <<" "
@@ -984,10 +1037,8 @@ void FlexTAWorker::reportCosts() {
   }
   if (VERBOSE > 1) {
     stringstream ss;
-    ss <<"wlen/ovlp = " <<wlen <<"/" <<overlapCost <<endl; 
+    ss <<"wlen/ovlp = " <<wlen <<"/" <<overlapCost <<endl;
     cout <<ss.str();
   }
 }
 */
-
-

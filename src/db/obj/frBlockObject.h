@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2019, The Regents of the University of California
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -13,12 +13,12 @@
  *     * Neither the name of the University nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
  * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
  * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
@@ -32,36 +32,29 @@
 #include "frBaseTypes.h"
 
 namespace fr {
-  class frBlockObject {
-  public:
+class frBlockObject {
+   public:
     // constructors
-    //frBlockObject() {}
-    frBlockObject(): id(-1) {}
-    frBlockObject(const frBlockObject &in): id(in.id) {}
+    // frBlockObject() {}
+    frBlockObject() : id(-1) {}
+    frBlockObject(const frBlockObject& in) : id(in.id) {}
     virtual ~frBlockObject() {}
     // getters
-    int getId() const {
-      return id;
-    }
+    int getId() const { return id; }
     // setters
-    void setId(int in) {
-      id = in;
-    }
+    void setId(int in) { id = in; }
     // others
-    virtual frBlockObjectEnum typeId() const {
-      return frcBlockObject;
-    }
-    bool operator<(const frBlockObject &rhs) const {
-      return id < rhs.id;
-    }
-  protected:
+    virtual frBlockObjectEnum typeId() const { return frcBlockObject; }
+    bool operator<(const frBlockObject& rhs) const { return id < rhs.id; }
+
+   protected:
     int id;
-  };
-  struct frBlockObjectComp {
+};
+struct frBlockObjectComp {
     bool operator()(const frBlockObject* lhs, const frBlockObject* rhs) const {
-      return *lhs < *rhs;
+        return *lhs < *rhs;
     }
-  };
-}
+};
+}  // namespace fr
 
 #endif

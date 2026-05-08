@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2019, The Regents of the University of California
  * All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -13,12 +13,12 @@
  *     * Neither the name of the University nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
  * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
  * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
@@ -37,37 +37,29 @@
 #include "frRegionQuery.h"
 
 namespace fr {
-  namespace io {
-    class Parser;
-  }
-  class frDesign {
-  public:
+namespace io {
+class Parser;
+}
+class frDesign {
+   public:
     // constructors
-    frDesign(): topBlock(nullptr), tech(std::make_unique<frTechObject>()), 
-                rq(std::make_unique<frRegionQuery>(this)) {}
+    frDesign()
+        : topBlock(nullptr),
+          tech(std::make_unique<frTechObject>()),
+          rq(std::make_unique<frRegionQuery>(this)) {}
     // getters
-    frBlock* getTopBlock() const {
-      return topBlock.get();
-    }
-    frTechObject* getTech() const {
-      return tech.get();
-    }
-    frRegionQuery* getRegionQuery() const {
-      return rq.get();
-    }
-    std::vector<std::unique_ptr<frBlock> >& getRefBlocks() {
-      return refBlocks;
-    }
+    frBlock* getTopBlock() const { return topBlock.get(); }
+    frTechObject* getTech() const { return tech.get(); }
+    frRegionQuery* getRegionQuery() const { return rq.get(); }
+    std::vector<std::unique_ptr<frBlock> >& getRefBlocks() { return refBlocks; }
     const std::vector<std::unique_ptr<frBlock> >& getRefBlocks() const {
-      return refBlocks;
+        return refBlocks;
     }
     // setters
-    void setTopBlock(std::unique_ptr<frBlock> &in) {
-      topBlock = std::move(in);
-    }
-    void addRefBlock(std::unique_ptr<frBlock> &in) {
-      name2refBlock[in->getName()] = in.get();
-      refBlocks.push_back(std::move(in));
+    void setTopBlock(std::unique_ptr<frBlock>& in) { topBlock = std::move(in); }
+    void addRefBlock(std::unique_ptr<frBlock>& in) {
+        name2refBlock[in->getName()] = in.get();
+        refBlocks.push_back(std::move(in));
     }
     // others
     void printAllMacros();
@@ -75,13 +67,14 @@ namespace fr {
     void printAllTerms();
     void printCMap();
     friend class io::Parser;
-  protected:
-    std::unique_ptr<frBlock>                      topBlock;
-    std::map<frString, frBlock*>                  name2refBlock;
-    std::vector<std::unique_ptr<frBlock> >        refBlocks;
-    std::unique_ptr<frTechObject>                 tech;
-    std::unique_ptr<frRegionQuery>                rq;
-  };
-}
+
+   protected:
+    std::unique_ptr<frBlock> topBlock;
+    std::map<frString, frBlock*> name2refBlock;
+    std::vector<std::unique_ptr<frBlock> > refBlocks;
+    std::unique_ptr<frTechObject> tech;
+    std::unique_ptr<frRegionQuery> rq;
+};
+}  // namespace fr
 
 #endif
