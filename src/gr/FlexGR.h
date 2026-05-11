@@ -104,6 +104,7 @@ class FlexGR {
 
     // initGR
     void initGR();
+    void debugSymmetryNetGCellStats(frNet *net);
     void initGR_genTopology();
     void initGR_genTopology_net(frNet *net);
     void initGR_updateCongestion();

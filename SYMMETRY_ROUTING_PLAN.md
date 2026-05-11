@@ -54,6 +54,9 @@ data.
 
 - `TritonRouteSymm` has a separate demo main and CMake target.
 - `frDesign` now has a minimal in-memory symmetry constraint entry point.
+- GR now has `debugSymmetryNetGCellStats()` to report RPin/GCell side
+  classification for the constrained net before topology generation. This is
+  diagnostic only and does not change routing behavior.
 - No GR/TA/DR routing behavior has been changed for symmetry yet.
 
 ## Symmetry Constraint Interface

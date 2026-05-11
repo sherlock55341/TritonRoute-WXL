@@ -950,6 +950,77 @@ void FlexGR::initGR() {
     // cmap->print();
 }
 
+void FlexGR::debugSymmetryNetGCellStats(frNet *net) {
+    if (VERBOSE <= 0 || !design->isSymmetryNet(net->getName())) {
+        return;
+    }
+
+    auto constraint = design->getSymmetryConstraint();
+    if (constraint == nullptr) {
+        return;
+    }
+
+    int canonicalPinCnt = 0;
+    int mirrorPinCnt = 0;
+    int axisPinCnt = 0;
+    set<frPoint> canonicalGCells;
+    set<frPoint> mirrorGCells;
+    set<frPoint> axisGCells;
+
+    for (auto &rpin : net->getRPins()) {
+        auto accessPoint = rpin->getAccessPoint();
+        if (accessPoint == nullptr) {
+            continue;
+        }
+
+        frPoint pinLoc;
+        accessPoint->getPoint(pinLoc);
+        if (rpin->getFrTerm() && rpin->getFrTerm()->typeId() == frcInstTerm) {
+            auto inst = static_cast<frInstTerm *>(rpin->getFrTerm())->getInst();
+            frTransform shiftXform;
+            inst->getTransform(shiftXform);
+            shiftXform.set(frOrient(frcR0));
+            pinLoc.transform(shiftXform);
+        }
+
+        auto pinSide = constraint->getPointSide(pinLoc);
+        if (pinSide == frSymmetrySideEnum::OnAxis) {
+            axisPinCnt++;
+        } else if (constraint->isCanonical(pinLoc)) {
+            canonicalPinCnt++;
+        } else {
+            mirrorPinCnt++;
+        }
+
+        frPoint gcellIdx;
+        design->getTopBlock()->getGCellIdx(pinLoc, gcellIdx);
+        frBox gcellBox;
+        design->getTopBlock()->getGCellBox(gcellIdx, gcellBox);
+        frPoint gcellCenter((gcellBox.left() + gcellBox.right()) / 2,
+                            (gcellBox.bottom() + gcellBox.top()) / 2);
+
+        auto gcellSide = constraint->getPointSide(gcellCenter);
+        if (gcellSide == frSymmetrySideEnum::OnAxis) {
+            axisGCells.insert(gcellCenter);
+        } else if (constraint->isCanonical(gcellCenter)) {
+            canonicalGCells.insert(gcellCenter);
+        } else {
+            mirrorGCells.insert(gcellCenter);
+        }
+    }
+
+    cout << "GR symmetry debug for net " << net->getName() << ":\n"
+         << "  pins canonical/mirror/axis = " << canonicalPinCnt << " / "
+         << mirrorPinCnt << " / " << axisPinCnt << "\n"
+         << "  gcells canonical/mirror/axis = " << canonicalGCells.size()
+         << " / " << mirrorGCells.size() << " / " << axisGCells.size() << endl;
+
+    if (canonicalPinCnt == 0 || mirrorPinCnt == 0) {
+        cout << "  Warning: symmetry net does not have pins on both sides of "
+                "the axis\n";
+    }
+}
+
 // update congestion for colinear route (between child and parent)
 void FlexGR::initGR_updateCongestion() {
     for (auto &net : design->getTopBlock()->getNets()) {
@@ -1515,6 +1586,8 @@ void FlexGR::initGR_genTopology_net(frNet *net) {
         net->setRoot(net->getNodes().front().get());
         return;
     }
+
+    debugSymmetryNetGCellStats(net);
 
     // cout << net->getName() << endl;
 
