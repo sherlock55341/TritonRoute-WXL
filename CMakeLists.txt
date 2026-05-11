@@ -124,6 +124,7 @@ set (FLEXROUTE_HEADER
   ${FLEXROUTE_HOME}/src/db/infra/frPrefRoutingDir.h
   ${FLEXROUTE_HOME}/src/db/infra/frBox.h
   ${FLEXROUTE_HOME}/src/db/infra/frSegStyle.h
+  ${FLEXROUTE_HOME}/src/db/infra/frSymmetryConstraint.h
   ${FLEXROUTE_HOME}/src/db/grObj/grAccessPattern.h
   ${FLEXROUTE_HOME}/src/db/grObj/grBlockObject.h
   ${FLEXROUTE_HOME}/src/db/grObj/grFig.h

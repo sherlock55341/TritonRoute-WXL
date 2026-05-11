@@ -33,6 +33,7 @@
 #include <string>
 
 #include "FlexRoute.h"
+#include "db/infra/frSymmetryConstraint.h"
 #include "global.h"
 
 using namespace fr;
@@ -128,6 +129,9 @@ int main(int argc, char** argv) {
     printDemoConfig();
 
     FlexRoute router;
+    router.getDesign()->setSymmetryConstraint(
+        frSymmetryConstraint(kDemoNetName, frSymmetryAxisEnum::Horizontal,
+                             kDemoAxisY, frSymmetryCanonicalSideEnum::High));
     router.main();
 
     auto t2 = high_resolution_clock::now();

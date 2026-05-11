@@ -50,36 +50,40 @@ data.
   DR so DR can consume the TA result. This is acceptable for the demo even if a
   virtual track does not come from the original track pattern.
 
+## Implementation Status
+
+- `TritonRouteSymm` has a separate demo main and CMake target.
+- `frDesign` now has a minimal in-memory symmetry constraint entry point.
+- No GR/TA/DR routing behavior has been changed for symmetry yet.
+
 ## Symmetry Constraint Interface
 
 Add a shared constraint representation that all stages can query:
 
 ```cpp
 struct frSymmetryConstraint {
-    std::string netName;
-    frPrefRoutingDirEnum axisDir;  // horizontal or vertical axis direction
-    frCoord coord;                 // axis coordinate in DBU
+    frString netName;
+    frSymmetryAxisEnum axisDir;  // horizontal or vertical axis
+    frCoord axisCoord;           // axis coordinate in DBU
+    frSymmetryCanonicalSideEnum canonicalSide;
 };
 ```
 
-Reuse the existing `frPrefRoutingDirEnum` direction type instead of adding a
-new axis enum:
+The direction describes the axis orientation:
 
 ```text
-frcHorzPrefRoutingDir -> horizontal axis, y = coord
-frcVertPrefRoutingDir -> vertical axis, x = coord
+frSymmetryAxisEnum::Horizontal -> horizontal axis, y = axisCoord
+frSymmetryAxisEnum::Vertical   -> vertical axis, x = axisCoord
 ```
 
-The direction describes the axis orientation. For example, a horizontal axis
-has fixed `y` and mirrors `y` coordinates.
-
-For the first demo, the source of this constraint can be a small hard-coded
-demo initializer:
+For the first demo, the source of this constraint is the `TritonRouteSymm`
+initializer:
 
 ```text
 netName = "Symmtry5"
-axisDir = frcHorzPrefRoutingDir
-coord = 71820
+axisDir = frSymmetryAxisEnum::Horizontal
+axisCoord = 71820
+canonicalSide = frSymmetryCanonicalSideEnum::High
 ```
 
 The routing stages should query the design-level constraint interface instead

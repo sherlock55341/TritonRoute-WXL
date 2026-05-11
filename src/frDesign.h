@@ -32,6 +32,7 @@
 #include <memory>
 #include "global.h"
 #include "frBaseTypes.h"
+#include "db/infra/frSymmetryConstraint.h"
 #include "db/obj/frBlock.h"
 #include "db/tech/frTechObject.h"
 #include "frRegionQuery.h"
@@ -51,6 +52,17 @@ class frDesign {
     frBlock* getTopBlock() const { return topBlock.get(); }
     frTechObject* getTech() const { return tech.get(); }
     frRegionQuery* getRegionQuery() const { return rq.get(); }
+    bool hasSymmetryConstraint() const { return symmetryConstraint != nullptr; }
+    frSymmetryConstraint* getSymmetryConstraint() {
+        return symmetryConstraint.get();
+    }
+    const frSymmetryConstraint* getSymmetryConstraint() const {
+        return symmetryConstraint.get();
+    }
+    bool isSymmetryNet(const frString& netName) const {
+        return hasSymmetryConstraint() &&
+               symmetryConstraint->getNetName() == netName;
+    }
     std::vector<std::unique_ptr<frBlock> >& getRefBlocks() { return refBlocks; }
     const std::vector<std::unique_ptr<frBlock> >& getRefBlocks() const {
         return refBlocks;
@@ -61,6 +73,10 @@ class frDesign {
         name2refBlock[in->getName()] = in.get();
         refBlocks.push_back(std::move(in));
     }
+    void setSymmetryConstraint(const frSymmetryConstraint& in) {
+        symmetryConstraint = std::make_unique<frSymmetryConstraint>(in);
+    }
+    void clearSymmetryConstraint() { symmetryConstraint.reset(); }
     // others
     void printAllMacros();
     void printAllComps();
@@ -74,6 +90,7 @@ class frDesign {
     std::vector<std::unique_ptr<frBlock> > refBlocks;
     std::unique_ptr<frTechObject> tech;
     std::unique_ptr<frRegionQuery> rq;
+    std::unique_ptr<frSymmetryConstraint> symmetryConstraint;
 };
 }  // namespace fr
 
