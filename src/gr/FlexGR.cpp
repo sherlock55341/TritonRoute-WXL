@@ -29,6 +29,7 @@
 #include <iostream>
 #include "FlexGR.h"
 #include "db/obj/frGuide.h"
+#include <deque>
 #include <fstream>
 #include "db/grObj/grShape.h"
 #include "db/grObj/grVia.h"
@@ -38,6 +39,111 @@
 
 using namespace std;
 using namespace fr;
+
+namespace {
+
+struct GRPointLayer {
+    frPoint point;
+    frLayerNum layerNum;
+
+    bool operator<(const GRPointLayer &in) const {
+        if (point == in.point) {
+            return layerNum < in.layerNum;
+        }
+        return point < in.point;
+    }
+};
+
+frPoint getGRSegmentMidPoint(const frPoint &bp, const frPoint &ep) {
+    return frPoint((bp.x() + ep.x()) / 2, (bp.y() + ep.y()) / 2);
+}
+
+frPoint getTransformedRPinPoint(frRPin *rpin) {
+    frPoint pinLoc;
+    rpin->getAccessPoint()->getPoint(pinLoc);
+    if (rpin->getFrTerm() && rpin->getFrTerm()->typeId() == frcInstTerm) {
+        auto inst = static_cast<frInstTerm *>(rpin->getFrTerm())->getInst();
+        frTransform shiftXform;
+        inst->getTransform(shiftXform);
+        shiftXform.set(frOrient(frcR0));
+        pinLoc.transform(shiftXform);
+    }
+    return pinLoc;
+}
+
+void addGraphEdge(map<GRPointLayer, set<GRPointLayer>> &graph,
+                  const frPoint &bp, const frPoint &ep, frLayerNum layerNum) {
+    GRPointLayer begin{bp, layerNum};
+    GRPointLayer end{ep, layerNum};
+    graph[begin].insert(end);
+    graph[end].insert(begin);
+}
+
+void addViaGraphEdge(map<GRPointLayer, set<GRPointLayer>> &graph,
+                     const frPoint &origin, frViaDef *viaDef) {
+    addGraphEdge(graph, origin, origin, viaDef->getLayer1Num());
+    addGraphEdge(graph, origin, origin, viaDef->getLayer2Num());
+    GRPointLayer lower{origin, viaDef->getLayer1Num()};
+    GRPointLayer upper{origin, viaDef->getLayer2Num()};
+    graph[lower].insert(upper);
+    graph[upper].insert(lower);
+}
+
+void addCoveredGCell(frBlock *topBlock, set<pair<int, int>> &coveredGCells,
+                     const frPoint &loc) {
+    frPoint idx;
+    topBlock->getGCellIdx(loc, idx);
+    coveredGCells.insert(make_pair(idx.x(), idx.y()));
+}
+
+void addCoveredGCells(frBlock *topBlock, set<pair<int, int>> &coveredGCells,
+                      const frPoint &bp, const frPoint &ep) {
+    frPoint bpIdx;
+    frPoint epIdx;
+    topBlock->getGCellIdx(bp, bpIdx);
+    topBlock->getGCellIdx(ep, epIdx);
+
+    int xBegin = min(bpIdx.x(), epIdx.x());
+    int xEnd = max(bpIdx.x(), epIdx.x());
+    int yBegin = min(bpIdx.y(), epIdx.y());
+    int yEnd = max(bpIdx.y(), epIdx.y());
+    for (int x = xBegin; x <= xEnd; x++) {
+        for (int y = yBegin; y <= yEnd; y++) {
+            coveredGCells.insert(make_pair(x, y));
+        }
+    }
+}
+
+int countGraphComponents(const map<GRPointLayer, set<GRPointLayer>> &graph) {
+    set<GRPointLayer> visited;
+    int componentCnt = 0;
+    for (auto &[node, nbrs] : graph) {
+        if (visited.find(node) != visited.end()) {
+            continue;
+        }
+        componentCnt++;
+        deque<GRPointLayer> nodeQueue;
+        nodeQueue.push_back(node);
+        visited.insert(node);
+        while (!nodeQueue.empty()) {
+            auto curr = nodeQueue.front();
+            nodeQueue.pop_front();
+            auto graphIt = graph.find(curr);
+            if (graphIt == graph.end()) {
+                continue;
+            }
+            for (auto &next : graphIt->second) {
+                if (visited.find(next) == visited.end()) {
+                    visited.insert(next);
+                    nodeQueue.push_back(next);
+                }
+            }
+        }
+    }
+    return componentCnt;
+}
+
+}  // namespace
 
 void FlexGR::main() {
     init();
@@ -134,7 +240,7 @@ void FlexGR::searchRepairMacro(int iter, int size, int mazeEndIter,
     auto &xgp = gCellPatterns.at(0);
     auto &ygp = gCellPatterns.at(1);
 
-    vector<unique_ptr<FlexGRWorker> > uworkers;
+    vector<unique_ptr<FlexGRWorker>> uworkers;
 
     vector<frInst *> macros;
 
@@ -267,13 +373,13 @@ void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
         worker.end();
 
     } else {
-        vector<unique_ptr<FlexGRWorker> > uworkers;
+        vector<unique_ptr<FlexGRWorker>> uworkers;
         int batchStepX, batchStepY;
 
         getBatchInfo(batchStepX, batchStepY);
 
-        vector<vector<vector<unique_ptr<FlexGRWorker> > > > workers(batchStepX *
-                                                                    batchStepY);
+        vector<vector<vector<unique_ptr<FlexGRWorker>>>> workers(batchStepX *
+                                                                 batchStepY);
 
         int xIdx = 0;
         int yIdx = 0;
@@ -315,7 +421,7 @@ void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
                 if (workers[batchIdx].empty() ||
                     (int)workers[batchIdx].back().size() >= BATCHSIZE) {
                     workers[batchIdx].push_back(
-                        vector<unique_ptr<FlexGRWorker> >());
+                        vector<unique_ptr<FlexGRWorker>>());
                 }
                 workers[batchIdx].back().push_back(std::move(worker));
 
@@ -960,10 +1066,10 @@ void FlexGR::debugSymmetryNetGCellStats(frNet *net) {
         return;
     }
 
-    int canonicalPinCnt = 0;
+    int referencePinCnt = 0;
     int mirrorPinCnt = 0;
     int axisPinCnt = 0;
-    set<frPoint> canonicalGCells;
+    set<frPoint> referenceGCells;
     set<frPoint> mirrorGCells;
     set<frPoint> axisGCells;
 
@@ -986,8 +1092,8 @@ void FlexGR::debugSymmetryNetGCellStats(frNet *net) {
         auto pinSide = constraint->getPointSide(pinLoc);
         if (pinSide == frSymmetrySideEnum::OnAxis) {
             axisPinCnt++;
-        } else if (constraint->isCanonical(pinLoc)) {
-            canonicalPinCnt++;
+        } else if (constraint->isReference(pinLoc)) {
+            referencePinCnt++;
         } else {
             mirrorPinCnt++;
         }
@@ -1002,23 +1108,155 @@ void FlexGR::debugSymmetryNetGCellStats(frNet *net) {
         auto gcellSide = constraint->getPointSide(gcellCenter);
         if (gcellSide == frSymmetrySideEnum::OnAxis) {
             axisGCells.insert(gcellCenter);
-        } else if (constraint->isCanonical(gcellCenter)) {
-            canonicalGCells.insert(gcellCenter);
+        } else if (constraint->isReference(gcellCenter)) {
+            referenceGCells.insert(gcellCenter);
         } else {
             mirrorGCells.insert(gcellCenter);
         }
     }
 
     cout << "GR symmetry debug for net " << net->getName() << ":\n"
-         << "  pins canonical/mirror/axis = " << canonicalPinCnt << " / "
+         << "  pins reference/mirror/axis = " << referencePinCnt << " / "
          << mirrorPinCnt << " / " << axisPinCnt << "\n"
-         << "  gcells canonical/mirror/axis = " << canonicalGCells.size()
+         << "  gcells reference/mirror/axis = " << referenceGCells.size()
          << " / " << mirrorGCells.size() << " / " << axisGCells.size() << endl;
 
-    if (canonicalPinCnt == 0 || mirrorPinCnt == 0) {
+    if (referencePinCnt == 0 || mirrorPinCnt == 0) {
         cout << "  Warning: symmetry net does not have pins on both sides of "
                 "the axis\n";
     }
+}
+
+void FlexGR::validateSymmetryGR() {
+    if (!design->hasSymmetryConstraint()) {
+        return;
+    }
+    for (auto &uNet : design->getTopBlock()->getNets()) {
+        auto net = uNet.get();
+        if (design->isSymmetryNet(net->getName())) {
+            validateSymmetryGR_net(net);
+        }
+    }
+}
+
+void FlexGR::validateSymmetryGR_net(frNet *net) {
+    auto constraint = design->getSymmetryConstraint();
+    auto topBlock = design->getTopBlock();
+
+    int referencePinCnt = 0;
+    int mirrorPinCnt = 0;
+    int axisPinCnt = 0;
+    int referenceCoveredCnt = 0;
+    int mirrorCoveredCnt = 0;
+    int axisCoveredCnt = 0;
+    bool hasMirrorShape = false;
+    set<pair<int, int>> coveredGCells;
+    map<GRPointLayer, set<GRPointLayer>> graph;
+
+    // Build a snapshot of current GR geometry first. If the prototype has not
+    // materialized the mirror side, mirror only reference-side geometry into
+    // the validation graph so the report reflects the intended copied result.
+    for (auto &uShape : net->getGRShapes()) {
+        if (uShape->typeId() != grcPathSeg) {
+            continue;
+        }
+        auto pathSeg = static_cast<grPathSeg *>(uShape.get());
+        frPoint bp, ep;
+        pathSeg->getPoints(bp, ep);
+        frPoint midPoint = getGRSegmentMidPoint(bp, ep);
+        if (constraint->isMirror(midPoint)) {
+            hasMirrorShape = true;
+        }
+        addCoveredGCells(topBlock, coveredGCells, bp, ep);
+        addGraphEdge(graph, bp, ep, pathSeg->getLayerNum());
+    }
+    for (auto &uVia : net->getGRVias()) {
+        auto via = uVia.get();
+        frPoint origin;
+        via->getOrigin(origin);
+        if (constraint->isMirror(origin)) {
+            hasMirrorShape = true;
+        }
+        addCoveredGCell(topBlock, coveredGCells, origin);
+        addViaGraphEdge(graph, origin, via->getViaDef());
+    }
+
+    if (!hasMirrorShape) {
+        for (auto &uShape : net->getGRShapes()) {
+            if (uShape->typeId() != grcPathSeg) {
+                continue;
+            }
+            auto pathSeg = static_cast<grPathSeg *>(uShape.get());
+            frPoint bp, ep;
+            pathSeg->getPoints(bp, ep);
+            frPoint midPoint = getGRSegmentMidPoint(bp, ep);
+            if (constraint->isMirror(midPoint)) {
+                continue;
+            }
+            frPoint mirroredBp = constraint->getMirroredPoint(bp);
+            frPoint mirroredEp = constraint->getMirroredPoint(ep);
+            if (mirroredBp == bp && mirroredEp == ep) {
+                continue;
+            }
+            addCoveredGCells(topBlock, coveredGCells, mirroredBp, mirroredEp);
+            addGraphEdge(graph, mirroredBp, mirroredEp, pathSeg->getLayerNum());
+        }
+        for (auto &uVia : net->getGRVias()) {
+            auto via = uVia.get();
+            frPoint origin;
+            via->getOrigin(origin);
+            if (constraint->isMirror(origin)) {
+                continue;
+            }
+            frPoint mirroredOrigin = constraint->getMirroredPoint(origin);
+            if (mirroredOrigin == origin) {
+                continue;
+            }
+            addCoveredGCell(topBlock, coveredGCells, mirroredOrigin);
+            addViaGraphEdge(graph, mirroredOrigin, via->getViaDef());
+        }
+    }
+
+    for (auto &rpin : net->getRPins()) {
+        auto pinLoc = getTransformedRPinPoint(rpin.get());
+        frPoint pinGCellIdx;
+        topBlock->getGCellIdx(pinLoc, pinGCellIdx);
+        bool isCovered =
+            coveredGCells.find(make_pair(pinGCellIdx.x(), pinGCellIdx.y())) !=
+            coveredGCells.end();
+        auto pinSide = constraint->getPointSide(pinLoc);
+        if (pinSide == frSymmetrySideEnum::OnAxis) {
+            axisPinCnt++;
+            if (isCovered) {
+                axisCoveredCnt++;
+            }
+        } else if (constraint->isReference(pinLoc)) {
+            referencePinCnt++;
+            if (isCovered) {
+                referenceCoveredCnt++;
+            }
+        } else {
+            mirrorPinCnt++;
+            if (isCovered) {
+                mirrorCoveredCnt++;
+            }
+        }
+    }
+
+    int componentCnt = countGraphComponents(graph);
+    int totalPinCnt = referencePinCnt + mirrorPinCnt + axisPinCnt;
+    int totalCoveredCnt =
+        referenceCoveredCnt + mirrorCoveredCnt + axisCoveredCnt;
+
+    cout << "GR symmetry validation for net " << net->getName() << ":\n"
+         << "  gcell pin coverage reference/mirror/axis = "
+         << referenceCoveredCnt << "/" << referencePinCnt << " / "
+         << mirrorCoveredCnt << "/" << mirrorPinCnt << " / " << axisCoveredCnt
+         << "/" << axisPinCnt << "\n"
+         << "  total pin coverage = " << totalCoveredCnt << "/" << totalPinCnt
+         << "\n"
+         << "  shape graph components = " << componentCnt
+         << (componentCnt <= 1 ? " (connected)" : " (disconnected)") << "\n";
 }
 
 // update congestion for colinear route (between child and parent)
@@ -1149,7 +1387,7 @@ void FlexGR::initGR_updateCongestion2D_net(frNet *net) {
 // if topology is from Flute, there will be non-colinear route need to be
 // pattern routed
 void FlexGR::initGR_patternRoute() {
-    vector<pair<pair<frNode *, frNode *>, int> >
+    vector<pair<pair<frNode *, frNode *>, int>>
         patternRoutes;  // <childNode, parentNode>, ripup cnt
     // init
     initGR_patternRoute_init(patternRoutes);
@@ -1158,7 +1396,7 @@ void FlexGR::initGR_patternRoute() {
 }
 
 void FlexGR::initGR_patternRoute_init(
-    vector<pair<pair<frNode *, frNode *>, int> > &patternRoutes) {
+    vector<pair<pair<frNode *, frNode *>, int>> &patternRoutes) {
     for (auto &net : design->getTopBlock()->getNets()) {
         for (auto &node : net->getNodes()) {
             frNode *parentNode = node->getParent();
@@ -1185,7 +1423,7 @@ void FlexGR::initGR_patternRoute_init(
 }
 
 void FlexGR::initGR_patternRoute_route(
-    vector<pair<pair<frNode *, frNode *>, int> > &patternRoutes) {
+    vector<pair<pair<frNode *, frNode *>, int>> &patternRoutes) {
     int maxIter = 2;
     for (int iter = 0; iter < maxIter; iter++) {
         initGR_patternRoute_route_iter(iter, patternRoutes, /*mode*/ 0);
@@ -1194,7 +1432,7 @@ void FlexGR::initGR_patternRoute_route(
 
 // mode 0 == L shape only
 bool FlexGR::initGR_patternRoute_route_iter(
-    int iter, vector<pair<pair<frNode *, frNode *>, int> > &patternRoutes,
+    int iter, vector<pair<pair<frNode *, frNode *>, int>> &patternRoutes,
     int mode) {
     bool hasOverflow = false;
     for (auto &patternRoutePair : patternRoutes) {
@@ -1592,9 +1830,9 @@ void FlexGR::initGR_genTopology_net(frNet *net) {
     // cout << net->getName() << endl;
 
     vector<frNode *> nodes(net->getNodes().size(), nullptr);  // 0 is source
-    map<frBlockObject *, std::vector<frNode *> >
+    map<frBlockObject *, std::vector<frNode *>>
         pin2Nodes;  // vector order needs to align with map below
-    map<frBlockObject *, std::vector<frRPin *> > pin2RPins;
+    map<frBlockObject *, std::vector<frRPin *>> pin2RPins;
     unsigned sinkIdx = 1;
 
     auto &netNodes = net->getNodes();
@@ -1727,7 +1965,7 @@ void FlexGR::initGR_genTopology_net(frNet *net) {
     auto &gcellNodes = net2GCellNodes[net];
     gcellNodes.resize(gcellIdx2Nodes.size(), nullptr);
 
-    vector<unique_ptr<frNode> > tmpGCellNodes;
+    vector<unique_ptr<frNode>> tmpGCellNodes;
     sinkIdx = 1;
     unsigned rootIdx = 0;
     unsigned rootIdxCnt = 0;
@@ -1899,7 +2137,9 @@ void FlexGR::initGR_genTopology_net(frNet *net) {
                 net->addGRShape(uShape);
             }
         }
-    } else {
+    } else if (!design->isSymmetryNet(net->getName()) ||
+               !initGR_genSymmetryTopology_FLUTE(net, gcellNodes,
+                                                 steinerNodes)) {
         genSTTopology_FLUTE(gcellNodes, steinerNodes);
     }
 
@@ -1929,7 +2169,7 @@ void FlexGR::initGR_genTopology_net(frNet *net) {
 
 void FlexGR::layerAssign() {
     cout << "layer assignment...\n";
-    vector<pair<int, frNet *> > sortedNets;
+    vector<pair<int, frNet *>> sortedNets;
     for (auto &uNet : design->getTopBlock()->getNets()) {
         auto net = uNet.get();
         if (net2GCellNodes.find(net) == net2GCellNodes.end() ||
@@ -2050,9 +2290,9 @@ void FlexGR::layerAssign_net(frNet *net) {
     // vector<unsigned>(cmap->getNumLayers(), 0));
 
     int numNodes = net->getNodes().size() - net->getRPins().size();
-    vector<vector<unsigned> > bestLayerCosts(
+    vector<vector<unsigned>> bestLayerCosts(
         numNodes, vector<unsigned>(cmap->getNumLayers(), UINT_MAX));
-    vector<vector<unsigned> > bestLayerCombs(
+    vector<vector<unsigned>> bestLayerCombs(
         numNodes, vector<unsigned>(cmap->getNumLayers(), 0));
 
     // recursively compute the best layer for each node from root (post-order
@@ -2239,8 +2479,8 @@ void FlexGR::layerAssign_net(frNet *net) {
 
 // get the costs of having currNode to parent edge on all layers
 void FlexGR::layerAssign_node_compute(
-    frNode *currNode, frNet *net, vector<vector<unsigned> > &bestLayerCosts,
-    vector<vector<unsigned> > &bestLayerCombs) {
+    frNode *currNode, frNet *net, vector<vector<unsigned>> &bestLayerCosts,
+    vector<vector<unsigned>> &bestLayerCombs) {
     if (currNode == nullptr) {
         return;
     }
@@ -2503,7 +2743,7 @@ void FlexGR::layerAssign_node_commit(
     frNode *currNode, frNet *net,
     frLayerNum layerNum,  // which layer the connection from currNode to
                           // parentNode should be on
-    vector<vector<unsigned> > &bestLayerCombs) {
+    vector<vector<unsigned>> &bestLayerCombs) {
     if (currNode == nullptr) {
         return;
     }
@@ -2583,12 +2823,12 @@ void FlexGR::layerAssign_node_commit(
 
     // tech layer num, not grid layer num
     set<frLayerNum> nodeLayerNums;
-    map<frLayerNum, vector<frNode *> > layerNum2Children;
+    map<frLayerNum, vector<frNode *>> layerNum2Children;
     // sub nodes are created at same loc as currNode but differnt layerNum
     // since we move from 2d to 3d
     map<frLayerNum, frNode *> layerNum2SubNode;
 
-    map<frLayerNum, vector<frNode *> > layerNum2RPinNodes;
+    map<frLayerNum, vector<frNode *>> layerNum2RPinNodes;
 
     nodeLayerNums.insert(currNode->getLayerNum());
     for (auto &child : children) {
@@ -2776,6 +3016,7 @@ void FlexGR::layerAssign_node_commit(
 // }
 
 void FlexGR::writeToGuide() {
+    validateSymmetryGR();
     for (auto &uNet : design->getTopBlock()->getNets()) {
         auto net = uNet.get();
         bool hasGRShape = false;

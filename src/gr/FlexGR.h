@@ -105,6 +105,8 @@ class FlexGR {
     // initGR
     void initGR();
     void debugSymmetryNetGCellStats(frNet *net);
+    void validateSymmetryGR();
+    void validateSymmetryGR_net(frNet *net);
     void initGR_genTopology();
     void initGR_genTopology_net(frNet *net);
     void initGR_updateCongestion();
@@ -164,6 +166,9 @@ class FlexGR {
     int genMSTTopology_PD_minIdx(const std::vector<int> &keys,
                                  const std::vector<bool> &isVisited);
 
+    bool initGR_genSymmetryTopology_FLUTE(frNet *net,
+                                          std::vector<frNode *> &gcellNodes,
+                                          std::vector<frNode *> &steinerNodes);
     void genSTTopology_FLUTE(std::vector<frNode *> &nodes,
                              std::vector<frNode *> &steinerNodes);
     void genSTTopology_HVW(std::vector<frNode *> &nodes,

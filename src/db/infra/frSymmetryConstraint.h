@@ -36,7 +36,7 @@
 namespace fr {
 
 enum class frSymmetryAxisEnum { Horizontal = 0, Vertical = 1 };
-enum class frSymmetryCanonicalSideEnum { Low = 0, High = 1 };
+enum class frSymmetryReferenceSideEnum { Low = 0, High = 1 };
 enum class frSymmetrySideEnum { Low = 0, OnAxis = 1, High = 2 };
 
 class frSymmetryConstraint {
@@ -44,14 +44,14 @@ class frSymmetryConstraint {
     frSymmetryConstraint()
         : axisDir(frSymmetryAxisEnum::Horizontal),
           axisCoord(0),
-          canonicalSide(frSymmetryCanonicalSideEnum::High) {}
+          referenceSide(frSymmetryReferenceSideEnum::High) {}
     frSymmetryConstraint(const frString &inNetName,
                          frSymmetryAxisEnum inAxisDir, frCoord inAxisCoord,
-                         frSymmetryCanonicalSideEnum inCanonicalSide)
+                         frSymmetryReferenceSideEnum inReferenceSide)
         : netName(inNetName),
           axisDir(inAxisDir),
           axisCoord(inAxisCoord),
-          canonicalSide(inCanonicalSide) {}
+          referenceSide(inReferenceSide) {}
 
     const frString &getNetName() const { return netName; }
     void setNetName(const frString &in) { netName = in; }
@@ -62,11 +62,11 @@ class frSymmetryConstraint {
     frCoord getAxisCoord() const { return axisCoord; }
     void setAxisCoord(frCoord in) { axisCoord = in; }
 
-    frSymmetryCanonicalSideEnum getCanonicalSide() const {
-        return canonicalSide;
+    frSymmetryReferenceSideEnum getReferenceSide() const {
+        return referenceSide;
     }
-    void setCanonicalSide(frSymmetryCanonicalSideEnum in) {
-        canonicalSide = in;
+    void setReferenceSide(frSymmetryReferenceSideEnum in) {
+        referenceSide = in;
     }
 
     bool isAxis(const frPoint &point) const {
@@ -87,12 +87,12 @@ class frSymmetryConstraint {
                                         : frSymmetrySideEnum::Low;
     }
 
-    bool isCanonical(const frPoint &point) const {
+    bool isReference(const frPoint &point) const {
         auto side = getPointSide(point);
         if (side == frSymmetrySideEnum::OnAxis) {
             return true;
         }
-        return side == (canonicalSide == frSymmetryCanonicalSideEnum::High
+        return side == (referenceSide == frSymmetryReferenceSideEnum::High
                             ? frSymmetrySideEnum::High
                             : frSymmetrySideEnum::Low);
     }
@@ -102,7 +102,7 @@ class frSymmetryConstraint {
         if (side == frSymmetrySideEnum::OnAxis) {
             return false;
         }
-        return side != (canonicalSide == frSymmetryCanonicalSideEnum::High
+        return side != (referenceSide == frSymmetryReferenceSideEnum::High
                             ? frSymmetrySideEnum::High
                             : frSymmetrySideEnum::Low);
     }
@@ -124,7 +124,7 @@ class frSymmetryConstraint {
     frString netName;
     frSymmetryAxisEnum axisDir;
     frCoord axisCoord;
-    frSymmetryCanonicalSideEnum canonicalSide;
+    frSymmetryReferenceSideEnum referenceSide;
 };
 
 }  // namespace fr

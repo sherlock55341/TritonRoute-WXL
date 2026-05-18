@@ -28,10 +28,54 @@
 
 #include "dr/FlexDR.h"
 #include "io/io.h"
+#include <algorithm>
 #include <omp.h>
 
 using namespace std;
 using namespace fr;
+
+namespace {
+
+struct DRSegmentKey {
+    frLayerNum layerNum;
+    frPoint begin;
+    frPoint end;
+
+    bool operator<(const DRSegmentKey &in) const {
+        if (layerNum != in.layerNum) {
+            return layerNum < in.layerNum;
+        }
+        if (begin == in.begin) {
+            return end < in.end;
+        }
+        return begin < in.begin;
+    }
+};
+
+unsigned long long getDRSegmentLength(const frPoint &bp, const frPoint &ep) {
+    unsigned long long xLen =
+        bp.x() > ep.x() ? bp.x() - ep.x() : ep.x() - bp.x();
+    unsigned long long yLen =
+        bp.y() > ep.y() ? bp.y() - ep.y() : ep.y() - bp.y();
+    return xLen + yLen;
+}
+
+DRSegmentKey makeDRSegmentKey(frLayerNum layerNum, const frPoint &bp,
+                              const frPoint &ep) {
+    if (ep < bp) {
+        return {layerNum, ep, bp};
+    }
+    return {layerNum, bp, ep};
+}
+
+DRSegmentKey makeMirroredDRSegmentKey(const DRSegmentKey &key,
+                                      const frSymmetryConstraint *constraint) {
+    frPoint mirroredBegin = constraint->getMirroredPoint(key.begin);
+    frPoint mirroredEnd = constraint->getMirroredPoint(key.end);
+    return makeDRSegmentKey(key.layerNum, mirroredBegin, mirroredEnd);
+}
+
+}  // namespace
 
 // copied from FlexDRWorker::initNets_searchRepair_pin2epMap_helper
 void FlexDR::checkConnectivity_pin2epMap_helper(
@@ -140,6 +184,100 @@ void FlexDR::checkConnectivity_pin2epMap(
             //  ;
         }
     }
+}
+
+void FlexDR::reportSymmetryDR() {
+    if (!design->hasSymmetryConstraint()) {
+        return;
+    }
+    auto constraint = design->getSymmetryConstraint();
+    for (auto &uNet : design->getTopBlock()->getNets()) {
+        auto net = uNet.get();
+        if (!design->isSymmetryNet(net->getName())) {
+            continue;
+        }
+        int pinVisited = 0;
+        int pinTotal = 0;
+        bool connected = checkDRConnectivityReadOnly(net, pinVisited, pinTotal);
+        cout << "DR symmetry report for net " << net->getName() << ":\n"
+             << "  connectivity = " << (connected ? "connected" : "broken")
+             << ", pins = " << pinVisited << "/" << pinTotal << "\n";
+        reportDRSymmetryRatio(net, constraint);
+    }
+}
+
+bool FlexDR::checkDRConnectivityReadOnly(frNet *net, int &pinVisited,
+                                         int &pinTotal) {
+    vector<frConnFig *> netDRObjs;
+    map<frBlockObject *, set<pair<frPoint, frLayerNum> >, frBlockObjectComp>
+        pin2epMap;
+    vector<frBlockObject *> netPins;
+    map<pair<frPoint, frLayerNum>, set<int> > nodeMap;
+    vector<bool> adjVisited;
+    vector<int> adjPrevIdx;
+
+    checkConnectivity_initDRObjs(net, netDRObjs);
+    checkConnectivity_pin2epMap(net, netDRObjs, pin2epMap);
+    checkConnectivity_nodeMap(net, netDRObjs, netPins, pin2epMap, nodeMap);
+
+    int gCnt = (int)netDRObjs.size();
+    int nCnt = (int)netDRObjs.size() + (int)netPins.size();
+    bool connected = checkConnectivity_astar(net, adjVisited, adjPrevIdx,
+                                             nodeMap, gCnt, nCnt);
+    pinTotal = nCnt - gCnt;
+    pinVisited = 0;
+    if (pinTotal > 0 && (int)adjVisited.size() >= nCnt) {
+        pinVisited = count(adjVisited.begin() + gCnt, adjVisited.end(), true);
+    }
+    return connected;
+}
+
+void FlexDR::reportDRSymmetryRatio(frNet *net,
+                                   const frSymmetryConstraint *constraint) {
+    map<DRSegmentKey, int> segmentCounts;
+    map<DRSegmentKey, unsigned long long> segmentLengths;
+    unsigned long long totalLen = 0;
+    unsigned long long matchedLen = 0;
+
+    for (auto &shape : net->getShapes()) {
+        if (shape->typeId() != frcPathSeg) {
+            continue;
+        }
+        auto pathSeg = static_cast<frPathSeg *>(shape.get());
+        frPoint bp, ep;
+        pathSeg->getPoints(bp, ep);
+        unsigned long long len = getDRSegmentLength(bp, ep);
+        if (len == 0) {
+            continue;
+        }
+        auto key = makeDRSegmentKey(pathSeg->getLayerNum(), bp, ep);
+        segmentCounts[key]++;
+        segmentLengths[key] = len;
+        totalLen += len;
+    }
+
+    for (auto &[key, cnt] : segmentCounts) {
+        while (cnt > 0) {
+            auto mirrorKey = makeMirroredDRSegmentKey(key, constraint);
+            if (mirrorKey.begin == key.begin && mirrorKey.end == key.end) {
+                matchedLen += segmentLengths[key];
+                cnt--;
+                continue;
+            }
+            auto mirrorIt = segmentCounts.find(mirrorKey);
+            if (mirrorIt == segmentCounts.end() || mirrorIt->second <= 0) {
+                cnt--;
+                continue;
+            }
+            matchedLen += segmentLengths[key] + segmentLengths[mirrorKey];
+            cnt--;
+            mirrorIt->second--;
+        }
+    }
+
+    double ratio = totalLen == 0 ? 0.0 : matchedLen * 100.0 / totalLen;
+    cout << "  symmetric metal length = " << matchedLen << "/" << totalLen
+         << " DBU (" << ratio << "%)\n";
 }
 
 // void FlexDR::checkConnectivity_pin2epMap(frNet* net, vector<frConnFig*>

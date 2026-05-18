@@ -132,6 +132,11 @@ class FlexDR {
 
     void removeGCell2BoundaryPin();
     void checkConnectivity(int iter = -1);
+    void reportSymmetryDR();
+    bool checkDRConnectivityReadOnly(frNet *net, int &pinVisited,
+                                     int &pinTotal);
+    void reportDRSymmetryRatio(frNet *net,
+                               const frSymmetryConstraint *constraint);
     void checkConnectivity_initDRObjs(frNet *net,
                                       std::vector<frConnFig *> &netDRObjs);
     void checkConnectivity_pin2epMap(

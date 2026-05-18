@@ -28,10 +28,299 @@
 
 #include <iostream>
 #include "FlexGR.h"
+#include <algorithm>
 #include <deque>
+#include <limits>
 
 using namespace std;
 using namespace fr;
+
+bool FlexGR::initGR_genSymmetryTopology_FLUTE(frNet *net,
+                                              vector<frNode *> &gcellNodes,
+                                              vector<frNode *> &steinerNodes) {
+    if (net == nullptr || gcellNodes.size() <= 1 ||
+        !design->isSymmetryNet(net->getName())) {
+        return false;
+    }
+
+    auto constraint = design->getSymmetryConstraint();
+    if (constraint == nullptr || gcellNodes[0] == nullptr) {
+        return false;
+    }
+
+    auto topBlock = design->getTopBlock();
+    auto &gcellPatterns = topBlock->getGCellPatterns();
+    if (gcellPatterns.size() < 2) {
+        return false;
+    }
+    int xCnt = (int)gcellPatterns[0].getCount();
+    int yCnt = (int)gcellPatterns[1].getCount();
+    if (xCnt <= 0 || yCnt <= 0) {
+        return false;
+    }
+
+    bool isHorizontal =
+        constraint->getAxisDir() == frSymmetryAxisEnum::Horizontal;
+    frCoord axisCoord = constraint->getAxisCoord();
+
+    auto getNodeIdx = [&](frNode *node) {
+        frPoint loc;
+        node->getLoc(loc);
+        frPoint idx;
+        topBlock->getGCellIdx(loc, idx);
+        return idx;
+    };
+    auto getNodeLoc = [](frNode *node) {
+        frPoint loc;
+        node->getLoc(loc);
+        return loc;
+    };
+
+    frPoint rootLoc = getNodeLoc(gcellNodes[0]);
+    frPoint axisProbe = isHorizontal ? frPoint(rootLoc.x(), axisCoord)
+                                     : frPoint(axisCoord, rootLoc.y());
+    frPoint axisIdxPoint;
+    topBlock->getGCellIdx(axisProbe, axisIdxPoint);
+    int axisCol = axisIdxPoint.x();
+    int axisRow = axisIdxPoint.y();
+
+    auto referenceSide =
+        constraint->getReferenceSide() == frSymmetryReferenceSideEnum::High
+            ? frSymmetrySideEnum::High
+            : frSymmetrySideEnum::Low;
+    auto getIdxSide = [&](const frPoint &idx) {
+        if (isHorizontal) {
+            if (idx.y() == axisRow) {
+                return frSymmetrySideEnum::OnAxis;
+            }
+            return idx.y() > axisRow ? frSymmetrySideEnum::High
+                                     : frSymmetrySideEnum::Low;
+        }
+        if (idx.x() == axisCol) {
+            return frSymmetrySideEnum::OnAxis;
+        }
+        return idx.x() > axisCol ? frSymmetrySideEnum::High
+                                 : frSymmetrySideEnum::Low;
+    };
+
+    auto sourceSide = getIdxSide(getNodeIdx(gcellNodes[0]));
+    auto activeSide =
+        sourceSide == frSymmetrySideEnum::OnAxis ? referenceSide : sourceSide;
+
+    auto getGCellIdx = [&](const frPoint &loc) {
+        frPoint idx;
+        topBlock->getGCellIdx(loc, idx);
+        return make_pair(idx.x(), idx.y());
+    };
+
+    map<pair<int, int>, frNode *> existingGCellNode;
+    for (auto node : gcellNodes) {
+        existingGCellNode.emplace(getGCellIdx(getNodeLoc(node)), node);
+    }
+
+    auto makeSteinerNode = [&](const frPoint &loc) {
+        auto uNode = make_unique<frNode>();
+        auto node = uNode.get();
+        uNode->setType(frNodeTypeEnum::frcSteiner);
+        uNode->setLoc(loc);
+        uNode->setLayerNum(2);
+        steinerNodes.push_back(node);
+        net->addNode(uNode);
+        return node;
+    };
+    vector<frNode *> axisGCellNodes;
+    vector<frNode *> activeNodes;
+    map<pair<int, int>, frNode *> activeTerminalByIdx;
+    auto addActiveTerminal = [&](frNode *node) {
+        frPoint idx = getNodeIdx(node);
+        auto key = make_pair(idx.x(), idx.y());
+        if (activeTerminalByIdx.find(key) == activeTerminalByIdx.end()) {
+            activeTerminalByIdx[key] = node;
+            activeNodes.push_back(node);
+        }
+    };
+
+    addActiveTerminal(gcellNodes[0]);
+    for (auto node : gcellNodes) {
+        if (node == gcellNodes[0]) {
+            continue;
+        }
+        frPoint idx = getNodeIdx(node);
+        auto side = getIdxSide(idx);
+        if (side == activeSide) {
+            addActiveTerminal(node);
+        } else if (side == frSymmetrySideEnum::OnAxis) {
+            axisGCellNodes.push_back(node);
+        } else {
+            frPoint mirrorLoc = constraint->getMirroredPoint(getNodeLoc(node));
+            auto mirrorKey = getGCellIdx(mirrorLoc);
+            if (activeTerminalByIdx.find(mirrorKey) !=
+                activeTerminalByIdx.end()) {
+                continue;
+            }
+            auto mirrorGCellNode = existingGCellNode.find(mirrorKey);
+            addActiveTerminal(mirrorGCellNode != existingGCellNode.end()
+                                  ? mirrorGCellNode->second
+                                  : makeSteinerNode(mirrorLoc));
+        }
+    }
+
+    if (activeNodes.size() <= 1) {
+        return false;
+    }
+
+    genSTTopology_FLUTE(activeNodes, steinerNodes);
+
+    set<frNode *, frBlockObjectComp> activeTreeNodes;
+    deque<frNode *> nodeQueue;
+    nodeQueue.push_back(activeNodes[0]);
+    activeTreeNodes.insert(activeNodes[0]);
+    while (!nodeQueue.empty()) {
+        auto node = nodeQueue.front();
+        nodeQueue.pop_front();
+        for (auto child : node->getChildren()) {
+            if (activeTreeNodes.find(child) == activeTreeNodes.end()) {
+                activeTreeNodes.insert(child);
+                nodeQueue.push_back(child);
+            }
+        }
+    }
+    auto isAxisNode = [&](frNode *node) {
+        return getIdxSide(getNodeIdx(node)) == frSymmetrySideEnum::OnAxis;
+    };
+    auto projectedAxisLoc = [&](frNode *node) {
+        frPoint loc = getNodeLoc(node);
+        return isHorizontal ? frPoint(loc.x(), axisCoord)
+                            : frPoint(axisCoord, loc.y());
+    };
+
+    frNode *axisBaseNode = nullptr;
+    int bestAxisDist = numeric_limits<int>::max();
+    for (auto node : activeTreeNodes) {
+        frPoint loc = getNodeLoc(node);
+        int dist =
+            isHorizontal ? abs(loc.y() - axisCoord) : abs(loc.x() - axisCoord);
+        if (isAxisNode(node)) {
+            dist = 0;
+        }
+        if (dist < bestAxisDist) {
+            bestAxisDist = dist;
+            axisBaseNode = node;
+        }
+    }
+    if (axisBaseNode == nullptr) {
+        return true;
+    }
+
+    frPoint axisContactLoc = projectedAxisLoc(axisBaseNode);
+    frNode *axisContact = nullptr;
+    auto axisContactGCell = existingGCellNode.find(getGCellIdx(axisContactLoc));
+    if (axisContactGCell != existingGCellNode.end()) {
+        axisContact = axisContactGCell->second;
+        axisContact->setLoc(axisContactLoc);
+    } else {
+        axisContact = makeSteinerNode(axisContactLoc);
+    }
+    if (axisBaseNode != axisContact) {
+        axisBaseNode->addChild(axisContact);
+        axisContact->setParent(axisBaseNode);
+    }
+    activeTreeNodes.insert(axisContact);
+
+    map<frNode *, set<frNode *, frBlockObjectComp>, frBlockObjectComp>
+        activeAdj;
+    for (auto node : activeTreeNodes) {
+        auto parent = node->getParent();
+        if (parent != nullptr &&
+            activeTreeNodes.find(parent) != activeTreeNodes.end()) {
+            activeAdj[node].insert(parent);
+            activeAdj[parent].insert(node);
+        }
+        for (auto child : node->getChildren()) {
+            if (activeTreeNodes.find(child) != activeTreeNodes.end()) {
+                activeAdj[node].insert(child);
+                activeAdj[child].insert(node);
+            }
+        }
+    }
+
+    map<frNode *, frNode *, frBlockObjectComp> active2Mirror;
+    active2Mirror[axisContact] = axisContact;
+    auto getMirrorNode = [&](frNode *activeNode) {
+        auto mirrorIt = active2Mirror.find(activeNode);
+        if (mirrorIt != active2Mirror.end()) {
+            return mirrorIt->second;
+        }
+        if (isAxisNode(activeNode)) {
+            active2Mirror[activeNode] = activeNode;
+            return activeNode;
+        }
+
+        frPoint activeLoc = getNodeLoc(activeNode);
+        frPoint mirrorLoc = constraint->getMirroredPoint(activeLoc);
+        frNode *mirrorNode = nullptr;
+        auto mirrorGCellNode = existingGCellNode.find(getGCellIdx(mirrorLoc));
+        if (mirrorGCellNode != existingGCellNode.end()) {
+            mirrorNode = mirrorGCellNode->second;
+            mirrorNode->setLoc(mirrorLoc);
+        } else {
+            mirrorNode = makeSteinerNode(mirrorLoc);
+        }
+        active2Mirror[activeNode] = mirrorNode;
+        return mirrorNode;
+    };
+
+    set<frNode *, frBlockObjectComp> visited;
+    auto hasChild = [](frNode *parent, frNode *child) {
+        for (auto currChild : parent->getChildren()) {
+            if (currChild == child) {
+                return true;
+            }
+        }
+        return false;
+    };
+    nodeQueue.clear();
+    nodeQueue.push_back(axisContact);
+    visited.insert(axisContact);
+    while (!nodeQueue.empty()) {
+        auto curr = nodeQueue.front();
+        nodeQueue.pop_front();
+        auto currMirror = getMirrorNode(curr);
+        for (auto next : activeAdj[curr]) {
+            if (visited.find(next) != visited.end()) {
+                continue;
+            }
+            auto nextMirror = getMirrorNode(next);
+            if (currMirror != nextMirror && !hasChild(nextMirror, currMirror) &&
+                !hasChild(currMirror, nextMirror)) {
+                currMirror->addChild(nextMirror);
+                nextMirror->setParent(currMirror);
+            }
+            visited.insert(next);
+            nodeQueue.push_back(next);
+        }
+    }
+
+    for (auto axisNode : axisGCellNodes) {
+        if (activeTreeNodes.find(axisNode) != activeTreeNodes.end() ||
+            axisNode->getParent() != nullptr) {
+            continue;
+        }
+        axisContact->addChild(axisNode);
+        axisNode->setParent(axisContact);
+    }
+
+    if (VERBOSE > 0) {
+        cout << "GR symmetry FLUTE topology for net " << net->getName()
+             << ": active terminals = " << activeNodes.size()
+             << ", active tree nodes = " << activeTreeNodes.size()
+             << ", axis contact = (" << axisContact->getLoc().x() << ", "
+             << axisContact->getLoc().y()
+             << "), mirrored nodes = " << active2Mirror.size() - 1 << "\n";
+    }
+
+    return true;
+}
 
 // pinGCellNodes size always >= 2
 void FlexGR::genSTTopology_FLUTE(vector<frNode *> &pinGCellNodes,

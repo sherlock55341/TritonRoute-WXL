@@ -3084,6 +3084,7 @@ int FlexDR::main() {
     //                                    <<time_span_route.count() <<" "
     //                                    <<time_span_end.count() <<" "
     //                                    <<endl;
+    reportSymmetryDR();
     if (VERBOSE > 0) {
         cout << endl << "complete detail routing";
         end();

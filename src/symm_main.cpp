@@ -46,18 +46,35 @@ constexpr const char* kDemoLefFile =
     "/home/cyzhao/benchmark/primarius/outdata/ispd18_test1.input.lef";
 constexpr const char* kDemoDefFile =
     "/home/cyzhao/benchmark/primarius/outdata/pattern_route_lay.def";
-constexpr const char* kDemoOutGuideFile = "./symmetry.route.guide";
-constexpr const char* kDemoOutFile = "./symmetry_routed.def";
+constexpr const char* kDemoOutGuideName = "symmetry.route.guide";
+constexpr const char* kDemoOutName = "symmetry_routed.def";
 constexpr int kDemoAxisY = 71820;
 
-void initDemoDefaults() {
+string getExecutableDir(const char* executablePath) {
+    string path(executablePath);
+    auto slashPos = path.find_last_of('/');
+    if (slashPos == string::npos) {
+        return ".";
+    }
+    return path.substr(0, slashPos);
+}
+
+string joinPath(const string& dir, const string& fileName) {
+    if (dir.empty() || dir == ".") {
+        return "./" + fileName;
+    }
+    return dir + "/" + fileName;
+}
+
+void initDemoDefaults(const char* executablePath) {
+    string outputDir = getExecutableDir(executablePath);
     LEF_FILE = kDemoLefFile;
     DEF_FILE = kDemoDefFile;
     REF_OUT_FILE = DEF_FILE;
     GUIDE_FILE.clear();
-    OUTGUIDE_FILE = kDemoOutGuideFile;
+    OUTGUIDE_FILE = joinPath(outputDir, kDemoOutGuideName);
     OUTTA_FILE.clear();
-    OUT_FILE = kDemoOutFile;
+    OUT_FILE = joinPath(outputDir, kDemoOutName);
 }
 
 void printUsage() {
@@ -117,7 +134,7 @@ int main(int argc, char** argv) {
     using namespace std::chrono;
     auto t1 = high_resolution_clock::now();
 
-    initDemoDefaults();
+    initDemoDefaults(argv[0]);
     auto parseResult = parseArgs(argc, argv);
     if (parseResult == ParseResult::kHelp) {
         return 0;
@@ -131,7 +148,7 @@ int main(int argc, char** argv) {
     FlexRoute router;
     router.getDesign()->setSymmetryConstraint(
         frSymmetryConstraint(kDemoNetName, frSymmetryAxisEnum::Horizontal,
-                             kDemoAxisY, frSymmetryCanonicalSideEnum::High));
+                             kDemoAxisY, frSymmetryReferenceSideEnum::High));
     router.main();
 
     auto t2 = high_resolution_clock::now();

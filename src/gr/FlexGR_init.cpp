@@ -1263,6 +1263,49 @@ void FlexGRWorker::initNet_initPinGCellNodes(grNet *net) {
     map<FlexMazeIdx, grNode *> midx2PinGCellNode;
     grNode *rootGCellNode = nullptr;
 
+    auto printNodeDebug = [&](const char *prefix, grNode *node) {
+        if (node == nullptr) {
+            cout << "  " << prefix << ": null\n";
+            return;
+        }
+        frPoint loc = node->getLoc();
+        FlexMazeIdx midx;
+        gridGraph.getMazeIdx(loc, node->getLayerNum(), midx);
+        cout << "  " << prefix << ": ptr=" << node
+             << ", type=" << (int)node->getType() << ", loc=(" << loc.x()
+             << ", " << loc.y() << "), layer=" << node->getLayerNum()
+             << ", mazeIdx=(" << midx.x() << ", " << midx.y() << ", "
+             << midx.z() << "), children=" << node->getChildren().size()
+             << "\n";
+        auto parent = node->getParent();
+        if (parent != nullptr) {
+            frPoint parentLoc = parent->getLoc();
+            FlexMazeIdx parentMIdx;
+            gridGraph.getMazeIdx(parentLoc, parent->getLayerNum(), parentMIdx);
+            cout << "    parent: ptr=" << parent
+                 << ", type=" << (int)parent->getType() << ", loc=("
+                 << parentLoc.x() << ", " << parentLoc.y()
+                 << "), layer=" << parent->getLayerNum() << ", mazeIdx=("
+                 << parentMIdx.x() << ", " << parentMIdx.y() << ", "
+                 << parentMIdx.z() << ")\n";
+        } else {
+            cout << "    parent: null\n";
+        }
+        int childCnt = 0;
+        for (auto child : node->getChildren()) {
+            frPoint childLoc = child->getLoc();
+            FlexMazeIdx childMIdx;
+            gridGraph.getMazeIdx(childLoc, child->getLayerNum(), childMIdx);
+            cout << "    child[" << childCnt << "]: ptr=" << child
+                 << ", type=" << (int)child->getType() << ", loc=("
+                 << childLoc.x() << ", " << childLoc.y()
+                 << "), layer=" << child->getLayerNum() << ", mazeIdx=("
+                 << childMIdx.x() << ", " << childMIdx.y() << ", "
+                 << childMIdx.z() << ")\n";
+            childCnt++;
+        }
+    };
+
     deque<grNode *> nodeQ;
     nodeQ.push_back(net->getRoot());
     while (!nodeQ.empty()) {
@@ -1299,6 +1342,14 @@ void FlexGRWorker::initNet_initPinGCellNodes(grNet *net) {
                 cout << "Warning: overlapping disjoint pinGCellNodes detected "
                         "of "
                      << net->getFrNet()->getName() << "\n";
+                cout << "  triggered by "
+                     << (node == net->getRoot() ? "root child anchor"
+                                                : "leaf parent anchor")
+                     << "\n";
+                printNodeDebug("existing anchor",
+                               midx2PinGCellNode[gcellNodeMIdx]);
+                printNodeDebug("candidate anchor", gcellNode);
+                printNodeDebug("trigger node", node);
                 // ripup to make sure congestion map is up-to-date
                 net->setRipup(true);
                 if (midx2PinGCellNode[gcellNodeMIdx] == rootGCellNode) {
