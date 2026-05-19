@@ -30,6 +30,7 @@
 #define _FR_FLEXDR_H_
 
 #include <memory>
+#include <set>
 #include "frDesign.h"
 #include "db/drObj/drNet.h"
 #include "db/drObj/drMarker.h"
@@ -39,6 +40,8 @@
 #include <deque>
 
 namespace fr {
+
+using DRSymmPinAPKey = std::pair<drPin *, FlexMazeIdx>;
 
 class FlexDR {
    public:
@@ -133,6 +136,8 @@ class FlexDR {
     void removeGCell2BoundaryPin();
     void checkConnectivity(int iter = -1);
     void reportSymmetryDR();
+    void copySymmetryRouteBodies();
+    void markSymmetryNetsForSearchRepair();
     bool checkDRConnectivityReadOnly(frNet *net, int &pinVisited,
                                      int &pinTotal);
     void reportDRSymmetryRatio(frNet *net,
@@ -297,6 +302,12 @@ class FlexDRMinAreaVio {
 class FlexGCWorker;
 class FlexDRWorker {
    public:
+    enum class DRSymmetryRoutingPrefSource {
+        DefaultAll,
+        Reference,
+        Mirror,
+        Disabled,
+    };
     // constructors
     FlexDRWorker(FlexDR *drIn)
         : design(drIn->getDesign()),
@@ -315,6 +326,12 @@ class FlexDRWorker {
           skipRouting(false),
           ripupMode(1),
           fixMode(0),
+          enableSingleSideRouting(false),
+          enableSymmRoutingEdgePref(false),
+          symmRoutingEdgePrefSource(DRSymmetryRoutingPrefSource::DefaultAll),
+          hasSymmRoutingAxisCoord(false),
+          symmRoutingAxisCoord(0),
+          symmRoutingEdgePrefs(),
           workerDRCCost(DRCCOST),
           workerMarkerCost(MARKERCOST),
           workerMarkerBloatWidth(0),
@@ -352,6 +369,7 @@ class FlexDRWorker {
     void setEnableDRC(bool in) { enableDRC = in; }
     void setRipupMode(int in) { ripupMode = in; }
     void setFollowGuide(bool in) { followGuide = in; }
+    void setEnableSingleSideRouting(bool in) { enableSingleSideRouting = in; }
     // void setNetOrderingMode(drNetOrderingEnum in) {
     //   netOrderingMode = in;
     // }
@@ -425,6 +443,7 @@ class FlexDRWorker {
     int getMazeEndIter() const { return mazeEndIter; }
     bool isEnableDRC() const { return enableDRC; }
     bool isFollowGuide() const { return followGuide; }
+    bool isSingleSideRoutingEnabled() const { return enableSingleSideRouting; }
     int getRipupMode() const { return ripupMode; }
     int getFixMode() const { return fixMode; }
     // const std::vector<std::unique_ptr<frMarker> >& getMarkers() const {
@@ -456,6 +475,32 @@ class FlexDRWorker {
     std::vector<frMarker> &getMarkers() { return markers; }
     const std::vector<frMarker> &getBestMarkers() const { return bestMarkers; }
     std::vector<frMarker> &getBestMarkers() { return bestMarkers; }
+    bool isSymmRoutingEdgePrefEnabled() const {
+        return enableSymmRoutingEdgePref;
+    }
+    DRSymmetryRoutingPrefSource getSymmetryRoutingPrefSource() const {
+        return symmRoutingEdgePrefSource;
+    }
+    void setSymmetryRoutingPrefSource(
+        DRSymmetryRoutingPrefSource source =
+            DRSymmetryRoutingPrefSource::DefaultAll);
+    void clearSymmetryRoutingPrefSource();
+    void initSymmetryRoutingEdgePrefs(
+        drNet *net,
+        DRSymmetryRoutingPrefSource source =
+            DRSymmetryRoutingPrefSource::Disabled);
+    void clearSymmetryRoutingEdgePrefs();
+    void initSymmetryRoutingAxis(const frSymmetryConstraint *constraint);
+    void clearSymmetryRoutingAxis();
+    frCoord getSymmetryRoutingAxisCoord(
+        const frSymmetryConstraint *constraint) const;
+    bool isSymmetryRoutingPreferredEdge(const FlexMazeIdx &u,
+                                       const FlexMazeIdx &v) const;
+    bool isSymmetryRoutingAxisEdge(const FlexMazeIdx &u,
+                                  const FlexMazeIdx &v) const;
+    bool isSymmetryRoutingCostEnabled() const;
+    bool isSingleSideSymmetryEdgeForbidden(const FlexMazeIdx &u,
+                                          const FlexMazeIdx &v) const;
     const FlexDRWorkerRegionQuery &getWorkerRegionQuery() const { return rq; }
     FlexDRWorkerRegionQuery &getWorkerRegionQuery() { return rq; }
     int getInitNumMarkers() const { return initNumMarkers; }
@@ -486,6 +531,12 @@ class FlexDRWorker {
     bool skipRouting : 1;
     int ripupMode;
     int fixMode;
+    bool enableSingleSideRouting;
+    bool enableSymmRoutingEdgePref;
+    DRSymmetryRoutingPrefSource symmRoutingEdgePrefSource;
+    bool hasSymmRoutingAxisCoord;
+    frCoord symmRoutingAxisCoord;
+    std::set<std::pair<FlexMazeIdx, FlexMazeIdx>> symmRoutingEdgePrefs;
     // drNetOrderingEnum netOrderingMode;
     frUInt4 workerDRCCost, workerMarkerCost, workerMarkerBloatWidth,
         workerMarkerBloatDepth;
@@ -791,21 +842,33 @@ class FlexDRWorker {
 
     void mazeNetInit(drNet *net);
     void mazeNetEnd(drNet *net);
-    bool routeNet(drNet *net);
+    bool routeNet(drNet *net, bool allowSymmetricCopy = true,
+                 bool enableSymmetryFiltering = true);
+    bool routeSymmetryWorkerFlow(std::vector<drNet *> &rerouteNets);
+    std::pair<int, int> routeNet_addSymmetricCopies(
+        drNet *net,
+        std::vector<drConnFig *> *copiedRouteConnFigs = nullptr);
+    bool routeNet_attachSymmetricMirrorPins(
+        drNet *net,
+        const std::vector<std::pair<drPin *, drPin *>> &mirrorPinPairs,
+        const std::vector<drConnFig *> &copiedRouteConnFigs);
     void routeNet_prep(
         drNet *net, std::set<drPin *, frBlockObjectComp> &pins,
         std::map<FlexMazeIdx, std::set<drPin *, frBlockObjectComp> >
             &mazeIdx2unConnPins,
         std::set<FlexMazeIdx> &apMazeIdx,
-        std::set<FlexMazeIdx> &realPinAPMazeIdx);
+        std::set<FlexMazeIdx> &realPinAPMazeIdx,
+        const std::set<DRSymmPinAPKey> *activeSymmAPMazeIdx = nullptr);
     void routeNet_prepAreaMap(drNet *net,
-                              std::map<FlexMazeIdx, frCoord> &areaMap);
+                             std::map<FlexMazeIdx, frCoord> &areaMap,
+                             const std::set<DRSymmPinAPKey> *activeSymmAPMazeIdx = nullptr);
     void routeNet_setSrc(
         std::set<drPin *, frBlockObjectComp> &unConnPins,
         std::map<FlexMazeIdx, std::set<drPin *, frBlockObjectComp> >
             &mazeIdx2unConnPins,
         std::vector<FlexMazeIdx> &connComps, FlexMazeIdx &ccMazeIdx1,
-        FlexMazeIdx &ccMazeIdx2, frPoint &centerPt);
+        FlexMazeIdx &ccMazeIdx2, frPoint &centerPt,
+        const std::set<DRSymmPinAPKey> *activeSymmAPMazeIdx = nullptr);
     void mazePinInit();
     drPin *routeNet_getNextDst(
         FlexMazeIdx &ccMazeIdx1, FlexMazeIdx &ccMazeIdx2,
@@ -836,6 +899,7 @@ class FlexDRWorker {
         drNet *net, const FlexMazeIdx &bpIdx, bool isPatchHorz,
         bool isPatchLeft, frCoord patchLength, frCoord patchWidth);
     void routeNet_postRouteAddPathCost(drNet *net);
+    void routeNet_postRouteAddPathCostFrom(drNet *net, size_t startIdx);
     void routeNet_postRouteAddPatchMetalCost(drNet *net);
 
     // drc

@@ -36,6 +36,10 @@ using namespace fr;
 
 namespace {
 
+bool isPreCopySymmetryConnectivityCheck(frDesign *design, int iter) {
+    return iter <= 1 && design && design->hasSymmetryConstraint();
+}
+
 struct DRSegmentKey {
     frLayerNum layerNum;
     frPoint begin;
@@ -49,6 +53,18 @@ struct DRSegmentKey {
             return end < in.end;
         }
         return begin < in.begin;
+    }
+};
+
+struct DRViaKey {
+    frViaDef *viaDef;
+    frPoint origin;
+
+    bool operator<(const DRViaKey &in) const {
+        if (viaDef != in.viaDef) {
+            return viaDef < in.viaDef;
+        }
+        return origin < in.origin;
     }
 };
 
@@ -68,11 +84,170 @@ DRSegmentKey makeDRSegmentKey(frLayerNum layerNum, const frPoint &bp,
     return {layerNum, bp, ep};
 }
 
+frPoint mirrorPointOnRoutingAxis(const frPoint &pt,
+                                 const frSymmetryConstraint *constraint,
+                                 frCoord axisCoord) {
+    if (constraint->getAxisDir() == frSymmetryAxisEnum::Horizontal) {
+        return frPoint(pt.x(), axisCoord + (axisCoord - pt.y()));
+    }
+    return frPoint(axisCoord + (axisCoord - pt.x()), pt.y());
+}
+
 DRSegmentKey makeMirroredDRSegmentKey(const DRSegmentKey &key,
-                                      const frSymmetryConstraint *constraint) {
-    frPoint mirroredBegin = constraint->getMirroredPoint(key.begin);
-    frPoint mirroredEnd = constraint->getMirroredPoint(key.end);
+                                      const frSymmetryConstraint *constraint,
+                                      frCoord axisCoord) {
+    frPoint mirroredBegin =
+        mirrorPointOnRoutingAxis(key.begin, constraint, axisCoord);
+    frPoint mirroredEnd =
+        mirrorPointOnRoutingAxis(key.end, constraint, axisCoord);
     return makeDRSegmentKey(key.layerNum, mirroredBegin, mirroredEnd);
+}
+
+frCoord getGlobalSymmetryRoutingAxisCoord(
+    frDesign *design, const frSymmetryConstraint *constraint) {
+    if (!design || !constraint) {
+        return 0;
+    }
+    const auto geomAxisCoord = constraint->getAxisCoord();
+    const auto referenceIsHigh =
+        constraint->getReferenceSide() == frSymmetryReferenceSideEnum::High;
+    frCoord bestAxisCoord = geomAxisCoord;
+    bool found = false;
+
+    auto isBetterCandidate =
+        [&](frCoord candidate, frCoord currentBest) -> bool {
+        const auto candDist =
+            llabs((long long)candidate - (long long)geomAxisCoord);
+        const auto bestDist =
+            llabs((long long)currentBest - (long long)geomAxisCoord);
+        if (candDist < bestDist) {
+            return true;
+        }
+        if (candDist > bestDist) {
+            return false;
+        }
+        if (referenceIsHigh) {
+            return candidate >= geomAxisCoord && currentBest < geomAxisCoord;
+        }
+        return candidate <= geomAxisCoord && currentBest > geomAxisCoord;
+    };
+
+    auto *topBlock = design->getTopBlock();
+    for (auto lNum = design->getTech()->getBottomLayerNum();
+         lNum <= design->getTech()->getTopLayerNum(); ++lNum) {
+        for (auto &trackPattern : topBlock->getTrackPatterns(lNum)) {
+            const bool isAxisCoordPattern =
+                constraint->getAxisDir() == frSymmetryAxisEnum::Horizontal
+                    ? !trackPattern->isHorizontal()
+                    : trackPattern->isHorizontal();
+            if (!isAxisCoordPattern || trackPattern->getNumTracks() == 0 ||
+                trackPattern->getTrackSpacing() == 0) {
+                continue;
+            }
+            const auto startCoord = trackPattern->getStartCoord();
+            const auto spacing = (frCoord)trackPattern->getTrackSpacing();
+            frCoord trackNum = (geomAxisCoord - startCoord) / spacing;
+            if (trackNum < 0) {
+                trackNum = 0;
+            }
+            if (trackNum >= (frCoord)trackPattern->getNumTracks()) {
+                trackNum = trackPattern->getNumTracks() - 1;
+            }
+            const frCoord candidateNums[] = {trackNum, trackNum + 1};
+            for (auto candidateNum : candidateNums) {
+                if (candidateNum < 0 ||
+                    candidateNum >= (frCoord)trackPattern->getNumTracks()) {
+                    continue;
+                }
+                const auto candidateCoord =
+                    startCoord + candidateNum * spacing;
+                if (!found ||
+                    isBetterCandidate(candidateCoord, bestAxisCoord)) {
+                    bestAxisCoord = candidateCoord;
+                    found = true;
+                }
+            }
+        }
+    }
+    return found ? bestAxisCoord : geomAxisCoord;
+}
+
+bool isReferenceOrAxisPoint(const frPoint &pt,
+                            const frSymmetryConstraint *constraint,
+                            frCoord axisCoord) {
+    const bool refIsHigh =
+        constraint->getReferenceSide() == frSymmetryReferenceSideEnum::High;
+    if (constraint->getAxisDir() == frSymmetryAxisEnum::Horizontal) {
+        return refIsHigh ? pt.y() >= axisCoord : pt.y() <= axisCoord;
+    }
+    return refIsHigh ? pt.x() >= axisCoord : pt.x() <= axisCoord;
+}
+
+void checkConnectivity_insertLogicalPins(
+    frNet *net, map<frBlockObject *, set<pair<frPoint, frLayerNum> >,
+                    frBlockObjectComp> &pin2epMap) {
+    for (auto pin : net->getInstTerms()) {
+        pin2epMap[pin];
+    }
+    for (auto pin : net->getTerms()) {
+        pin2epMap[pin];
+    }
+}
+
+bool collectTermFigBoxes(frTerm *term, const frTransform *xform,
+                         vector<pair<frLayerNum, frBox> > &boxes) {
+    if (!term) {
+        return false;
+    }
+    for (auto &uPin : term->getPins()) {
+        for (auto &uPinFig : uPin->getFigs()) {
+            auto *pinFig = uPinFig.get();
+            if (pinFig->typeId() != frcRect && pinFig->typeId() != frcPolygon) {
+                continue;
+            }
+            frBox box;
+            pinFig->getBBox(box);
+            if (xform) {
+                box.transform(*xform);
+            }
+            boxes.push_back(
+                {static_cast<frShape *>(pinFig)->getLayerNum(), box});
+        }
+    }
+    return !boxes.empty();
+}
+
+bool getTermFigBoxes(frBlockObject *termObj,
+                     vector<pair<frLayerNum, frBox> > &boxes) {
+    if (!termObj) {
+        return false;
+    }
+    frTerm *term = nullptr;
+    frInst *inst = nullptr;
+    frTransform instXform;
+
+    if (termObj->typeId() == frcInstTerm) {
+        auto *instTerm = static_cast<frInstTerm *>(termObj);
+        inst = instTerm->getInst();
+        term = instTerm->getTerm();
+        if (!inst || !term) {
+            return false;
+        }
+        inst->getUpdatedXform(instXform);
+    } else if (termObj->typeId() == frcTerm) {
+        term = static_cast<frTerm *>(termObj);
+    } else {
+        return false;
+    }
+
+    return collectTermFigBoxes(term, inst ? &instXform : nullptr, boxes);
+}
+
+bool isMirrorRepairBox(const frBox &box,
+                       const frSymmetryConstraint *constraint) {
+    const frPoint center((box.left() + box.right()) / 2,
+                         (box.bottom() + box.top()) / 2);
+    return constraint->isMirror(center);
 }
 
 }  // namespace
@@ -218,6 +393,7 @@ bool FlexDR::checkDRConnectivityReadOnly(frNet *net, int &pinVisited,
 
     checkConnectivity_initDRObjs(net, netDRObjs);
     checkConnectivity_pin2epMap(net, netDRObjs, pin2epMap);
+    checkConnectivity_insertLogicalPins(net, pin2epMap);
     checkConnectivity_nodeMap(net, netDRObjs, netPins, pin2epMap, nodeMap);
 
     int gCnt = (int)netDRObjs.size();
@@ -232,10 +408,175 @@ bool FlexDR::checkDRConnectivityReadOnly(frNet *net, int &pinVisited,
     return connected;
 }
 
+void FlexDR::copySymmetryRouteBodies() {
+    if (!getDesign()->hasSymmetryConstraint()) {
+        return;
+    }
+    const auto *constraint = getDesign()->getSymmetryConstraint();
+    const auto axisCoord =
+        getGlobalSymmetryRoutingAxisCoord(getDesign(), constraint);
+    int totalCopiedPathCnt = 0;
+    int totalCopiedViaCnt = 0;
+
+    for (auto &uNet : getDesign()->getTopBlock()->getNets()) {
+        auto *net = uNet.get();
+        if (!getDesign()->isSymmetryNet(net->getName())) {
+            continue;
+        }
+
+        set<DRSegmentKey> segmentKeys;
+        set<DRViaKey> viaKeys;
+        vector<frPathSeg *> pathSegs;
+        vector<frVia *> vias;
+        for (auto &uShape : net->getShapes()) {
+            if (uShape->typeId() != frcPathSeg) {
+                continue;
+            }
+            auto *pathSeg = static_cast<frPathSeg *>(uShape.get());
+            frPoint bp, ep;
+            pathSeg->getPoints(bp, ep);
+            segmentKeys.insert(makeDRSegmentKey(pathSeg->getLayerNum(), bp, ep));
+            pathSegs.push_back(pathSeg);
+        }
+        for (auto &uVia : net->getVias()) {
+            frPoint origin;
+            uVia->getOrigin(origin);
+            viaKeys.insert({uVia->getViaDef(), origin});
+            vias.push_back(uVia.get());
+        }
+
+        int copiedPathCnt = 0;
+        int copiedViaCnt = 0;
+        for (auto *pathSeg : pathSegs) {
+            frPoint bp, ep;
+            pathSeg->getPoints(bp, ep);
+            if (!isReferenceOrAxisPoint(bp, constraint, axisCoord) &&
+                !isReferenceOrAxisPoint(ep, constraint, axisCoord)) {
+                continue;
+            }
+            auto mirroredBp = mirrorPointOnRoutingAxis(bp, constraint, axisCoord);
+            auto mirroredEp = mirrorPointOnRoutingAxis(ep, constraint, axisCoord);
+            auto mirroredKey =
+                makeDRSegmentKey(pathSeg->getLayerNum(), mirroredBp, mirroredEp);
+            if (segmentKeys.find(mirroredKey) != segmentKeys.end()) {
+                continue;
+            }
+
+            frSegStyle mirroredStyle;
+            pathSeg->getStyle(mirroredStyle);
+            const bool reversed = mirroredEp < mirroredBp;
+            if (reversed) {
+                swap(mirroredBp, mirroredEp);
+                frSegStyle swappedStyle;
+                swappedStyle.setBeginStyle(mirroredStyle.getEndStyle(),
+                                           mirroredStyle.getEndExt());
+                swappedStyle.setEndStyle(mirroredStyle.getBeginStyle(),
+                                         mirroredStyle.getBeginExt());
+                swappedStyle.setWidth(mirroredStyle.getWidth());
+                mirroredStyle = swappedStyle;
+            }
+
+            auto mirroredPathSeg = make_unique<frPathSeg>(*pathSeg);
+            mirroredPathSeg->setPoints(mirroredBp, mirroredEp);
+            mirroredPathSeg->setStyle(mirroredStyle);
+            auto *mirroredPathSegPtr = mirroredPathSeg.get();
+            unique_ptr<frShape> mirroredShape(std::move(mirroredPathSeg));
+            net->addShape(mirroredShape);
+            getRegionQuery()->addDRObj(mirroredPathSegPtr);
+            segmentKeys.insert(mirroredKey);
+            ++copiedPathCnt;
+        }
+
+        for (auto *via : vias) {
+            frPoint origin;
+            via->getOrigin(origin);
+            if (!isReferenceOrAxisPoint(origin, constraint, axisCoord)) {
+                continue;
+            }
+            auto mirroredOrigin =
+                mirrorPointOnRoutingAxis(origin, constraint, axisCoord);
+            DRViaKey mirroredKey{via->getViaDef(), mirroredOrigin};
+            if (viaKeys.find(mirroredKey) != viaKeys.end()) {
+                continue;
+            }
+            auto mirroredVia = make_unique<frVia>(*via);
+            mirroredVia->setOrigin(mirroredOrigin);
+            auto *mirroredViaPtr = mirroredVia.get();
+            net->addVia(mirroredVia);
+            getRegionQuery()->addDRObj(mirroredViaPtr);
+            viaKeys.insert(mirroredKey);
+            ++copiedViaCnt;
+        }
+
+        net->setModified(true);
+        totalCopiedPathCnt += copiedPathCnt;
+        totalCopiedViaCnt += copiedViaCnt;
+        cout << "DR symmetry global copy for net " << net->getName()
+             << ": routeAxis=" << axisCoord
+             << ", copied path/via = " << copiedPathCnt << "/"
+             << copiedViaCnt << endl;
+    }
+
+    if (totalCopiedPathCnt || totalCopiedViaCnt) {
+        cout << "DR symmetry global copy total path/via = "
+             << totalCopiedPathCnt << "/" << totalCopiedViaCnt << endl;
+    }
+}
+
+void FlexDR::markSymmetryNetsForSearchRepair() {
+    if (!getDesign()->hasSymmetryConstraint()) {
+        return;
+    }
+    const auto *constraint = getDesign()->getSymmetryConstraint();
+    int markedNetCnt = 0;
+    int markerCnt = 0;
+
+    for (auto &uNet : getDesign()->getTopBlock()->getNets()) {
+        auto *net = uNet.get();
+        if (!getDesign()->isSymmetryNet(net->getName())) {
+            continue;
+        }
+
+        bool markedNet = false;
+        auto markTerm = [&](frBlockObject *termObj) {
+            vector<pair<frLayerNum, frBox> > pinBoxes;
+            if (!getTermFigBoxes(termObj, pinBoxes)) {
+                return;
+            }
+            for (auto &[layerNum, pinBox] : pinBoxes) {
+                if (!isMirrorRepairBox(pinBox, constraint)) {
+                    continue;
+                }
+                frBox markerBox;
+                pinBox.bloat(1, markerBox);
+                checkConnectivity_addMarker(net, layerNum, markerBox);
+                markedNet = true;
+                ++markerCnt;
+            }
+        };
+
+        for (auto *instTerm : net->getInstTerms()) {
+            markTerm(instTerm);
+        }
+        for (auto *term : net->getTerms()) {
+            markTerm(term);
+        }
+        if (markedNet) {
+            net->setModified(true);
+            ++markedNetCnt;
+        }
+    }
+
+    cout << "DR symmetry mirror pin repair markers = " << markerCnt
+         << " on " << markedNetCnt << " net(s)" << endl;
+}
+
 void FlexDR::reportDRSymmetryRatio(frNet *net,
                                    const frSymmetryConstraint *constraint) {
     map<DRSegmentKey, int> segmentCounts;
     map<DRSegmentKey, unsigned long long> segmentLengths;
+    const auto axisCoord =
+        getGlobalSymmetryRoutingAxisCoord(getDesign(), constraint);
     unsigned long long totalLen = 0;
     unsigned long long matchedLen = 0;
 
@@ -258,7 +599,7 @@ void FlexDR::reportDRSymmetryRatio(frNet *net,
 
     for (auto &[key, cnt] : segmentCounts) {
         while (cnt > 0) {
-            auto mirrorKey = makeMirroredDRSegmentKey(key, constraint);
+            auto mirrorKey = makeMirroredDRSegmentKey(key, constraint, axisCoord);
             if (mirrorKey.begin == key.begin && mirrorKey.end == key.end) {
                 matchedLen += segmentLengths[key];
                 cnt--;
@@ -1250,8 +1591,8 @@ void FlexDR::checkConnectivity_merge3(
             auto &victims = horzVictims[lNum][i];
             auto &newSegSpans = horzNewSegSpans[lNum][i];
             checkConnectivity_merge_commit(net, netRouteObjs, victims, lNum,
-                                           trackCoord, newSegSpans,
-                                           true /*isHorz*/);
+                                          trackCoord, newSegSpans,
+                                          true /*isHorz*/);
             i++;
         }
     }
@@ -1263,8 +1604,8 @@ void FlexDR::checkConnectivity_merge3(
             auto &victims = vertVictims[lNum][i];
             auto &newSegSpans = vertNewSegSpans[lNum][i];
             checkConnectivity_merge_commit(net, netRouteObjs, victims, lNum,
-                                           trackCoord, newSegSpans,
-                                           false /*isHorz*/);
+                                          trackCoord, newSegSpans,
+                                          false /*isHorz*/);
             i++;
         }
     }
@@ -1445,9 +1786,15 @@ void FlexDR::checkConnectivity(int iter) {
 
     int batchSize = 131072;
     vector<vector<frNet *> > batches(1);
+    const bool skipPreCopySymmetryNets =
+        isPreCopySymmetryConnectivityCheck(getDesign(), iter);
     for (auto &uPtr : getDesign()->getTopBlock()->getNets()) {
         auto net = uPtr.get();
         if (!net->isModified()) {
+            continue;
+        } else if (skipPreCopySymmetryNets &&
+                   getDesign()->isSymmetryNet(net->getName())) {
+            net->setModified(false);
             continue;
         } else {
             net->setModified(false);
@@ -1553,6 +1900,7 @@ void FlexDR::checkConnectivity(int iter) {
             netDRObjs.clear();
             checkConnectivity_initDRObjs(net, netDRObjs);
             checkConnectivity_pin2epMap(net, netDRObjs, pin2epMap);
+            checkConnectivity_insertLogicalPins(net, pin2epMap);
             checkConnectivity_nodeMap(net, netDRObjs, netPins, pin2epMap,
                                       nodeMap);
 
@@ -1569,6 +1917,7 @@ void FlexDR::checkConnectivity(int iter) {
             auto &netPins = aNetPins[i];
             auto &nodeMap = aNodeMap[i];
             auto &adjVisited = aAdjVisited[i];
+            auto &adjPrevIdx = aAdjPrevIdx[i];
 
             int gCnt = (int)netDRObjs.size();
             int nCnt = (int)netDRObjs.size() + (int)netPins.size();

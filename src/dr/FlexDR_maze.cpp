@@ -31,10 +31,466 @@
 #include "gc/FlexGC.h"
 #include <chrono>
 #include <algorithm>
+#include <limits>
 #include <random>
 
 using namespace std;
 using namespace fr;
+
+namespace {
+
+struct DRPathSegmentSymmetryKey {
+    frLayerNum layerNum;
+    frPoint begin;
+    frPoint end;
+
+    bool operator<(const DRPathSegmentSymmetryKey &in) const {
+        if (layerNum != in.layerNum) {
+            return layerNum < in.layerNum;
+        }
+        if (begin == in.begin) {
+            return end < in.end;
+        }
+        return begin < in.begin;
+    }
+};
+
+struct DRViaSymmetryKey {
+    frViaDef *viaDef;
+    frPoint origin;
+
+    bool operator<(const DRViaSymmetryKey &in) const {
+        if (viaDef != in.viaDef) {
+            return viaDef < in.viaDef;
+        }
+        return origin < in.origin;
+    }
+};
+
+bool isAxisOnAxis(const frPoint &pt, const frSymmetryConstraint *constraint,
+                  frCoord axisCoord);
+bool isReferenceOnAxis(const frPoint &pt, const frSymmetryConstraint *constraint,
+                      frCoord axisCoord);
+bool isMirrorOnAxis(const frPoint &pt, const frSymmetryConstraint *constraint,
+                   frCoord axisCoord);
+frPoint getMirroredPointOnAxis(const frPoint &pt,
+                               const frSymmetryConstraint *constraint,
+                               frCoord axisCoord);
+
+DRPathSegmentSymmetryKey makeMirroredPathKey(
+    frLayerNum layerNum, const frPoint &bp, const frPoint &ep,
+    const frSymmetryConstraint *constraint, frCoord axisCoord) {
+    auto mirroredBp = getMirroredPointOnAxis(bp, constraint, axisCoord);
+    auto mirroredEp = getMirroredPointOnAxis(ep, constraint, axisCoord);
+    if (mirroredEp < mirroredBp) {
+        return {layerNum, mirroredEp, mirroredBp};
+    }
+    return {layerNum, mirroredBp, mirroredEp};
+}
+
+DRPathSegmentSymmetryKey makeMirroredPathKey(
+    frLayerNum layerNum, const frPoint &bp, const frPoint &ep,
+    const frSymmetryConstraint *constraint) {
+    return makeMirroredPathKey(layerNum, bp, ep, constraint,
+                              constraint->getAxisCoord());
+}
+
+DRPathSegmentSymmetryKey makeMirroredPathKey(
+    frLayerNum layerNum, const frPoint &bp, const frPoint &ep) {
+    if (ep < bp) {
+        return {layerNum, ep, bp};
+    }
+    return {layerNum, bp, ep};
+}
+
+DRViaSymmetryKey makeMirroredViaKey(
+    frViaDef *viaDef, const frPoint &origin,
+    const frSymmetryConstraint *constraint, frCoord axisCoord) {
+    return {viaDef, getMirroredPointOnAxis(origin, constraint, axisCoord)};
+}
+
+DRViaSymmetryKey makeMirroredViaKey(
+    frViaDef *viaDef, const frPoint &origin,
+    const frSymmetryConstraint *constraint) {
+    return makeMirroredViaKey(viaDef, origin, constraint,
+                              constraint->getAxisCoord());
+}
+
+DRViaSymmetryKey makeViaKey(frViaDef *viaDef, const frPoint &origin) {
+    return {viaDef, origin};
+}
+
+void swapPathSegmentStyles(frSegStyle &style, bool shouldSwap) {
+    if (!shouldSwap) {
+        return;
+    }
+    frSegStyle swappedStyle;
+    swappedStyle.setBeginStyle(style.getEndStyle(), style.getEndExt());
+    swappedStyle.setEndStyle(style.getBeginStyle(), style.getBeginExt());
+    swappedStyle.setWidth(style.getWidth());
+    style = swappedStyle;
+}
+
+bool isStrictReferencePoint(const frPoint &pt,
+                           const frSymmetryConstraint *constraint) {
+    return constraint->isReference(pt) && !constraint->isMirror(pt)
+           && !constraint->isAxis(pt);
+}
+
+bool isAxisOnAxis(const frPoint &pt, const frSymmetryConstraint *constraint,
+                  frCoord axisCoord) {
+    if (!constraint) {
+        return false;
+    }
+    return constraint->getAxisDir() == frSymmetryAxisEnum::Horizontal
+               ? pt.y() == axisCoord
+               : pt.x() == axisCoord;
+}
+
+bool isReferenceOnAxis(const frPoint &pt, const frSymmetryConstraint *constraint,
+                      frCoord axisCoord) {
+    if (!constraint) {
+        return false;
+    }
+    if (isAxisOnAxis(pt, constraint, axisCoord)) {
+        return true;
+    }
+    const bool refIsHigh =
+        constraint->getReferenceSide() == frSymmetryReferenceSideEnum::High;
+    if (constraint->getAxisDir() == frSymmetryAxisEnum::Horizontal) {
+        return refIsHigh ? pt.y() >= axisCoord : pt.y() <= axisCoord;
+    }
+    return refIsHigh ? pt.x() >= axisCoord : pt.x() <= axisCoord;
+}
+
+bool isMirrorOnAxis(const frPoint &pt, const frSymmetryConstraint *constraint,
+                   frCoord axisCoord) {
+    if (!constraint) {
+        return false;
+    }
+    return !isAxisOnAxis(pt, constraint, axisCoord) &&
+           !isReferenceOnAxis(pt, constraint, axisCoord);
+}
+
+frPoint getMirroredPointOnAxis(const frPoint &pt,
+                               const frSymmetryConstraint *constraint,
+                               frCoord axisCoord) {
+    if (!constraint) {
+        return pt;
+    }
+    if (constraint->getAxisDir() == frSymmetryAxisEnum::Horizontal) {
+        return frPoint(pt.x(), axisCoord + (axisCoord - pt.y()));
+    }
+    return frPoint(axisCoord + (axisCoord - pt.x()), pt.y());
+}
+
+enum class DRSymmetryPinRole {
+    Reference,
+    Mirror,
+    Axis,
+    Boundary,
+};
+
+struct DRSymmetricRealPinInfo {
+    drPin *pin = nullptr;
+    frPoint repPt;
+    const char *repSource = "bboxCenter";
+    DRSymmetryPinRole role = DRSymmetryPinRole::Boundary;
+    bool paired = false;
+};
+
+bool isRealPin(const drPin *pin) {
+    if (!pin || !pin->hasFrTerm()) {
+        return false;
+    }
+    auto termObj = pin->getFrTerm();
+    return termObj->typeId() == frcInstTerm || termObj->typeId() == frcTerm;
+}
+
+bool collectPinGeometryCenters(const frPin &pin, const frTransform *xform,
+                              vector<frPoint> &centers) {
+    for (auto &uPinFig : pin.getFigs()) {
+        auto pinFig = uPinFig.get();
+        if (pinFig->typeId() != frcRect && pinFig->typeId() != frcPolygon) {
+            continue;
+        }
+        frBox box;
+        pinFig->getBBox(box);
+        if (xform) {
+            box.transform(*xform);
+        }
+        centers.push_back(frPoint((box.left() + box.right()) / 2,
+                                 (box.bottom() + box.top()) / 2));
+    }
+    return !centers.empty();
+}
+
+pair<FlexMazeIdx, FlexMazeIdx> makeSymmetryPrefEdge(
+    const FlexMazeIdx &uIn, const FlexMazeIdx &vIn) {
+    if (vIn < uIn) {
+        return {vIn, uIn};
+    }
+    return {uIn, vIn};
+}
+
+bool getRealPinRepresentative(drPin *pin, frPoint &rep, const char *&repSource,
+                             vector<frPoint> &allApPts) {
+    const auto *termObj = pin->getFrTerm();
+    const frTerm *term = nullptr;
+    const frInst *inst = nullptr;
+
+    if (termObj->typeId() == frcInstTerm) {
+        auto instTerm = static_cast<const frInstTerm *>(termObj);
+        if (!instTerm->getInst() || !instTerm->getTerm()) {
+            return false;
+        }
+        inst = instTerm->getInst();
+        term = instTerm->getTerm();
+    } else {
+        term = static_cast<const frTerm *>(termObj);
+    }
+
+    vector<frPoint> centers;
+    if (inst) {
+        frTransform xform;
+        inst->getUpdatedXform(xform);
+        for (auto &uPin : term->getPins()) {
+            collectPinGeometryCenters(*uPin.get(), &xform, centers);
+        }
+    } else {
+        for (auto &uPin : term->getPins()) {
+            collectPinGeometryCenters(*uPin.get(), nullptr, centers);
+        }
+    }
+
+    if (!centers.empty()) {
+        frCoord totalX = 0;
+        frCoord totalY = 0;
+        for (auto &pt : centers) {
+            totalX += pt.x();
+            totalY += pt.y();
+        }
+        rep.set(totalX / centers.size(), totalY / centers.size());
+        repSource = "bboxCenter";
+        return true;
+    }
+
+    frCoord totalX = 0;
+    frCoord totalY = 0;
+    int apCnt = 0;
+    for (auto &ap : pin->getAccessPatterns()) {
+        frPoint apPt;
+        ap->getPoint(apPt);
+        allApPts.push_back(apPt);
+        totalX += apPt.x();
+        totalY += apPt.y();
+        ++apCnt;
+    }
+    if (apCnt == 0) {
+        return false;
+    }
+    rep.set(totalX / apCnt, totalY / apCnt);
+    repSource = "apCentroid";
+    return true;
+}
+
+frCoord getMinStep(const vector<frCoord> &valsIn) {
+    if (valsIn.size() < 2) {
+        return 1;
+    }
+    auto vals = valsIn;
+    sort(vals.begin(), vals.end());
+    vals.erase(unique(vals.begin(), vals.end()), vals.end());
+    if (vals.size() < 2) {
+        return 1;
+    }
+    frCoord minStep = 0;
+    for (size_t i = 1; i < vals.size(); ++i) {
+        const auto delta = vals[i] - vals[i - 1];
+        if (delta > 0 && (minStep == 0 || delta < minStep)) {
+            minStep = delta;
+        }
+    }
+    return minStep > 0 ? minStep : 1;
+}
+
+struct DRSymmetryPreflightResult {
+    int realRefPinCnt = 0;
+    int realMirrorPinCnt = 0;
+    int realAxisPinCnt = 0;
+    int boundaryPinCnt = 0;
+    int pairedMirrorPinCnt = 0;
+    int unpairedMirrorPinCnt = 0;
+    int activePinCnt = 0;
+    int activeNonRealPinCnt = 0;
+    int activeNonRealAPCnt = 0;
+    int nonRealAPCnt = 0;
+    bool hasFirstSkippedNonRealAP = false;
+    frPoint firstSkippedNonRealAP;
+    std::string firstSkippedNonRealAPSide;
+    int copyPinCnt = 0;
+    std::vector<std::pair<drPin *, drPin *>> mirrorPinPairs;
+    string repSource = "bboxCenter";
+    frCoord pairingTol = 1;
+    bool enableSymmFiltering = false;
+};
+
+DRSymmetryPreflightResult routeNet_runSymmetryPreflight(
+    drNet *net, const frSymmetryConstraint *constraint, frCoord routeAxisCoord,
+    set<DRSymmPinAPKey> &activeSymmAPMazeIdx) {
+    DRSymmetryPreflightResult result;
+    vector<DRSymmetricRealPinInfo> realPins;
+    vector<frCoord> allApX;
+    vector<frCoord> allApY;
+
+    auto repDist = [](const frPoint &lhs, const frPoint &rhs) {
+        return abs(lhs.x() - rhs.x()) + abs(lhs.y() - rhs.y());
+    };
+
+    for (auto &pin : net->getPins()) {
+        auto pinPtr = pin.get();
+        if (!isRealPin(pinPtr)) {
+            ++result.boundaryPinCnt;
+            continue;
+        }
+        frPoint repPt;
+        vector<frPoint> allApPts;
+        const char *repSource = "bboxCenter";
+        if (!getRealPinRepresentative(pinPtr, repPt, repSource, allApPts)) {
+            ++result.boundaryPinCnt;
+            continue;
+        }
+        if (string(repSource) == "apCentroid") {
+            result.repSource = "apCentroid";
+        }
+        for (auto &apPt : allApPts) {
+            allApX.push_back(apPt.x());
+            allApY.push_back(apPt.y());
+        }
+
+        DRSymmetricRealPinInfo pinInfo;
+        pinInfo.pin = pinPtr;
+        pinInfo.repPt = repPt;
+        pinInfo.repSource = repSource;
+        if (constraint->isAxis(repPt)) {
+            pinInfo.role = DRSymmetryPinRole::Axis;
+            ++result.realAxisPinCnt;
+        } else if (constraint->isReference(repPt)) {
+            pinInfo.role = DRSymmetryPinRole::Reference;
+            ++result.realRefPinCnt;
+        } else if (constraint->isMirror(repPt)) {
+            pinInfo.role = DRSymmetryPinRole::Mirror;
+            ++result.realMirrorPinCnt;
+        } else {
+            // conservative fallback for imperfect reps (on the wrong side by epsilon)
+            pinInfo.role = DRSymmetryPinRole::Mirror;
+            ++result.realMirrorPinCnt;
+        }
+        realPins.push_back(pinInfo);
+    }
+
+    // Conservative pairing tolerance, derived from AP spacing if available.
+    result.pairingTol = max(getMinStep(allApX), getMinStep(allApY));
+
+    auto nearestUnpairedRef = [&](const frPoint &target,
+                                  frCoord tol) -> DRSymmetricRealPinInfo * {
+        DRSymmetricRealPinInfo *best = nullptr;
+        frCoord bestDist = numeric_limits<frCoord>::max();
+        for (auto &pinInfo : realPins) {
+            if (pinInfo.role != DRSymmetryPinRole::Reference &&
+                pinInfo.role != DRSymmetryPinRole::Axis) {
+                continue;
+            }
+            if (pinInfo.paired) {
+                continue;
+            }
+            const frCoord dx = abs(pinInfo.repPt.x() - target.x());
+            const frCoord dy = abs(pinInfo.repPt.y() - target.y());
+            if (dx > tol || dy > tol) {
+                continue;
+            }
+            const frCoord dist = repDist(pinInfo.repPt, target);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = &pinInfo;
+            }
+        }
+        return best;
+    };
+
+    for (auto &pinInfo : realPins) {
+        if (pinInfo.role != DRSymmetryPinRole::Mirror) {
+            continue;
+        }
+
+        auto mirroredRep = constraint->getMirroredPoint(pinInfo.repPt);
+        DRSymmetricRealPinInfo *bestRef =
+            nearestUnpairedRef(mirroredRep, 0);
+        if (!bestRef) {
+            bestRef = nearestUnpairedRef(mirroredRep, result.pairingTol);
+        }
+        if (!bestRef) {
+            ++result.unpairedMirrorPinCnt;
+            continue;
+        }
+        pinInfo.paired = true;
+        bestRef->paired = true;
+        result.mirrorPinPairs.push_back({pinInfo.pin, bestRef->pin});
+        ++result.pairedMirrorPinCnt;
+        ++result.copyPinCnt;
+    }
+
+    if (!result.pairedMirrorPinCnt || result.unpairedMirrorPinCnt > 0) {
+        result.enableSymmFiltering = false;
+        result.activePinCnt = 0;
+        return result;
+    }
+
+    result.enableSymmFiltering = true;
+    set<drPin *> activePins;
+    for (auto &pinInfo : realPins) {
+        if (pinInfo.role == DRSymmetryPinRole::Reference ||
+            pinInfo.role == DRSymmetryPinRole::Axis) {
+            activePins.insert(pinInfo.pin);
+        }
+    }
+    result.activePinCnt = static_cast<int>(activePins.size());
+    for (auto *pinPtr : activePins) {
+        for (auto &ap : pinPtr->getAccessPatterns()) {
+            FlexMazeIdx mi;
+            ap->getMazeIdx(mi);
+            activeSymmAPMazeIdx.insert({pinPtr, mi});
+        }
+    }
+
+    // Non-real pins in this context are worker-local boundary pins from TA/guide.
+    // In single-side DR they must be routed as boundary-stitching targets, so
+    // every non-real AP is activated without side-based filtering.
+
+    for (auto &pin : net->getPins()) {
+        auto pinPtr = pin.get();
+        if (isRealPin(pinPtr)) {
+            continue;
+        }
+        bool hasActiveAP = false;
+        for (auto &ap : pin->getAccessPatterns()) {
+            ++result.nonRealAPCnt;
+            FlexMazeIdx mi;
+            ap->getMazeIdx(mi);
+            if (activeSymmAPMazeIdx.insert({pinPtr, mi}).second) {
+                ++result.activeNonRealAPCnt;
+            }
+            hasActiveAP = true;
+        }
+        if (hasActiveAP) {
+            ++result.activeNonRealPinCnt;
+        }
+    }
+
+    return result;
+}
+
+}  // namespace
 
 inline frCoord FlexDRWorker::pt2boxDistSquare(const frPoint &pt,
                                               const frBox &box) {
@@ -66,12 +522,20 @@ inline frCoord FlexDRWorker::box2boxDistSquareNew(const frBox &box1,
 void FlexDRWorker::modViaForbiddenThrough(const FlexMazeIdx &bi,
                                           const FlexMazeIdx &ei, int type) {
     // auto lNum = gridGraph.getLayerNum(bi.z());
+    const auto bottomLayerNum = getTech()->getBottomLayerNum();
+    const auto topLayerNum = getTech()->getTopLayerNum();
+    const auto tableLayerIdx = int(gridGraph.getLayerNum(bi.z()) - bottomLayerNum);
+    const int tableLayerCount = topLayerNum - bottomLayerNum + 1;
+    if (tableLayerIdx < 0 || tableLayerIdx >= tableLayerCount) {
+        return;
+    }
+
     bool isHorz = (bi.y() == ei.y());
 
     bool isLowerViaForbidden =
-        getTech()->isViaForbiddenThrough(bi.z(), true, isHorz);
+        getTech()->isViaForbiddenThrough(tableLayerIdx, true, isHorz);
     bool isUpperViaForbidden =
-        getTech()->isViaForbiddenThrough(bi.z(), false, isHorz);
+        getTech()->isViaForbiddenThrough(tableLayerIdx, false, isHorz);
 
     if (isHorz) {
         for (int xIdx = bi.x(); xIdx < ei.x(); xIdx++) {
@@ -817,10 +1281,13 @@ void FlexDRWorker::modMinimumcutCostVia(const frBox &box, frMIdx z, int type,
                     if (gridGraph.isSVia(i, j, isUpperVia ? z : z - 1)) {
                         // auto sViaDef= apSVia[FlexMazeIdx(i, j, isUpperVia ? z
                         // : z - 1)];
-                        auto sViaDef =
-                            apSVia[FlexMazeIdx(i, j, isUpperVia ? z : z - 1)]
-                                ->getAccessViaDef();
-                        sVia.setViaDef(sViaDef);
+                auto sViaIdx = FlexMazeIdx(i, j, isUpperVia ? z : z - 1);
+                auto sViaIt = apSVia.find(sViaIdx);
+                if (sViaIt == apSVia.end()) {
+                    continue;
+                }
+                auto sViaDef = sViaIt->second->getAccessViaDef();
+                sVia.setViaDef(sViaDef);
                         if (isUpperVia) {
                             sVia.getCutBBox(sViaBox);
                         } else {
@@ -1059,8 +1526,12 @@ void FlexDRWorker::modMinSpacingCostVia(const frBox &box, frMIdx z, int type,
             if (gridGraph.isSVia(i, j, isUpperVia ? z : z - 1)) {
                 // auto sViaDef= apSVia[FlexMazeIdx(i, j, isUpperVia ? z : z -
                 // 1)];
-                auto sViaDef = apSVia[FlexMazeIdx(i, j, isUpperVia ? z : z - 1)]
-                                   ->getAccessViaDef();
+                auto sViaIdx = FlexMazeIdx(i, j, isUpperVia ? z : z - 1);
+                auto sViaIt = apSVia.find(sViaIdx);
+                if (sViaIt == apSVia.end()) {
+                    continue;
+                }
+                auto sViaDef = sViaIt->second->getAccessViaDef();
                 sVia.setViaDef(sViaDef);
                 if (isUpperVia) {
                     sVia.getLayer1BBox(sViaBox);
@@ -1268,8 +1739,12 @@ void FlexDRWorker::modMinSpacingCostVia(const frBox &box, frMIdx z, int type,
             } else if (eolType == 1) {
                 if (gridGraph.isSVia(i, j, z - 1)) {
                     gridGraph.getPoint(pt, i, j);
-                    auto sViaDef =
-                        apSVia[FlexMazeIdx(i, j, z - 1)]->getAccessViaDef();
+                    auto sViaIdx = FlexMazeIdx(i, j, z - 1);
+                    auto sViaIt = apSVia.find(sViaIdx);
+                    if (sViaIt == apSVia.end()) {
+                        continue;
+                    }
+                    auto sViaDef = sViaIt->second->getAccessViaDef();
                     sVia.setViaDef(sViaDef);
                     sVia.setOrigin(pt);
                     sVia.getLayer2BBox(sViaBox);
@@ -1304,8 +1779,12 @@ void FlexDRWorker::modMinSpacingCostVia(const frBox &box, frMIdx z, int type,
             } else if (eolType == 2) {
                 if (gridGraph.isSVia(i, j, z)) {
                     gridGraph.getPoint(pt, i, j);
-                    auto sViaDef =
-                        apSVia[FlexMazeIdx(i, j, z)]->getAccessViaDef();
+                    auto sViaIdx = FlexMazeIdx(i, j, z);
+                    auto sViaIt = apSVia.find(sViaIdx);
+                    if (sViaIt == apSVia.end()) {
+                        continue;
+                    }
+                    auto sViaDef = sViaIt->second->getAccessViaDef();
                     sVia.setViaDef(sViaDef);
                     sVia.setOrigin(pt);
                     sVia.getLayer1BBox(sViaBox);
@@ -2052,19 +2531,34 @@ bool FlexDRWorker::mazeIterInit_searchRepair(int mazeIter,
                                              vector<drNet *> &rerouteNets) {
     auto &workerRegionQuery = getWorkerRegionQuery();
     int cnt = 0;
+    const bool skipSymmetryNetsForTopLevelCopy =
+        getDRIter() == 2 && getDesign()->hasSymmetryConstraint();
+    auto shouldSkipNet = [&](drNet *net) {
+        return skipSymmetryNetsForTopLevelCopy && net->getFrNet() &&
+               getDesign()->isSymmetryNet(net->getFrNet()->getName());
+    };
     if (mazeIter == 0) {
         if (getRipupMode() == 0) {
             for (auto &net : nets) {
+                if (shouldSkipNet(net.get())) {
+                    continue;
+                }
                 if (net->isRipup()) {
                     rerouteNets.push_back(net.get());
                 }
             }
         } else if (getRipupMode() == 1) {
             for (auto &net : nets) {
+                if (shouldSkipNet(net.get())) {
+                    continue;
+                }
                 rerouteNets.push_back(net.get());
             }
         } else if (getRipupMode() == 2) {
             for (auto &net : nets) {
+                if (shouldSkipNet(net.get())) {
+                    continue;
+                }
                 rerouteNets.push_back(net.get());
             }
         }
@@ -2073,6 +2567,9 @@ bool FlexDRWorker::mazeIterInit_searchRepair(int mazeIter,
             getFixMode() == 4 || getFixMode() == 5) {
             rerouteNets.clear();
             for (auto &net : nets) {
+                if (shouldSkipNet(net.get())) {
+                    continue;
+                }
                 if (net->isRipup()) {
                     rerouteNets.push_back(net.get());
                 }
@@ -2914,6 +3411,48 @@ void FlexDRWorker::route_queue() {
         cout << "init. #nets in rerouteQueue = " << rerouteQueue.size() << "\n";
     }
 
+    if (getDesign()->hasSymmetryConstraint()) {
+        vector<drNet *> workerFlowRerouteNets;
+        deque<pair<frBlockObject *, pair<bool, int>>> nonSymmRerouteQueue;
+        bool filteredSymmetryNet = false;
+        for (auto &entry : rerouteQueue) {
+            auto obj = entry.first;
+            if (!obj || obj->typeId() != drcNet) {
+                nonSymmRerouteQueue.push_back(entry);
+                continue;
+            }
+            auto net = static_cast<drNet *>(obj);
+            auto *frNet = net->getFrNet();
+            if (!frNet) {
+                nonSymmRerouteQueue.push_back(entry);
+                continue;
+            }
+            if (getDesign()->isSymmetryNet(frNet->getName())) {
+                filteredSymmetryNet = true;
+                if (getDRIter() == 2) {
+                    continue;
+                }
+                if (find(workerFlowRerouteNets.begin(), workerFlowRerouteNets.end(),
+                         net) == workerFlowRerouteNets.end()) {
+                    workerFlowRerouteNets.push_back(net);
+                }
+                continue;
+            }
+            nonSymmRerouteQueue.push_back(entry);
+        }
+
+        if (filteredSymmetryNet) {
+            rerouteQueue.swap(nonSymmRerouteQueue);
+        }
+        if (!workerFlowRerouteNets.empty()) {
+            if (!routeSymmetryWorkerFlow(workerFlowRerouteNets)) {
+                cout << "Fatal error: Symmetry worker flow failed (connectivity "
+                        "changed).\n";
+                exit(1);
+            }
+        }
+    }
+
     // route
     route_queue_main(rerouteQueue);
 
@@ -3319,6 +3858,325 @@ void FlexDRWorker::route_queue_main(
 //   }
 // }
 
+bool FlexDRWorker::routeSymmetryWorkerFlow(
+    vector<drNet *> &initialRerouteNets) {
+    const auto getNetRouteArea = [&]() {
+        return string("(") + to_string(routeBox.left() / 2000.0) + ", " +
+               to_string(routeBox.bottom() / 2000.0) + ") - (" +
+               to_string(routeBox.right() / 2000.0) + ", " +
+               to_string(routeBox.top() / 2000.0) + ")";
+    };
+
+    if (!getDesign()->hasSymmetryConstraint()) {
+        return true;
+    }
+
+    const bool hasSymConstraint = getDesign()->hasSymmetryConstraint();
+    clearSymmetryRoutingPrefSource();
+    clearSymmetryRoutingEdgePrefs();
+    clearSymmetryRoutingAxis();
+
+    auto markForWriteback = [](drNet *net) {
+        if (!net) {
+            return;
+        }
+        net->setModified(true);
+        if (net->getFrNet()) {
+            net->getFrNet()->setModified(true);
+        }
+        net->setNumMarkers(0);
+    };
+
+    auto clearForReroute = [&](drNet *net) {
+        auto &workerRegionQuery = getWorkerRegionQuery();
+        for (auto &uConnFig : net->getRouteConnFigs()) {
+            subPathCost(uConnFig.get());
+            workerRegionQuery.remove(uConnFig.get());
+        }
+        if (RESERVE_VIA_ACCESS && net->getNumReroutes() == 0 &&
+            (getRipupMode() == 1 || getRipupMode() == 2)) {
+            initMazeCost_via_helper(net, false);
+        }
+        net->clear();
+    };
+
+    auto routeSingleSide = [&](vector<drNet *> &routeNets) -> bool {
+        setSymmetryRoutingPrefSource(
+            DRSymmetryRoutingPrefSource::DefaultAll);
+        if (routeNets.empty()) {
+            return true;
+        }
+        for (auto *net : routeNets) {
+            if (!net) {
+                continue;
+            }
+            const auto *frNet = net->getFrNet();
+            if (!frNet || !getDesign()->isSymmetryNet(frNet->getName())) {
+                continue;
+            }
+            clearForReroute(net);
+            markForWriteback(net);
+            mazeNetInit(net);
+            bool isRouted = routeNet(net, false, false);
+            if (!isRouted) {
+                cout << "Fatal error: Maze Route cannot find path ("
+                     << frNet->getName() << ") in (" << getNetRouteArea()
+                     << "). Connectivity Changed.\n";
+                return false;
+            }
+            mazeNetEnd(net);
+            net->addNumReroutes();
+        }
+        if (isEnableDRC()) {
+            route_drc();
+        }
+        return true;
+    };
+
+    auto copySymmetryNets = [&]() -> bool {
+        cout << "DR symmetry worker flow: copy" << endl;
+        const auto *symmConstraint = getDesign()->getSymmetryConstraint();
+        if (!symmConstraint) {
+            cout << "DR symmetry worker flow copy: failed (no symmetry constraint)\n";
+            return false;
+        }
+
+        if (initialRerouteNets.empty()) {
+            return true;
+        }
+        initSymmetryRoutingAxis(symmConstraint);
+        for (auto *net : initialRerouteNets) {
+            if (!net) {
+                continue;
+            }
+            auto *frNet = net->getFrNet();
+            if (!frNet || !getDesign()->isSymmetryNet(frNet->getName())) {
+                continue;
+            }
+            markForWriteback(net);
+            set<DRSymmPinAPKey> activeSymmAPMazeIdx;
+            const auto symmRoutingAxisCoord =
+                getSymmetryRoutingAxisCoord(symmConstraint);
+            auto preflightRes = routeNet_runSymmetryPreflight(
+                net, symmConstraint, symmRoutingAxisCoord, activeSymmAPMazeIdx);
+            const bool hasMirrorPinAttachTargets =
+                preflightRes.enableSymmFiltering &&
+                preflightRes.copyPinCnt > 0 &&
+                !preflightRes.mirrorPinPairs.empty();
+            if (!hasMirrorPinAttachTargets) {
+                cout << "DR symmetry copy/attach pin preflight unavailable for net "
+                     << frNet->getName()
+                     << ": copying route body only (copyPins="
+                     << preflightRes.copyPinCnt << ", mirroredPairs="
+                     << preflightRes.mirrorPinPairs.size()
+                     << ", filtering="
+                     << (preflightRes.enableSymmFiltering ? "on" : "off") << ")\n";
+            }
+
+            const auto newObjStartIdx = net->getRouteConnFigs().size();
+            vector<drConnFig *> copiedRouteConnFigs;
+            auto copiedCnt =
+                routeNet_addSymmetricCopies(net, &copiedRouteConnFigs);
+            cout << "DR symmetry post-copy for net " << frNet->getName()
+                 << ": expected copy-intended mirrorPins="
+                 << preflightRes.copyPinCnt
+                 << ", copied path/via = " << copiedCnt.first << "/"
+                 << copiedCnt.second << endl;
+            if (copiedRouteConnFigs.empty()) {
+                cout << "DR symmetry mirror attach for net "
+                     << frNet->getName()
+                     << ": skipped (no copied body source)\n";
+                continue;
+            } else if (hasMirrorPinAttachTargets &&
+                       !routeNet_attachSymmetricMirrorPins(
+                           net, preflightRes.mirrorPinPairs,
+                           copiedRouteConnFigs)) {
+                return false;
+            }
+            routeNet_postRouteAddPathCostFrom(net, newObjStartIdx);
+        }
+        clearSymmetryRoutingEdgePrefs();
+        clearSymmetryRoutingAxis();
+        if (isEnableDRC()) {
+            route_drc();
+        }
+        return true;
+    };
+
+    auto repairTwoSide = [&](vector<drNet *> &routeNets) -> bool {
+        setSymmetryRoutingPrefSource(
+            DRSymmetryRoutingPrefSource::Reference);
+        if (routeNets.empty()) {
+            setSymmetryRoutingPrefSource(
+                DRSymmetryRoutingPrefSource::DefaultAll);
+            return true;
+        }
+        for (auto *net : routeNets) {
+            if (!net) {
+                continue;
+            }
+            const auto *frNet = net->getFrNet();
+            if (!frNet || !getDesign()->isSymmetryNet(frNet->getName())) {
+                continue;
+            }
+            initSymmetryRoutingEdgePrefs(
+                net, DRSymmetryRoutingPrefSource::Reference);
+            clearForReroute(net);
+            markForWriteback(net);
+            mazeNetInit(net);
+            bool isRouted = routeNet(net, false, false);
+            if (!isRouted) {
+                cout << "Fatal error: Maze Route cannot find path ("
+                     << frNet->getName() << ") in (" << getNetRouteArea()
+                     << "). Connectivity Changed.\n";
+                return false;
+            }
+            mazeNetEnd(net);
+            net->addNumReroutes();
+        }
+        setSymmetryRoutingPrefSource(
+            DRSymmetryRoutingPrefSource::DefaultAll);
+        if (isEnableDRC()) {
+            route_drc();
+        }
+        return true;
+    };
+
+    auto repairCopiedMirrorPins = [&](vector<drNet *> &routeNets) -> bool {
+        cout << "DR symmetry worker flow: mirror pin repair" << endl;
+        const auto *symmConstraint = getDesign()->getSymmetryConstraint();
+        if (!symmConstraint) {
+            return false;
+        }
+        initSymmetryRoutingAxis(symmConstraint);
+        const auto axisCoord = getSymmetryRoutingAxisCoord(symmConstraint);
+        int repairedNetCnt = 0;
+        int skippedNetCnt = 0;
+
+        for (auto *net : routeNets) {
+            if (!net) {
+                continue;
+            }
+            auto *frNet = net->getFrNet();
+            if (!frNet || !getDesign()->isSymmetryNet(frNet->getName())) {
+                continue;
+            }
+
+            vector<drConnFig *> copiedRouteConnFigs;
+            for (auto &uConnFig : net->getRouteConnFigs()) {
+                auto *connFig = uConnFig.get();
+                if (connFig->typeId() == drcPathSeg) {
+                    auto *pathSeg = static_cast<drPathSeg *>(connFig);
+                    frPoint bp, ep;
+                    pathSeg->getPoints(bp, ep);
+                    if (isMirrorOnAxis(bp, symmConstraint, axisCoord) ||
+                        isMirrorOnAxis(ep, symmConstraint, axisCoord) ||
+                        isAxisOnAxis(bp, symmConstraint, axisCoord) ||
+                        isAxisOnAxis(ep, symmConstraint, axisCoord)) {
+                        copiedRouteConnFigs.push_back(connFig);
+                    }
+                } else if (connFig->typeId() == drcVia) {
+                    auto *via = static_cast<drVia *>(connFig);
+                    frPoint origin;
+                    via->getOrigin(origin);
+                    if (isMirrorOnAxis(origin, symmConstraint, axisCoord) ||
+                        isAxisOnAxis(origin, symmConstraint, axisCoord)) {
+                        copiedRouteConnFigs.push_back(connFig);
+                    }
+                }
+            }
+
+            vector<pair<drPin *, drPin *>> mirrorPinPairs;
+            for (auto &uPin : net->getPins()) {
+                auto *pin = uPin.get();
+                if (!isRealPin(pin)) {
+                    continue;
+                }
+                bool hasMirrorAP = false;
+                for (auto &uAP : pin->getAccessPatterns()) {
+                    if (!uAP->hasMazeIdx()) {
+                        continue;
+                    }
+                    frPoint apPt;
+                    uAP->getPoint(apPt);
+                    if (symmConstraint->isMirror(apPt)) {
+                        hasMirrorAP = true;
+                        break;
+                    }
+                }
+                if (hasMirrorAP) {
+                    mirrorPinPairs.emplace_back(pin, nullptr);
+                }
+            }
+
+            if (copiedRouteConnFigs.empty() || mirrorPinPairs.empty()) {
+                ++skippedNetCnt;
+                continue;
+            }
+
+            const auto newObjStartIdx = net->getRouteConnFigs().size();
+            if (!routeNet_attachSymmetricMirrorPins(net, mirrorPinPairs,
+                                                    copiedRouteConnFigs)) {
+                cout << "DR symmetry mirror pin repair for net "
+                     << frNet->getName()
+                     << ": skipped local worker attach failure" << endl;
+                ++skippedNetCnt;
+                continue;
+            }
+            routeNet_postRouteAddPathCostFrom(net, newObjStartIdx);
+            markForWriteback(net);
+            ++repairedNetCnt;
+        }
+
+        clearSymmetryRoutingAxis();
+        if (isEnableDRC()) {
+            route_drc();
+        }
+        cout << "DR symmetry mirror pin repair summary: repaired/skipped = "
+             << repairedNetCnt << "/" << skippedNetCnt << endl;
+        return true;
+    };
+
+    bool flowSuccess = false;
+    if (getDRIter() == 0) {
+        cout << "DR symmetry worker flow: single-side route" << endl;
+        flowSuccess = hasSymConstraint && routeSingleSide(initialRerouteNets);
+    }
+    if (getDRIter() == 1) {
+        cout << "DR symmetry worker flow: single-side repair" << endl;
+        flowSuccess = hasSymConstraint && routeSingleSide(initialRerouteNets);
+    }
+    if (getDRIter() == 2) {
+        flowSuccess = hasSymConstraint && copySymmetryNets();
+    }
+    if (getDRIter() == 3) {
+        flowSuccess = hasSymConstraint &&
+                      repairCopiedMirrorPins(initialRerouteNets);
+    }
+    if (getDRIter() > 3) {
+        cout << "DR symmetry worker flow: two-side repair" << endl;
+        flowSuccess = hasSymConstraint && repairTwoSide(initialRerouteNets);
+    }
+
+    if (!flowSuccess) {
+        clearSymmetryRoutingPrefSource();
+        clearSymmetryRoutingEdgePrefs();
+        clearSymmetryRoutingAxis();
+        return false;
+    }
+
+    clearSymmetryRoutingPrefSource();
+    clearSymmetryRoutingEdgePrefs();
+    clearSymmetryRoutingAxis();
+
+    for (auto &net : nets) {
+        net->setBestRouteConnFigs();
+    }
+    setBestMarkers();
+
+    return true;
+}
+
 void FlexDRWorker::route() {
     // bool enableOutput = true;
     bool enableOutput = false;
@@ -3400,6 +4258,31 @@ void FlexDRWorker::route() {
         for (int i = 0; i < mazeEndIter; ++i) {
             if (!mazeIterInit(i, rerouteNets)) {
                 return;
+            }
+            if (getDesign()->hasSymmetryConstraint()) {
+                vector<drNet *> symmetryRerouteNets;
+                vector<drNet *> nonSymmetryRerouteNets;
+                symmetryRerouteNets.reserve(rerouteNets.size());
+                nonSymmetryRerouteNets.reserve(rerouteNets.size());
+                for (auto *net : rerouteNets) {
+                    if (net->getFrNet() &&
+                        getDesign()->isSymmetryNet(
+                            net->getFrNet()->getName())) {
+                        symmetryRerouteNets.push_back(net);
+                    } else {
+                        nonSymmetryRerouteNets.push_back(net);
+                    }
+                }
+                if (!symmetryRerouteNets.empty()) {
+                    if (!routeSymmetryWorkerFlow(symmetryRerouteNets)) {
+                        cout << "Fatal error: Symmetry worker flow failed ("
+                             << "connectivity changed).\n";
+                        exit(1);
+                    }
+                }
+                if (!symmetryRerouteNets.empty()) {
+                    rerouteNets = std::move(nonSymmetryRerouteNets);
+                }
             }
             // minAreaVios.clear();
             // if (i == 0) {
@@ -3572,21 +4455,32 @@ void FlexDRWorker::route() {
     }
 }
 
-void FlexDRWorker::routeNet_prep(drNet* net, set<drPin*, frBlockObjectComp> &unConnPins, 
-                                 map<FlexMazeIdx, set<drPin*, frBlockObjectComp> > &mazeIdx2unConnPins,
-                                 set<FlexMazeIdx> &apMazeIdx,
-                                 set<FlexMazeIdx> &realPinAPMazeIdx/*,
-                                 map<FlexMazeIdx, frViaDef*> &apSVia*/) {
+void FlexDRWorker::routeNet_prep(
+    drNet *net, set<drPin *, frBlockObjectComp> &unConnPins,
+    map<FlexMazeIdx, set<drPin *, frBlockObjectComp>> &mazeIdx2unConnPins,
+    set<FlexMazeIdx> &apMazeIdx,
+    set<FlexMazeIdx> &realPinAPMazeIdx,
+    const set<DRSymmPinAPKey> *activeSymmAPMazeIdx) {
     // bool enableOutput = true;
     bool enableOutput = false;
+    bool useSymmFilter = activeSymmAPMazeIdx != nullptr;
     for (auto &pin : net->getPins()) {
+        if (!useSymmFilter) {
+            unConnPins.insert(pin.get());
+        }
         if (enableOutput) {
             cout << "pin set target@";
         }
-        unConnPins.insert(pin.get());
+        bool hasActiveAP = false;
         for (auto &ap : pin->getAccessPatterns()) {
             FlexMazeIdx mi;
             ap->getMazeIdx(mi);
+            if (activeSymmAPMazeIdx &&
+                activeSymmAPMazeIdx->find({pin.get(), mi}) ==
+                    activeSymmAPMazeIdx->end()) {
+                continue;
+            }
+            hasActiveAP = true;
             mazeIdx2unConnPins[mi].insert(pin.get());
             if (pin->hasFrTerm()) {
                 realPinAPMazeIdx.insert(mi);
@@ -3609,6 +4503,9 @@ void FlexDRWorker::routeNet_prep(drNet* net, set<drPin*, frBlockObjectComp> &unC
                      << ")";
             }
         }
+        if (hasActiveAP && useSymmFilter) {
+            unConnPins.insert(pin.get());
+        }
         if (enableOutput) {
             cout << endl;
         }
@@ -3619,9 +4516,17 @@ void FlexDRWorker::routeNet_setSrc(
     set<drPin *, frBlockObjectComp> &unConnPins,
     map<FlexMazeIdx, set<drPin *, frBlockObjectComp>> &mazeIdx2unConnPins,
     vector<FlexMazeIdx> &connComps, FlexMazeIdx &ccMazeIdx1,
-    FlexMazeIdx &ccMazeIdx2, frPoint &centerPt) {
+    FlexMazeIdx &ccMazeIdx2, frPoint &centerPt,
+    const set<DRSymmPinAPKey> *activeSymmAPMazeIdx) {
+    auto ignoreAP = [&](drPin *pin, const FlexMazeIdx &mi) -> bool {
+        return activeSymmAPMazeIdx != nullptr &&
+               activeSymmAPMazeIdx->find({pin, mi}) ==
+                   activeSymmAPMazeIdx->end();
+    };
+
     frMIdx xDim, yDim, zDim;
     gridGraph.getDim(xDim, yDim, zDim);
+    (void) zDim;
     ccMazeIdx1.set(xDim - 1, yDim - 1, zDim - 1);
     ccMazeIdx2.set(0, 0, 0);
     // first pin selection algorithm goes here
@@ -3633,9 +4538,16 @@ void FlexDRWorker::routeNet_setSrc(
     frCoord totZ = 0;
     FlexMazeIdx mi;
     frPoint bp;
+    drPin *currPin = nullptr;
     for (auto &pin : unConnPins) {
+        if (currPin) {
+            break;
+        }
         for (auto &ap : pin->getAccessPatterns()) {
             ap->getMazeIdx(mi);
+            if (ignoreAP(pin, mi)) {
+                continue;
+            }
             ap->getPoint(bp);
             totX += bp.x();
             totY += bp.y();
@@ -3645,15 +4557,20 @@ void FlexDRWorker::routeNet_setSrc(
             break;
         }
     }
-    totX /= totAPCnt;
-    totY /= totAPCnt;
-    totZ /= totAPCnt;
-    centerPt.set(centerPt.x() / totAPCnt, centerPt.y() / totAPCnt);
+    if (totAPCnt > 0) {
+        totX /= totAPCnt;
+        totY /= totAPCnt;
+        totZ /= totAPCnt;
+        centerPt.set(centerPt.x() / totAPCnt, centerPt.y() / totAPCnt);
+    } else {
+        if (!unConnPins.empty()) {
+            currPin = *unConnPins.begin();
+        }
+    }
 
     // frCoord currDist = std::numeric_limits<frCoord>::max();
     //  select the farmost pin
 
-    drPin *currPin = nullptr;
     // if (unConnPins.size() == 2) {
     //   int minAPCnt = std::numeric_limits<int>::max();
     //   for (auto &pin: unConnPins) {
@@ -3711,6 +4628,9 @@ void FlexDRWorker::routeNet_setSrc(
         for (auto &pin : unConnPins) {
             for (auto &ap : pin->getAccessPatterns()) {
                 ap->getMazeIdx(mi);
+                if (ignoreAP(pin, mi)) {
+                    continue;
+                }
                 ap->getPoint(bp);
                 frCoord dist = abs(totX - bp.x()) + abs(totY - bp.y()) +
                                abs(totZ - gridGraph.getZHeight(mi.z()));
@@ -3754,6 +4674,9 @@ void FlexDRWorker::routeNet_setSrc(
     //  first pin selection algorithm ends here
     for (auto &ap : currPin->getAccessPatterns()) {
         ap->getMazeIdx(mi);
+        if (ignoreAP(currPin, mi)) {
+            continue;
+        }
         connComps.push_back(mi);
         ccMazeIdx1.set(min(ccMazeIdx1.x(), mi.x()), min(ccMazeIdx1.y(), mi.y()),
                        min(ccMazeIdx1.z(), mi.z()));
@@ -4161,9 +5084,9 @@ void FlexDRWorker::routeNet_postAstarWritePath(drNet* net, vector<FlexMazeIdx> &
                 FlexMazeIdx mi(startX, startY, currZ);
                 auto cutLayerDefaultVia =
                     getTech()->getLayer(startLayerNum + 1)->getDefaultViaDef();
-                if (gridGraph.isSVia(startX, startY, currZ)) {
-                    cutLayerDefaultVia =
-                        apSVia.find(mi)->second->getAccessViaDef();
+                auto it = apSVia.find(mi);
+                if (it != apSVia.end()) {
+                    cutLayerDefaultVia = it->second->getAccessViaDef();
                 }
                 auto currVia = make_unique<drVia>(cutLayerDefaultVia);
                 currVia->setOrigin(loc);
@@ -4207,12 +5130,396 @@ void FlexDRWorker::routeNet_postRouteAddPathCost(drNet *net) {
     // cout <<"updated " <<cnt <<" connfig costs" <<endl;
 }
 
-void FlexDRWorker::routeNet_prepAreaMap(drNet *net,
-                                        map<FlexMazeIdx, frCoord> &areaMap) {
+void FlexDRWorker::routeNet_postRouteAddPathCostFrom(drNet *net,
+                                                    size_t startIdx) {
+    for (size_t i = startIdx; i < net->getRouteConnFigs().size(); ++i) {
+        addPathCost(net->getRouteConnFigs()[i].get());
+    }
+}
+
+void FlexDRWorker::setSymmetryRoutingPrefSource(
+    DRSymmetryRoutingPrefSource source) {
+    symmRoutingEdgePrefSource = source;
+}
+
+void FlexDRWorker::clearSymmetryRoutingPrefSource() {
+    symmRoutingEdgePrefSource = DRSymmetryRoutingPrefSource::DefaultAll;
+}
+
+void FlexDRWorker::clearSymmetryRoutingEdgePrefs() {
+    enableSymmRoutingEdgePref = false;
+    symmRoutingEdgePrefs.clear();
+}
+
+void FlexDRWorker::initSymmetryRoutingAxis(
+    const frSymmetryConstraint *constraint) {
+    clearSymmetryRoutingAxis();
+    if (!constraint) {
+        return;
+    }
+
+    const auto geomAxisCoord = constraint->getAxisCoord();
+    const auto referenceIsHigh =
+        constraint->getReferenceSide() == frSymmetryReferenceSideEnum::High;
+    frCoord bestAxisCoord = geomAxisCoord;
+    bool found = false;
+    auto isBetterCandidate =
+        [&](frCoord candidate, frCoord currentBest) -> bool {
+        const auto candDist =
+            llabs((long long)candidate - (long long)geomAxisCoord);
+        const auto bestDist =
+            llabs((long long)currentBest - (long long)geomAxisCoord);
+        if (candDist < bestDist) {
+            return true;
+        }
+        if (candDist > bestDist) {
+            return false;
+        }
+        if (referenceIsHigh) {
+            return candidate >= geomAxisCoord && currentBest < geomAxisCoord;
+        }
+        return candidate <= geomAxisCoord && currentBest > geomAxisCoord;
+    };
+
+    for (auto lNum = getTech()->getBottomLayerNum();
+         lNum <= getTech()->getTopLayerNum(); ++lNum) {
+        for (auto &trackPattern :
+             getDesign()->getTopBlock()->getTrackPatterns(lNum)) {
+            const bool isAxisCoordPattern =
+                constraint->getAxisDir() == frSymmetryAxisEnum::Horizontal
+                    ? !trackPattern->isHorizontal()
+                    : trackPattern->isHorizontal();
+            if (!isAxisCoordPattern || trackPattern->getNumTracks() == 0 ||
+                trackPattern->getTrackSpacing() == 0) {
+                continue;
+            }
+            const auto startCoord = trackPattern->getStartCoord();
+            const auto spacing = (frCoord)trackPattern->getTrackSpacing();
+            frCoord trackNum = (geomAxisCoord - startCoord) / spacing;
+            if (trackNum < 0) {
+                trackNum = 0;
+            }
+            if (trackNum >= (frCoord)trackPattern->getNumTracks()) {
+                trackNum = trackPattern->getNumTracks() - 1;
+            }
+            const frCoord candidateNums[] = {trackNum, trackNum + 1};
+            for (auto candidateNum : candidateNums) {
+                if (candidateNum < 0 ||
+                    candidateNum >= (frCoord)trackPattern->getNumTracks()) {
+                    continue;
+                }
+                const auto candidateCoord =
+                    startCoord + candidateNum * spacing;
+                if (!found ||
+                    isBetterCandidate(candidateCoord, bestAxisCoord)) {
+                    bestAxisCoord = candidateCoord;
+                    found = true;
+                }
+            }
+        }
+    }
+
+    symmRoutingAxisCoord = found ? bestAxisCoord : geomAxisCoord;
+    hasSymmRoutingAxisCoord = true;
+}
+
+void FlexDRWorker::clearSymmetryRoutingAxis() {
+    hasSymmRoutingAxisCoord = false;
+    symmRoutingAxisCoord = 0;
+}
+
+frCoord FlexDRWorker::getSymmetryRoutingAxisCoord(
+    const frSymmetryConstraint *constraint) const {
+    if (hasSymmRoutingAxisCoord) {
+        return symmRoutingAxisCoord;
+    }
+    return constraint ? constraint->getAxisCoord() : 0;
+}
+
+void FlexDRWorker::initSymmetryRoutingEdgePrefs(
+    drNet *net, DRSymmetryRoutingPrefSource source) {
+    if (source == DRSymmetryRoutingPrefSource::Disabled) {
+        return;
+    }
+    clearSymmetryRoutingEdgePrefs();
+    if (!net || !getDesign() || !getDesign()->hasSymmetryConstraint()) {
+        return;
+    }
+    const auto *constraint = getDesign()->getSymmetryConstraint();
+    if (!constraint || !getDesign()->isSymmetryNet(net->getFrNet()->getName())) {
+        return;
+    }
+    const auto axisCoord = getSymmetryRoutingAxisCoord(constraint);
+
+    auto isReferenceOrAxisSide = [&](const frPoint &pt) {
+        return isReferenceOnAxis(pt, constraint, axisCoord) ||
+               isAxisOnAxis(pt, constraint, axisCoord);
+    };
+    auto isMirrorOrAxisSide = [&](const frPoint &pt) {
+        return isMirrorOnAxis(pt, constraint, axisCoord) ||
+               isAxisOnAxis(pt, constraint, axisCoord);
+    };
+    auto isSourceSideEdge = [&](const frPoint &uPt, const frPoint &vPt) {
+        bool uOnSource = false;
+        bool vOnSource = false;
+        bool uOnOpposite = false;
+        bool vOnOpposite = false;
+        if (source == DRSymmetryRoutingPrefSource::Reference) {
+            uOnSource = isReferenceOrAxisSide(uPt);
+            vOnSource = isReferenceOrAxisSide(vPt);
+            uOnOpposite = isMirrorOnAxis(uPt, constraint, axisCoord);
+            vOnOpposite = isMirrorOnAxis(vPt, constraint, axisCoord);
+        } else if (source == DRSymmetryRoutingPrefSource::Mirror) {
+            uOnSource = isMirrorOrAxisSide(uPt);
+            vOnSource = isMirrorOrAxisSide(vPt);
+            uOnOpposite = isReferenceOnAxis(uPt, constraint, axisCoord);
+            vOnOpposite = isReferenceOnAxis(vPt, constraint, axisCoord);
+        } else {
+            return true;
+        }
+        if (!uOnSource && !vOnSource) {
+            return false;
+        }
+        // Prefer the side that is the source; skip edges that lie fully on the
+        // opposite side.
+        if (uOnOpposite && vOnOpposite) {
+            return false;
+        }
+        return true;
+    };
+
+    auto addEdgeToPreference = [&](const FlexMazeIdx &uIn,
+                                  const FlexMazeIdx &vIn) {
+        const auto edge = makeSymmetryPrefEdge(uIn, vIn);
+        symmRoutingEdgePrefs.insert(edge);
+
+        frPoint uPt, vPt;
+        gridGraph.getPoint(uPt, uIn.x(), uIn.y());
+        gridGraph.getPoint(vPt, vIn.x(), vIn.y());
+        const auto uLayerNum = gridGraph.getLayerNum(uIn.z());
+        const auto vLayerNum = gridGraph.getLayerNum(vIn.z());
+        const auto mirroredUPt =
+            getMirroredPointOnAxis(uPt, constraint, axisCoord);
+        const auto mirroredVPt =
+            getMirroredPointOnAxis(vPt, constraint, axisCoord);
+        if (gridGraph.hasMazeIdx(mirroredUPt, uLayerNum) &&
+            gridGraph.hasMazeIdx(mirroredVPt, vLayerNum)) {
+            FlexMazeIdx mu, mv;
+            gridGraph.getMazeIdx(mu, mirroredUPt, uLayerNum);
+            gridGraph.getMazeIdx(mv, mirroredVPt, vLayerNum);
+            symmRoutingEdgePrefs.insert(makeSymmetryPrefEdge(mu, mv));
+        }
+    };
+
+    auto addPathSegEdgeSet = [&](const FlexMazeIdx &u, const FlexMazeIdx &v) {
+        if (u.z() == v.z()) {
+            if (u.x() != v.x() && u.y() == v.y()) {
+                const auto baseY = u.y();
+                const auto zIdx = u.z();
+                const auto startX = min(u.x(), v.x());
+                const auto endX = max(u.x(), v.x());
+                for (auto x = startX; x < endX; ++x) {
+                    addEdgeToPreference(FlexMazeIdx(x, baseY, zIdx),
+                                        FlexMazeIdx(x + 1, baseY, zIdx));
+                }
+            } else if (u.x() == v.x() && u.y() != v.y()) {
+                const auto baseX = u.x();
+                const auto zIdx = u.z();
+                const auto startY = min(u.y(), v.y());
+                const auto endY = max(u.y(), v.y());
+                for (auto y = startY; y < endY; ++y) {
+                    addEdgeToPreference(FlexMazeIdx(baseX, y, zIdx),
+                                        FlexMazeIdx(baseX, y + 1, zIdx));
+                }
+            }
+        } else if (u.x() == v.x() && u.y() == v.y()) {
+            const auto baseX = u.x();
+            const auto baseY = u.y();
+            const auto startZ = min(u.z(), v.z());
+            const auto endZ = max(u.z(), v.z());
+            for (auto z = startZ; z < endZ; ++z) {
+                addEdgeToPreference(FlexMazeIdx(baseX, baseY, z),
+                                    FlexMazeIdx(baseX, baseY, z + 1));
+            }
+        }
+    };
+
+    for (auto &connFig : net->getRouteConnFigs()) {
+        if (connFig->typeId() == drcPathSeg) {
+            auto pathSeg = static_cast<drPathSeg *>(connFig.get());
+            if (!pathSeg->hasMazeIdx()) {
+                continue;
+            }
+            FlexMazeIdx bi, ei;
+            pathSeg->getMazeIdx(bi, ei);
+            frPoint bp, ep;
+            gridGraph.getPoint(bp, bi.x(), bi.y());
+            gridGraph.getPoint(ep, ei.x(), ei.y());
+            if (!isSourceSideEdge(bp, ep)) {
+                continue;
+            }
+            addPathSegEdgeSet(bi, ei);
+        } else if (connFig->typeId() == drcVia) {
+            auto via = static_cast<drVia *>(connFig.get());
+            if (!via->hasMazeIdx()) {
+                continue;
+            }
+            FlexMazeIdx bi, ei;
+            via->getMazeIdx(bi, ei);
+            frPoint viaPt;
+            gridGraph.getPoint(viaPt, bi.x(), bi.y());
+            if (!isSourceSideEdge(viaPt, viaPt)) {
+                continue;
+            }
+            addPathSegEdgeSet(bi, ei);
+        }
+    }
+
+    enableSymmRoutingEdgePref = !symmRoutingEdgePrefs.empty();
+}
+
+bool FlexDRWorker::isSymmetryRoutingCostEnabled() const {
+    return hasSymmRoutingAxisCoord && getDesign() &&
+           getDesign()->hasSymmetryConstraint();
+}
+
+bool FlexDRWorker::isSymmetryRoutingPreferredEdge(const FlexMazeIdx &u,
+                                                 const FlexMazeIdx &v) const {
+    if (!enableSymmRoutingEdgePref) {
+        return false;
+    }
+    const auto edge = makeSymmetryPrefEdge(u, v);
+    return symmRoutingEdgePrefs.find(edge) != symmRoutingEdgePrefs.end();
+}
+
+bool FlexDRWorker::isSymmetryRoutingAxisEdge(const FlexMazeIdx &u,
+                                            const FlexMazeIdx &v) const {
+    if (!isSymmetryRoutingCostEnabled()) {
+        return false;
+    }
+
+    const auto *constraint = getDesign()->getSymmetryConstraint();
+    if (!constraint) {
+        return false;
+    }
+    frPoint uPt, vPt;
+    gridGraph.getPoint(uPt, u.x(), u.y());
+    gridGraph.getPoint(vPt, v.x(), v.y());
+    const auto axisCoord = getSymmetryRoutingAxisCoord(constraint);
+
+    if (constraint->getAxisDir() == frSymmetryAxisEnum::Horizontal) {
+        auto uRel = uPt.y() - axisCoord;
+        auto vRel = vPt.y() - axisCoord;
+        auto isSameY = (uPt.y() == vPt.y());
+        auto hasAxisTrackStep = [&](frCoord trackCoord) {
+            frCoord nearestStep = 0;
+            frCoord upperStep = 0;
+            frCoord lowerStep = 0;
+
+            if (gridGraph.hasEdge(u.x(), u.y(), u.z(), frDirEnum::N)) {
+                frPoint upperPt;
+                gridGraph.getPoint(upperPt, u.x(), u.y() + 1);
+                upperStep = upperPt.y() - uPt.y();
+                if (upperStep < 0) {
+                    upperStep = -upperStep;
+                }
+            }
+            if (gridGraph.hasEdge(u.x(), u.y(), u.z(), frDirEnum::S)) {
+                frPoint lowerPt;
+                gridGraph.getPoint(lowerPt, u.x(), u.y() - 1);
+                lowerStep = uPt.y() - lowerPt.y();
+                if (lowerStep < 0) {
+                    lowerStep = -lowerStep;
+                }
+            }
+            if (upperStep && lowerStep) {
+                nearestStep = min(upperStep, lowerStep);
+            } else if (upperStep) {
+                nearestStep = upperStep;
+            } else {
+                nearestStep = lowerStep;
+            }
+            if (nearestStep == 0) {
+                return trackCoord == axisCoord;
+            }
+            return abs(trackCoord - axisCoord) <= nearestStep / 2;
+        };
+
+        return (static_cast<long long>(uRel) * static_cast<long long>(vRel) <=
+                0) ||
+               (isSameY && hasAxisTrackStep(uPt.y()));
+    }
+    auto uRel = uPt.x() - axisCoord;
+    auto vRel = vPt.x() - axisCoord;
+    auto isSameX = (uPt.x() == vPt.x());
+    auto hasAxisTrackStep = [&](frCoord trackCoord) {
+        frCoord nearestStep = 0;
+        frCoord rightStep = 0;
+        frCoord leftStep = 0;
+
+        if (gridGraph.hasEdge(u.x(), u.y(), u.z(), frDirEnum::E)) {
+            frPoint rightPt;
+            gridGraph.getPoint(rightPt, u.x() + 1, u.y());
+            rightStep = rightPt.x() - uPt.x();
+            if (rightStep < 0) {
+                rightStep = -rightStep;
+            }
+        }
+        if (gridGraph.hasEdge(u.x(), u.y(), u.z(), frDirEnum::W)) {
+            frPoint leftPt;
+            gridGraph.getPoint(leftPt, u.x() - 1, u.y());
+            leftStep = uPt.x() - leftPt.x();
+            if (leftStep < 0) {
+                leftStep = -leftStep;
+            }
+        }
+        if (rightStep && leftStep) {
+            nearestStep = min(rightStep, leftStep);
+        } else if (rightStep) {
+            nearestStep = rightStep;
+        } else {
+            nearestStep = leftStep;
+        }
+        if (nearestStep == 0) {
+            return trackCoord == axisCoord;
+        }
+        return abs(trackCoord - axisCoord) <= nearestStep / 2;
+    };
+
+    return (static_cast<long long>(uRel) * static_cast<long long>(vRel) <= 0) ||
+           (isSameX && hasAxisTrackStep(uPt.x()));
+}
+
+bool FlexDRWorker::isSingleSideSymmetryEdgeForbidden(
+    const FlexMazeIdx &u, const FlexMazeIdx &v) const {
+    if (!isSingleSideRoutingEnabled() || !isSymmetryRoutingCostEnabled()) {
+        return false;
+    }
+    const auto *constraint = getDesign()->getSymmetryConstraint();
+    if (!constraint) {
+        return false;
+    }
+
+    frPoint uPt, vPt;
+    gridGraph.getPoint(uPt, u.x(), u.y());
+    gridGraph.getPoint(vPt, v.x(), v.y());
+    const auto axisCoord = getSymmetryRoutingAxisCoord(constraint);
+    return isMirrorOnAxis(uPt, constraint, axisCoord) ||
+           isMirrorOnAxis(vPt, constraint, axisCoord);
+}
+
+void FlexDRWorker::routeNet_prepAreaMap(
+    drNet *net, map<FlexMazeIdx, frCoord> &areaMap,
+    const set<DRSymmPinAPKey> *activeSymmAPMazeIdx) {
     FlexMazeIdx mIdx;
     for (auto &pin : net->getPins()) {
         for (auto &ap : pin->getAccessPatterns()) {
             ap->getMazeIdx(mIdx);
+            if (activeSymmAPMazeIdx &&
+                activeSymmAPMazeIdx->find({pin.get(), mIdx}) ==
+                    activeSymmAPMazeIdx->end()) {
+                continue;
+            }
             auto it = areaMap.find(mIdx);
             if (it != areaMap.end()) {
                 it->second = max(it->second, ap->getBeginArea());
@@ -4223,10 +5530,844 @@ void FlexDRWorker::routeNet_prepAreaMap(drNet *net,
     }
 }
 
-bool FlexDRWorker::routeNet(drNet *net) {
+pair<int, int> FlexDRWorker::routeNet_addSymmetricCopies(
+    drNet *net, vector<drConnFig *> *copiedRouteConnFigs) {
+    if (!getDesign()->hasSymmetryConstraint()) {
+        return {0, 0};
+    }
+    if (!getDesign()->isSymmetryNet(net->getFrNet()->getName())) {
+        return {0, 0};
+    }
+    const auto &netName = net->getFrNet()->getName();
+
+    int scannedPathCnt = 0;
+    int scannedViaCnt = 0;
+    int refPathCnt = 0;
+    int refViaCnt = 0;
+    int skipDupPathCnt = 0;
+    int skipDupViaCnt = 0;
+    int skipBoxPathCnt = 0;
+    int skipBoxViaCnt = 0;
+    int copiedPathCnt = 0;
+    int copiedViaCnt = 0;
+    auto constraint = getDesign()->getSymmetryConstraint();
+    auto &routeConnFigs = net->getRouteConnFigs();
+    std::vector<drConnFig*> existingRouteConnFigs;
+    existingRouteConnFigs.reserve(routeConnFigs.size());
+    for (auto &connFig : routeConnFigs) {
+        existingRouteConnFigs.push_back(connFig.get());
+    }
+    set<DRPathSegmentSymmetryKey> segmentKeys;
+    set<DRViaSymmetryKey> viaKeys;
+    auto &workerRegionQuery = getWorkerRegionQuery();
+
+    const auto bottomLayerNum = getDesign()->getTech()->getBottomLayerNum();
+    auto hasLayerMinSpacing = [&](frLayerNum lNum) -> bool {
+        return getDesign()->getTech()->getLayer(lNum)->getMinSpacing() !=
+               nullptr;
+    };
+    auto isRoutingLayer = [&](frLayerNum lNum) -> bool {
+        return lNum > bottomLayerNum && hasLayerMinSpacing(lNum);
+    };
+    auto isCopyLayer = isRoutingLayer;
+    const auto axisCoord = getSymmetryRoutingAxisCoord(constraint);
+
+    for (auto &connFig : existingRouteConnFigs) {
+        if (connFig->typeId() == drcPathSeg) {
+            auto pathSeg = static_cast<drPathSeg *>(connFig);
+            if (!isCopyLayer(pathSeg->getLayerNum())) {
+                continue;
+            }
+            ++scannedPathCnt;
+            frPoint bp, ep;
+            pathSeg->getPoints(bp, ep);
+            segmentKeys.insert(
+                makeMirroredPathKey(pathSeg->getLayerNum(), bp, ep));
+        } else if (connFig->typeId() == drcVia) {
+            auto via = static_cast<drVia *>(connFig);
+            if (!hasLayerMinSpacing(via->getViaDef()->getLayer1Num()) ||
+                !hasLayerMinSpacing(via->getViaDef()->getLayer2Num()) ||
+                !isCopyLayer(via->getViaDef()->getLayer1Num()) ||
+                !isCopyLayer(via->getViaDef()->getLayer2Num())) {
+                continue;
+            }
+            ++scannedViaCnt;
+            frPoint origin;
+            via->getOrigin(origin);
+            viaKeys.insert(makeViaKey(via->getViaDef(), origin));
+        }
+    }
+
+    for (auto &connFig : existingRouteConnFigs) {
+        if (connFig->typeId() == drcPathSeg) {
+            auto pathSeg = static_cast<drPathSeg *>(connFig);
+            if (!isCopyLayer(pathSeg->getLayerNum())) {
+                continue;
+            }
+            frPoint bp, ep;
+            pathSeg->getPoints(bp, ep);
+            if (isMirrorOnAxis(bp, constraint, axisCoord) ||
+                isMirrorOnAxis(ep, constraint, axisCoord)) {
+                continue;
+            }
+            if (!isReferenceOnAxis(bp, constraint, axisCoord) &&
+                !isReferenceOnAxis(ep, constraint, axisCoord)) {
+                continue;
+            }
+            ++refPathCnt;
+
+            frPoint mirroredBp = getMirroredPointOnAxis(bp, constraint, axisCoord);
+            frPoint mirroredEp = getMirroredPointOnAxis(ep, constraint, axisCoord);
+            frSegStyle mirroredStyle;
+            pathSeg->getStyle(mirroredStyle);
+            bool reversed = mirroredEp < mirroredBp;
+            if (reversed) {
+                swap(mirroredBp, mirroredEp);
+            }
+            swapPathSegmentStyles(mirroredStyle, reversed);
+            DRPathSegmentSymmetryKey mirroredKey =
+                makeMirroredPathKey(pathSeg->getLayerNum(), mirroredBp,
+                                    mirroredEp);
+            if (segmentKeys.find(mirroredKey) != segmentKeys.end()) {
+                ++skipDupPathCnt;
+                continue;
+            }
+            if (!getExtBox().contains(mirroredBp)
+                || !getExtBox().contains(mirroredEp)) {
+                ++skipBoxPathCnt;
+                continue;
+            }
+
+            auto currPathSeg = make_unique<drPathSeg>(*pathSeg);
+            currPathSeg->setPoints(mirroredBp, mirroredEp);
+            currPathSeg->setStyle(mirroredStyle);
+            auto *currPathSegPtr = currPathSeg.get();
+            initMazeIdx_connFig(currPathSegPtr);
+            segmentKeys.insert(mirroredKey);
+
+            unique_ptr<drConnFig> tmp(std::move(currPathSeg));
+            workerRegionQuery.add(tmp.get());
+            net->addRoute(tmp);
+            if (copiedRouteConnFigs) {
+                copiedRouteConnFigs->push_back(currPathSegPtr);
+            }
+            ++copiedPathCnt;
+        } else if (connFig->typeId() == drcVia) {
+            auto via = static_cast<drVia *>(connFig);
+            if (!hasLayerMinSpacing(via->getViaDef()->getLayer1Num()) ||
+                !hasLayerMinSpacing(via->getViaDef()->getLayer2Num()) ||
+                !isCopyLayer(via->getViaDef()->getLayer1Num()) ||
+                !isCopyLayer(via->getViaDef()->getLayer2Num())) {
+                continue;
+            }
+            frPoint origin;
+            via->getOrigin(origin);
+            if (!isReferenceOnAxis(origin, constraint, axisCoord)) {
+                continue;
+            }
+            ++refViaCnt;
+            frPoint mirroredOrigin = getMirroredPointOnAxis(origin, constraint,
+                                                           axisCoord);
+            if (!getExtBox().contains(mirroredOrigin)) {
+                ++skipBoxViaCnt;
+                continue;
+            }
+
+            auto mirroredViaKey =
+                makeMirroredViaKey(via->getViaDef(), origin, constraint,
+                                   axisCoord);
+            if (viaKeys.find(mirroredViaKey) != viaKeys.end()) {
+                ++skipDupViaCnt;
+                continue;
+            }
+
+            auto currVia = make_unique<drVia>(*via);
+            currVia->setOrigin(mirroredOrigin);
+            viaKeys.insert(mirroredViaKey);
+            auto *currViaPtr = currVia.get();
+            initMazeIdx_connFig(currViaPtr);
+
+            unique_ptr<drConnFig> tmp(std::move(currVia));
+            workerRegionQuery.add(tmp.get());
+            net->addRoute(tmp);
+            if (copiedRouteConnFigs) {
+                copiedRouteConnFigs->push_back(currViaPtr);
+            }
+            ++copiedViaCnt;
+        }
+    }
+
+    cout << "DR symmetry copy for net " << netName << ": scanned path/via = "
+         << scannedPathCnt << "/" << scannedViaCnt
+         << ", ref path/via = " << refPathCnt << "/" << refViaCnt
+         << ", copied path/via = " << copiedPathCnt << "/" << copiedViaCnt
+         << ", skip duplicate = " << skipDupPathCnt << "/" << skipDupViaCnt
+         << ", skip box = " << skipBoxPathCnt << "/" << skipBoxViaCnt
+         << endl;
+    return {copiedPathCnt, copiedViaCnt};
+}
+
+bool FlexDRWorker::routeNet_attachSymmetricMirrorPins(
+    drNet *net, const vector<pair<drPin *, drPin *>> &mirrorPinPairs,
+    const vector<drConnFig *> &copiedRouteConnFigs) {
+    const auto &netName = net->getFrNet()->getName();
+    const auto *constraint = getDesign()->getSymmetryConstraint();
+    if (!constraint) {
+        cout << "DR symmetry mirror attach for net " << netName
+             << ": failed (no symmetry constraint)" << endl;
+        return false;
+    }
+
+    set<drPin *, frBlockObjectComp> unConnPins;
+    map<FlexMazeIdx, set<drPin *, frBlockObjectComp>> mazeIdx2unConnPins;
+    set<FlexMazeIdx> mirrorRealPinAPMazeIdx;
+    struct PinAP {
+        FlexMazeIdx mi;
+        drAccessPattern *ap;
+    };
+    map<drPin *, vector<PinAP>, frBlockObjectComp> mirrorRealPinAPMap;
+    map<FlexMazeIdx, frCoord> mirrorAreaMap;
+
+    gridGraph.resetSrc();
+    gridGraph.resetDst();
+
+    for (auto &mirrorPair : mirrorPinPairs) {
+        auto *mirrorPin = mirrorPair.first;
+        if (!mirrorPin) {
+            continue;
+        }
+        for (auto &ap : mirrorPin->getAccessPatterns()) {
+            if (!ap->hasMazeIdx()) {
+                continue;
+            }
+            frPoint apPt;
+            ap->getPoint(apPt);
+            if (!constraint->isMirror(apPt) && !constraint->isAxis(apPt)) {
+                continue;
+            }
+            FlexMazeIdx mi;
+            ap->getMazeIdx(mi);
+            unConnPins.insert(mirrorPin);
+            mazeIdx2unConnPins[mi].insert(mirrorPin);
+            mirrorRealPinAPMazeIdx.insert(mi);
+            mirrorRealPinAPMap[mirrorPin].push_back({mi, ap.get()});
+            auto areaVal = ap->getBeginArea();
+            if (mirrorAreaMap.find(mi) == mirrorAreaMap.end() ||
+                areaVal > mirrorAreaMap[mi]) {
+                mirrorAreaMap[mi] = areaVal;
+            }
+            gridGraph.setDst(mi);
+        }
+    }
+
+    const int targetPinCnt = static_cast<int>(unConnPins.size());
+    if (targetPinCnt == 0) {
+        cout << "DR symmetry mirror attach for net " << netName
+             << ": failed (no paired mirror real pin AP found)" << endl;
+        return false;
+    }
+
+    vector<FlexMazeIdx> connComps;
+    frPoint centerPt(0, 0);
+    FlexMazeIdx ccMazeIdx1;
+    FlexMazeIdx ccMazeIdx2;
+    set<FlexMazeIdx> connCompSet;
+    set<FlexMazeIdx> copiedSourceSet;
+    set<FlexMazeIdx> existingSourceSet;
+    frCoord centerX = 0;
+    frCoord centerY = 0;
+    int sourceGridCnt = 0;
+
+    frMIdx xDim, yDim, zDim;
+    gridGraph.getDim(xDim, yDim, zDim);
+    ccMazeIdx1.set(xDim - 1, yDim - 1, zDim - 1);
+    ccMazeIdx2.set(0, 0, 0);
+
+    auto addSource = [&](const FlexMazeIdx &idx, set<FlexMazeIdx> &sourceSet,
+                         bool isActiveSource) {
+        if (mazeIdx2unConnPins.find(idx) != mazeIdx2unConnPins.end()) {
+            return;
+        }
+        if (!sourceSet.insert(idx).second) {
+            return;
+        }
+        if (!isActiveSource || !connCompSet.insert(idx).second) {
+            return;
+        }
+        connComps.push_back(idx);
+        ccMazeIdx1.set(min(ccMazeIdx1.x(), idx.x()),
+                       min(ccMazeIdx1.y(), idx.y()),
+                       min(ccMazeIdx1.z(), idx.z()));
+        ccMazeIdx2.set(max(ccMazeIdx2.x(), idx.x()),
+                       max(ccMazeIdx2.y(), idx.y()),
+                       max(ccMazeIdx2.z(), idx.z()));
+        frPoint pt;
+        gridGraph.getPoint(pt, idx.x(), idx.y());
+        centerX += pt.x();
+        centerY += pt.y();
+        sourceGridCnt++;
+        gridGraph.setSrc(idx);
+    };
+
+    auto collectConnFigMazeIdx = [&](drConnFig *connFig, auto &&addFn) {
+        if (connFig->typeId() == drcPathSeg) {
+            auto pathSeg = static_cast<drPathSeg *>(connFig);
+            if (!pathSeg->hasMazeIdx()) {
+                return;
+            }
+            FlexMazeIdx bi, ei;
+            pathSeg->getMazeIdx(bi, ei);
+            if (bi.x() == ei.x() && bi.y() != ei.y() && bi.z() == ei.z()) {
+                auto yLo = min(bi.y(), ei.y());
+                auto yHi = max(bi.y(), ei.y());
+                for (auto y = yLo; y <= yHi; ++y) {
+                    addFn(FlexMazeIdx(bi.x(), y, bi.z()));
+                }
+            } else if (bi.y() == ei.y() && bi.x() != ei.x() &&
+                       bi.z() == ei.z()) {
+                auto xLo = min(bi.x(), ei.x());
+                auto xHi = max(bi.x(), ei.x());
+                for (auto x = xLo; x <= xHi; ++x) {
+                    addFn(FlexMazeIdx(x, bi.y(), bi.z()));
+                }
+            }
+        } else if (connFig->typeId() == drcVia) {
+            auto via = static_cast<drVia *>(connFig);
+            if (!via->hasMazeIdx()) {
+                return;
+            }
+            FlexMazeIdx bi, ei;
+            via->getMazeIdx(bi, ei);
+            if (bi.x() == ei.x() && bi.y() == ei.y() && bi.z() != ei.z()) {
+                auto zLo = min(bi.z(), ei.z());
+                auto zHi = max(bi.z(), ei.z());
+                for (auto z = zLo; z <= zHi; ++z) {
+                    addFn(FlexMazeIdx(bi.x(), bi.y(), z));
+                }
+            }
+        }
+    };
+
+    for (auto &connFig : copiedRouteConnFigs) {
+        collectConnFigMazeIdx(
+            connFig, [&](const FlexMazeIdx &idx) {
+                addSource(idx, copiedSourceSet, true);
+            });
+    }
+
+    if (sourceGridCnt == 0) {
+        cout << "DR symmetry mirror attach for net " << netName
+             << ": failed (copied body source empty), targets=" << targetPinCnt
+             << endl;
+        return false;
+    }
+
+    set<drConnFig *> copiedConnFigSet(copiedRouteConnFigs.begin(),
+                                      copiedRouteConnFigs.end());
+    for (auto &uConnFig : net->getRouteConnFigs()) {
+        auto *connFig = uConnFig.get();
+        if (copiedConnFigSet.find(connFig) != copiedConnFigSet.end()) {
+            continue;
+        }
+        collectConnFigMazeIdx(
+            connFig, [&](const FlexMazeIdx &idx) {
+                addSource(idx, existingSourceSet, false);
+            });
+    }
+
+    bool needsBridgeRepair = !copiedSourceSet.empty() && !existingSourceSet.empty();
+    if (needsBridgeRepair) {
+        for (auto &idx : copiedSourceSet) {
+            if (existingSourceSet.find(idx) != existingSourceSet.end()) {
+                needsBridgeRepair = false;
+                break;
+            }
+        }
+    }
+
+    centerPt.set(centerX / sourceGridCnt, centerY / sourceGridCnt);
+
+    vector<FlexMazeIdx> path;
+    int routedCnt = 0;
+    int failedCnt = 0;
+    apSVia.clear();
+
+    auto isSameMazeIdx = [](const FlexMazeIdx &lhs,
+                            const FlexMazeIdx &rhs) {
+        return lhs.x() == rhs.x() && lhs.y() == rhs.y() &&
+               lhs.z() == rhs.z();
+    };
+
+    auto isPathDstOnPin = [&](const FlexMazeIdx &pt, drPin *pin) {
+        auto mapIt = mazeIdx2unConnPins.find(pt);
+        if (mapIt == mazeIdx2unConnPins.end()) {
+            return false;
+        }
+        return mapIt->second.find(pin) != mapIt->second.end();
+    };
+
+    auto isPointOnPinTerm = [&](const FlexMazeIdx &pt, drPin *pin) {
+        frPoint dstPt;
+        gridGraph.getPoint(dstPt, pt.x(), pt.y());
+        frLayerNum dstLayer = gridGraph.getLayerNum(pt.z());
+        vector<rq_rptr_value_t<frBlockObject>> regionResult;
+        getRegionQuery()->query(frBox(dstPt, dstPt), dstLayer, regionResult);
+        for (auto &rv : regionResult) {
+            auto &obj = rv.second;
+            if (obj->typeId() != frcInstTerm && obj->typeId() != frcTerm) {
+                continue;
+            }
+            if (obj == pin->getFrTerm()) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    auto isPathConnectivityVisibleForPin = [&](const vector<FlexMazeIdx> &path,
+                                              drPin *pin) {
+        if (path.size() < 2) {
+            return false;
+        }
+
+        auto isPinOnLayerPoint =
+            [&](const frPoint &pt, frLayerNum lNum, drPin *currPin) {
+                vector<rq_rptr_value_t<frBlockObject>> regionResult;
+                getRegionQuery()->query(frBox(pt, pt), lNum, regionResult);
+                for (auto &rv : regionResult) {
+                    auto &obj = rv.second;
+                    if (obj->typeId() != frcInstTerm &&
+                        obj->typeId() != frcTerm) {
+                        continue;
+                    }
+                    if (obj == currPin->getFrTerm()) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+        set<pair<frPoint, frLayerNum>> extEndPoints;
+        vector<pair<frPoint, pair<frLayerNum, frLayerNum>>> viaPts;
+
+        for (int i = 0; i < (int)path.size() - 1; ++i) {
+            FlexMazeIdx bi = path[i];
+            FlexMazeIdx ei = path[i + 1];
+            if (bi.z() == ei.z() &&
+                ((bi.x() == ei.x() && bi.y() != ei.y()) ||
+                 (bi.y() == ei.y() && bi.x() != ei.x()))) {
+                if (ei < bi) {
+                    swap(bi, ei);
+                }
+                frPoint bp, ep;
+                gridGraph.getPoint(bp, bi.x(), bi.y());
+                gridGraph.getPoint(ep, ei.x(), ei.y());
+                auto layerNum = gridGraph.getLayerNum(bi.z());
+                const auto isBeginTrunc =
+                    mirrorRealPinAPMazeIdx.find(bi) !=
+                    mirrorRealPinAPMazeIdx.end();
+                const auto isEndTrunc = mirrorRealPinAPMazeIdx.find(ei) !=
+                                        mirrorRealPinAPMazeIdx.end();
+                if (isBeginTrunc) {
+                    if (isPinOnLayerPoint(bp, layerNum, pin)) {
+                        return true;
+                    }
+                } else {
+                    extEndPoints.insert({bp, layerNum});
+                }
+                if (isEndTrunc) {
+                    if (isPinOnLayerPoint(ep, layerNum, pin)) {
+                        return true;
+                    }
+                } else {
+                    extEndPoints.insert({ep, layerNum});
+                }
+            } else if (bi.z() != ei.z() && bi.x() == ei.x() &&
+                       bi.y() == ei.y()) {
+                frPoint viaPt;
+                gridGraph.getPoint(viaPt, bi.x(), bi.y());
+                const auto viaLoZ = min(bi.z(), ei.z());
+                const auto viaHiZ = max(bi.z(), ei.z());
+                viaPts.push_back(
+                    {viaPt, {gridGraph.getLayerNum(viaLoZ),
+                             gridGraph.getLayerNum(viaHiZ)}});
+            } else {
+                return false;
+            }
+        }
+
+        for (auto &via : viaPts) {
+            const auto &viaPt = via.first;
+            auto l1Num = via.second.first;
+            auto l2Num = via.second.second;
+            if (extEndPoints.find({viaPt, l1Num}) == extEndPoints.end()) {
+                if (isPinOnLayerPoint(viaPt, l1Num, pin)) {
+                    return true;
+                }
+            }
+            if (extEndPoints.find({viaPt, l2Num}) == extEndPoints.end()) {
+                if (isPinOnLayerPoint(viaPt, l2Num, pin)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    auto isSourceGrid = [&](const FlexMazeIdx &pt) {
+        return connCompSet.find(pt) != connCompSet.end();
+    };
+
+    auto addPathToSourceSet = [&](const vector<FlexMazeIdx> &routePath) {
+        for (int i = 0; i < (int)routePath.size() - 1; ++i) {
+            auto start = routePath[i];
+            auto end = routePath[i + 1];
+            if (start.x() != end.x() && start.y() == end.y() &&
+                start.z() == end.z()) {
+                const auto xLo = min(start.x(), end.x());
+                const auto xHi = max(start.x(), end.x());
+                for (auto x = xLo; x <= xHi; ++x) {
+                    connCompSet.insert(FlexMazeIdx(x, start.y(), start.z()));
+                }
+            } else if (start.y() != end.y() && start.x() == end.x() &&
+                       start.z() == end.z()) {
+                const auto yLo = min(start.y(), end.y());
+                const auto yHi = max(start.y(), end.y());
+                for (auto y = yLo; y <= yHi; ++y) {
+                    connCompSet.insert(FlexMazeIdx(start.x(), y, start.z()));
+                }
+            } else if (start.z() != end.z() && start.x() == end.x() &&
+                       start.y() == end.y()) {
+                const auto zLo = min(start.z(), end.z());
+                const auto zHi = max(start.z(), end.z());
+                for (auto z = zLo; z <= zHi; ++z) {
+                    connCompSet.insert(FlexMazeIdx(start.x(), start.y(), z));
+                }
+            } else if (!isSameMazeIdx(start, end)) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    auto isSourceGridConnectedToCopyBody = [&](const vector<FlexMazeIdx> &path) {
+        if (path.size() < 2) {
+            return false;
+        }
+        const auto &srcIdx = path.back();
+        const auto &prevIdx = path[path.size() - 2];
+        frPoint srcPt;
+        gridGraph.getPoint(srcPt, srcIdx.x(), srcIdx.y());
+        const auto srcLayer = gridGraph.getLayerNum(srcIdx.z());
+
+        const bool isSameLayerStep = (prevIdx.z() == srcIdx.z());
+        const bool isSourceStepHoriz =
+            isSameLayerStep && (prevIdx.y() == srcIdx.y()) &&
+            (prevIdx.x() != srcIdx.x());
+        const bool isSourceStepVert =
+            isSameLayerStep && (prevIdx.x() == srcIdx.x()) &&
+            (prevIdx.y() != srcIdx.y());
+        const bool isSourceStepVia =
+            (!isSameLayerStep && prevIdx.x() == srcIdx.x() &&
+             prevIdx.y() == srcIdx.y());
+        if (!isSourceStepHoriz && !isSourceStepVert && !isSourceStepVia) {
+            return false;
+        }
+
+        auto strictBetween = [&](frCoord v, frCoord lo, frCoord hi) {
+            return lo < v && v < hi;
+        };
+
+        for (auto &connFig : copiedRouteConnFigs) {
+            if (connFig->typeId() == drcPathSeg) {
+                auto pathSeg = static_cast<drPathSeg *>(connFig);
+                if (!pathSeg->hasMazeIdx()) {
+                    continue;
+                }
+                frPoint bp, ep;
+                pathSeg->getPoints(bp, ep);
+                const auto lNum = pathSeg->getLayerNum();
+                if (srcPt == bp && srcLayer == lNum) {
+                    return true;
+                }
+                if (srcPt == ep && srcLayer == lNum) {
+                    return true;
+                }
+
+                if (srcLayer != lNum) {
+                    continue;
+                }
+
+                if (isSourceStepHoriz) {
+                    if (bp.x() == ep.x()) {
+                        const auto yLo = min(bp.y(), ep.y());
+                        const auto yHi = max(bp.y(), ep.y());
+                        if (srcPt.x() == bp.x() &&
+                            strictBetween(srcPt.y(), yLo, yHi)) {
+                            return true;
+                        }
+                    }
+                } else if (isSourceStepVert) {
+                    if (bp.y() == ep.y()) {
+                        const auto xLo = min(bp.x(), ep.x());
+                        const auto xHi = max(bp.x(), ep.x());
+                        if (srcPt.y() == bp.y() &&
+                            strictBetween(srcPt.x(), xLo, xHi)) {
+                            return true;
+                        }
+                    }
+                } else if (isSourceStepVia) {
+                    if (bp.x() == ep.x()) {
+                        const auto yLo = min(bp.y(), ep.y());
+                        const auto yHi = max(bp.y(), ep.y());
+                        if (srcPt.x() == bp.x() &&
+                            strictBetween(srcPt.y(), yLo, yHi)) {
+                            return true;
+                        }
+                    } else if (bp.y() == ep.y()) {
+                        const auto xLo = min(bp.x(), ep.x());
+                        const auto xHi = max(bp.x(), ep.x());
+                        if (srcPt.y() == bp.y() &&
+                            strictBetween(srcPt.x(), xLo, xHi)) {
+                            return true;
+                        }
+                    }
+                }
+            } else if (connFig->typeId() == drcVia) {
+                auto via = static_cast<drVia *>(connFig);
+                if (!via->hasMazeIdx()) {
+                    continue;
+                }
+                frPoint viaPt;
+                via->getOrigin(viaPt);
+                auto l1Num = via->getViaDef()->getLayer1Num();
+                auto l2Num = via->getViaDef()->getLayer2Num();
+                if (srcPt == viaPt &&
+                    (srcLayer == l1Num || srcLayer == l2Num)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    auto preparePinDstForAP = [&](drPin *pin, const PinAP &pinAP) {
+        apSVia.clear();
+        gridGraph.resetDst();
+        auto mapIt = mazeIdx2unConnPins.find(pinAP.mi);
+        if (mapIt == mazeIdx2unConnPins.end()) {
+            return false;
+        }
+        if (mapIt->second.find(pin) == mapIt->second.end()) {
+            return false;
+        }
+        gridGraph.setDst(pinAP.mi);
+        if (pinAP.ap->hasAccessViaDef()) {
+            gridGraph.setSVia(pinAP.mi.x(), pinAP.mi.y(), pinAP.mi.z());
+            apSVia[pinAP.mi] = pinAP.ap;
+        }
+        return true;
+    };
+
+    auto setSinglePinDstForAP = [&](const PinAP &pinAP) {
+        apSVia.clear();
+        gridGraph.resetDst();
+        gridGraph.setDst(pinAP.mi);
+        if (pinAP.ap->hasAccessViaDef()) {
+            gridGraph.setSVia(pinAP.mi.x(), pinAP.mi.y(), pinAP.mi.z());
+            apSVia[pinAP.mi] = pinAP.ap;
+        }
+    };
+
+    while (!unConnPins.empty()) {
+        mazePinInit();
+        auto nextPin = routeNet_getNextDst(ccMazeIdx1, ccMazeIdx2,
+                                          mazeIdx2unConnPins);
+        if (!nextPin) {
+            cout << "DR symmetry mirror attach for net " << netName
+                 << ": failed (no next dst), routed=" << routedCnt
+                 << ", remaining=" << unConnPins.size() << endl;
+            return false;
+        }
+
+        auto apIt = mirrorRealPinAPMap.find(nextPin);
+        if (apIt == mirrorRealPinAPMap.end() || apIt->second.empty()) {
+            cout << "DR symmetry mirror attach for net " << netName
+                 << ": failed (no active AP dst for selected pin), routed="
+                 << routedCnt << ", failed=" << failedCnt << endl;
+            return false;
+        }
+
+        bool isRouted = false;
+        for (const auto &pinAP : apIt->second) {
+            if (!preparePinDstForAP(nextPin, pinAP)) {
+                ++failedCnt;
+                continue;
+            }
+
+            path.clear();
+            const bool pathFound =
+                gridGraph.search(connComps, nextPin, path, ccMazeIdx1, ccMazeIdx2,
+                                 centerPt);
+            if (!pathFound || path.empty()) {
+                ++failedCnt;
+                continue;
+            }
+
+            if (!isSameMazeIdx(path[0], pinAP.mi) ||
+                !isPathDstOnPin(path[0], nextPin) ||
+                !isPointOnPinTerm(path[0], nextPin) ||
+                !isPathConnectivityVisibleForPin(path, nextPin)) {
+                ++failedCnt;
+                continue;
+            }
+
+            if (!isSourceGrid(path.back())) {
+                ++failedCnt;
+                continue;
+            }
+            if (!isSourceGridConnectedToCopyBody(path)) {
+                ++failedCnt;
+                continue;
+            }
+
+            if (!addPathToSourceSet(path)) {
+                ++failedCnt;
+                continue;
+            }
+            routeNet_postAstarUpdate(path, connComps, unConnPins,
+                                     mazeIdx2unConnPins, false);
+            routeNet_postAstarWritePath(net, path, mirrorRealPinAPMazeIdx);
+            routeNet_postAstarPatchMinAreaVio(net, path, mirrorAreaMap);
+            ++routedCnt;
+            isRouted = true;
+            break;
+        }
+
+        if (!isRouted) {
+            cout << "DR symmetry mirror attach for net " << netName
+                 << ": failed (no paired mirror pin AP success), failed="
+                 << failedCnt << ", routed=" << routedCnt << endl;
+            return false;
+        }
+    }
+
+    bool bridgeDone = false;
+    if (needsBridgeRepair) {
+        vector<FlexMazeIdx> bridgeConnComps;
+        FlexMazeIdx bridgeCcMazeIdx1(xDim - 1, yDim - 1, zDim - 1);
+        FlexMazeIdx bridgeCcMazeIdx2(0, 0, 0);
+        frCoord bridgeCenterX = 0;
+        frCoord bridgeCenterY = 0;
+        int bridgeSourceCnt = 0;
+
+        gridGraph.resetSrc();
+        for (auto &idx : existingSourceSet) {
+            if (mazeIdx2unConnPins.find(idx) != mazeIdx2unConnPins.end()) {
+                continue;
+            }
+            bridgeConnComps.push_back(idx);
+            bridgeCcMazeIdx1.set(min(bridgeCcMazeIdx1.x(), idx.x()),
+                                 min(bridgeCcMazeIdx1.y(), idx.y()),
+                                 min(bridgeCcMazeIdx1.z(), idx.z()));
+            bridgeCcMazeIdx2.set(max(bridgeCcMazeIdx2.x(), idx.x()),
+                                 max(bridgeCcMazeIdx2.y(), idx.y()),
+                                 max(bridgeCcMazeIdx2.z(), idx.z()));
+            frPoint pt;
+            gridGraph.getPoint(pt, idx.x(), idx.y());
+            bridgeCenterX += pt.x();
+            bridgeCenterY += pt.y();
+            ++bridgeSourceCnt;
+            gridGraph.setSrc(idx);
+        }
+
+        if (bridgeSourceCnt == 0) {
+            cout << "DR symmetry mirror attach for net " << netName
+                 << ": failed (mirror-body bridge source empty), routed="
+                 << routedCnt << endl;
+            return false;
+        }
+
+        frPoint bridgeCenterPt(bridgeCenterX / bridgeSourceCnt,
+                               bridgeCenterY / bridgeSourceCnt);
+        bool bridged = false;
+        for (auto &mirrorPair : mirrorPinPairs) {
+            auto *mirrorPin = mirrorPair.first;
+            auto apIt = mirrorRealPinAPMap.find(mirrorPin);
+            if (!mirrorPin || apIt == mirrorRealPinAPMap.end()) {
+                continue;
+            }
+            for (const auto &pinAP : apIt->second) {
+                setSinglePinDstForAP(pinAP);
+                mazePinInit();
+                path.clear();
+                const bool pathFound = gridGraph.search(
+                    bridgeConnComps, mirrorPin, path, bridgeCcMazeIdx1,
+                    bridgeCcMazeIdx2, bridgeCenterPt);
+                if (!pathFound || path.empty()) {
+                    continue;
+                }
+                if (!isSameMazeIdx(path[0], pinAP.mi) ||
+                    !isPointOnPinTerm(path[0], mirrorPin) ||
+                    !isPathConnectivityVisibleForPin(path, mirrorPin)) {
+                    continue;
+                }
+                if (existingSourceSet.find(path.back()) ==
+                    existingSourceSet.end()) {
+                    continue;
+                }
+                if (!addPathToSourceSet(path)) {
+                    continue;
+                }
+                routeNet_postAstarWritePath(net, path, mirrorRealPinAPMazeIdx);
+                routeNet_postAstarPatchMinAreaVio(net, path, mirrorAreaMap);
+                bridged = true;
+                break;
+            }
+            if (bridged) {
+                break;
+            }
+        }
+
+        if (!bridged) {
+            cout << "DR symmetry mirror attach for net " << netName
+                 << ": failed (mirror-body bridge repair failed), routed="
+                 << routedCnt << ", targets=" << targetPinCnt << endl;
+            return false;
+        }
+        bridgeDone = true;
+    }
+
+    cout << "DR symmetry mirror attach for net " << netName
+         << ": targets=" << targetPinCnt << ", routed=" << routedCnt
+         << ", failed=" << failedCnt << ", copiedSources="
+         << sourceGridCnt << ", bridgeRepair="
+         << (needsBridgeRepair ? (bridgeDone ? "done" : "failed") : "n/a")
+         << endl;
+
+    return true;
+}
+
+bool FlexDRWorker::routeNet(drNet *net, bool allowSymmetricCopy,
+                           bool enableSymmetryFiltering) {
     // bool enableOutput = true;
     bool enableOutput = false;
-    if (net->getPins().size() <= 1) {
+    const string &netName = net->getFrNet()->getName();
+    const bool isSymmNet = getDesign()->hasSymmetryConstraint() &&
+                           getDesign()->isSymmetryNet(netName);
+    auto clearSymmetryRoutingState = [&](bool clearEdgePrefs = true) {
+        if (clearEdgePrefs) {
+            clearSymmetryRoutingEdgePrefs();
+        }
+        clearSymmetryRoutingAxis();
+    };
+    if (net->getPins().empty()) {
+        clearSymmetryRoutingState();
+        return true;
+    }
+    if (net->getPins().size() == 1 &&
+        !(isSingleSideRoutingEnabled() && isSymmNet)) {
+        clearSymmetryRoutingState();
         return true;
     }
 
@@ -4238,20 +6379,325 @@ bool FlexDRWorker::routeNet(drNet *net) {
     map<FlexMazeIdx, set<drPin *, frBlockObjectComp>> mazeIdx2unConnPins;
     set<FlexMazeIdx> apMazeIdx;
     set<FlexMazeIdx> realPinAPMazeIdx;  //
+    set<DRSymmPinAPKey> activeSymmAPMazeIdx;
+    bool isSymmFilteringEnabled = false;
+    const set<DRSymmPinAPKey> *activeSymmAPMazeIdxPtr = nullptr;
+    const frSymmetryConstraint *symmConstraint = nullptr;
+    DRSymmetryPreflightResult preflightRes;
+    const bool reuseSymmRoutingEdgePrefs =
+        isSymmNet &&
+        (getSymmetryRoutingPrefSource() !=
+             DRSymmetryRoutingPrefSource::Disabled &&
+         !symmRoutingEdgePrefs.empty());
+    clearSymmetryRoutingState(!reuseSymmRoutingEdgePrefs);
+    if (isSymmNet) {
+        symmConstraint = getDesign()->getSymmetryConstraint();
+        initSymmetryRoutingAxis(symmConstraint);
+        const auto symmRoutingAxisCoord = getSymmetryRoutingAxisCoord(symmConstraint);
+        cout << "DR symmetry routing axis for net " << netName
+             << ": geom=" << symmConstraint->getAxisCoord()
+             << " route=" << symmRoutingAxisCoord
+             << " dir="
+             << (symmConstraint->getAxisDir() == frSymmetryAxisEnum::Horizontal
+                     ? "Horizontal"
+                     : "Vertical")
+             << endl;
+        auto effectivePrefSource = getSymmetryRoutingPrefSource();
+        if (enableSymmetryFiltering &&
+            effectivePrefSource == DRSymmetryRoutingPrefSource::Disabled) {
+            effectivePrefSource =
+                DRSymmetryRoutingPrefSource::DefaultAll;
+        }
+        if (effectivePrefSource != DRSymmetryRoutingPrefSource::Disabled &&
+            !reuseSymmRoutingEdgePrefs) {
+            initSymmetryRoutingEdgePrefs(net, effectivePrefSource);
+        }
+
+        if (enableSymmetryFiltering) {
+            preflightRes =
+                routeNet_runSymmetryPreflight(net, symmConstraint,
+                                             symmRoutingAxisCoord,
+                                             activeSymmAPMazeIdx);
+            isSymmFilteringEnabled = preflightRes.enableSymmFiltering;
+            cout << "DR symmetry pin preflight for net " << netName
+                 << ": real ref/mirror/axis="
+                 << preflightRes.realRefPinCnt << "/"
+                 << preflightRes.realMirrorPinCnt << "/"
+                 << preflightRes.realAxisPinCnt
+                 << ", pairedMirrorPins=" << preflightRes.pairedMirrorPinCnt
+                 << ", unpairedMirrorPins=" << preflightRes.unpairedMirrorPinCnt
+                 << ", boundaryPins=" << preflightRes.boundaryPinCnt
+                 << ", activePins=" << preflightRes.activePinCnt
+                 << ", activeNonRealPins/APs="
+                 << preflightRes.activeNonRealPinCnt << "/"
+                 << preflightRes.activeNonRealAPCnt
+                 << ", copyPins=" << preflightRes.copyPinCnt
+                 << ", pairingTol=" << preflightRes.pairingTol
+                 << ", routeMode="
+                 << (isSymmFilteringEnabled ? "reference-copy" : "normal")
+                 << ", repSource=" << preflightRes.repSource;
+            if (!isSymmFilteringEnabled) {
+                if (preflightRes.unpairedMirrorPinCnt > 0) {
+                    cout << ", skipReason=\"unpaired mirror real pins\"";
+                } else if (preflightRes.pairedMirrorPinCnt == 0 &&
+                           preflightRes.realMirrorPinCnt > 0) {
+                    cout << ", skipReason=\"no mirrored real pin pairing\"";
+                } else if (preflightRes.copyPinCnt == 0 &&
+                           preflightRes.realMirrorPinCnt > 0) {
+                    cout << ", skipReason=\"no copy-intended mirror pins\"";
+                }
+            } else if (preflightRes.nonRealAPCnt > 0 &&
+                       preflightRes.activeNonRealAPCnt == 0 &&
+                       preflightRes.hasFirstSkippedNonRealAP) {
+                cout << ", skipReason=\"no non-real APs activated\" firstSkippedNonRealAP=("
+                     << preflightRes.firstSkippedNonRealAP.x() << ","
+                     << preflightRes.firstSkippedNonRealAP.y() << ","
+                     << preflightRes.firstSkippedNonRealAPSide << ")";
+            }
+            cout << endl;
+
+            if (isSymmFilteringEnabled) {
+                activeSymmAPMazeIdxPtr = &activeSymmAPMazeIdx;
+            }
+        }
+    }
+
     // map<FlexMazeIdx, frViaDef*> apSVia;
     routeNet_prep(net, unConnPins, mazeIdx2unConnPins, apMazeIdx,
-                  realPinAPMazeIdx /*, apSVia*/);
+                  realPinAPMazeIdx, activeSymmAPMazeIdxPtr);
     // prep for area map
     map<FlexMazeIdx, frCoord> areaMap;
     if (ENABLE_BOUNDARY_MAR_FIX) {
-        routeNet_prepAreaMap(net, areaMap);
+        routeNet_prepAreaMap(net, areaMap, activeSymmAPMazeIdxPtr);
     }
 
     FlexMazeIdx ccMazeIdx1, ccMazeIdx2;  // connComps ll, ur flexmazeidx
     frPoint centerPt;
     vector<FlexMazeIdx> connComps;
     routeNet_setSrc(unConnPins, mazeIdx2unConnPins, connComps, ccMazeIdx1,
-                    ccMazeIdx2, centerPt);
+                    ccMazeIdx2, centerPt, activeSymmAPMazeIdxPtr);
+
+    auto hasLayerMinSpacing = [&](frLayerNum lNum) -> bool {
+        return getDesign()->getTech()->getLayer(lNum)->getMinSpacing() != nullptr;
+    };
+    auto isRoutingLayer = [&](frLayerNum lNum) -> bool {
+        const auto bottomLayerNum = getDesign()->getTech()->getBottomLayerNum();
+        return lNum > bottomLayerNum && hasLayerMinSpacing(lNum);
+    };
+    auto appendSymmetryAxisStub = [&]() -> bool {
+        if (!isSingleSideRoutingEnabled() || !isSymmNet || !symmConstraint ||
+            connComps.empty()) {
+            return true;
+        }
+        const auto symmRoutingAxisCoord =
+            getSymmetryRoutingAxisCoord(symmConstraint);
+        const bool isHorizontalAxis =
+            symmConstraint->getAxisDir() == frSymmetryAxisEnum::Horizontal;
+        auto pointOnAxis = [&](const frPoint &pt) {
+            return isHorizontalAxis ? pt.y() == symmRoutingAxisCoord
+                                    : pt.x() == symmRoutingAxisCoord;
+        };
+        auto routeTouchesAxis = [&]() {
+            for (auto &mi : connComps) {
+                frPoint pt;
+                gridGraph.getPoint(pt, mi.x(), mi.y());
+                if (pointOnAxis(pt)) {
+                    return true;
+                }
+            }
+            for (auto &uConnFig : net->getRouteConnFigs()) {
+                auto *connFig = uConnFig.get();
+                if (connFig->typeId() == drcPathSeg) {
+                    auto *pathSeg = static_cast<drPathSeg *>(connFig);
+                    frPoint bp, ep;
+                    pathSeg->getPoints(bp, ep);
+                    if (pointOnAxis(bp) || pointOnAxis(ep)) {
+                        return true;
+                    }
+                    if (isHorizontalAxis && bp.x() == ep.x() &&
+                        min(bp.y(), ep.y()) < symmRoutingAxisCoord &&
+                        symmRoutingAxisCoord < max(bp.y(), ep.y())) {
+                        return true;
+                    }
+                    if (!isHorizontalAxis && bp.y() == ep.y() &&
+                        min(bp.x(), ep.x()) < symmRoutingAxisCoord &&
+                        symmRoutingAxisCoord < max(bp.x(), ep.x())) {
+                        return true;
+                    }
+                } else if (connFig->typeId() == drcVia) {
+                    auto *via = static_cast<drVia *>(connFig);
+                    frPoint origin;
+                    via->getOrigin(origin);
+                    if (pointOnAxis(origin)) {
+                        return true;
+                    }
+                } else if (connFig->typeId() == drcPatchWire) {
+                    auto *patchWire = static_cast<drPatchWire *>(connFig);
+                    frPoint origin;
+                    patchWire->getOrigin(origin);
+                    if (pointOnAxis(origin)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+        if (routeTouchesAxis()) {
+            return true;
+        }
+
+        frMIdx xDim, yDim, zDim;
+        gridGraph.getDim(xDim, yDim, zDim);
+        vector<FlexMazeIdx> axisDstIdxs;
+        for (frMIdx zIdx = 0; zIdx < zDim; ++zIdx) {
+            const auto layerNum = gridGraph.getLayerNum(zIdx);
+            if (!isRoutingLayer(layerNum)) {
+                continue;
+            }
+            if (isHorizontalAxis) {
+                for (frMIdx yIdx = 0; yIdx < yDim; ++yIdx) {
+                    frPoint axisPt;
+                    gridGraph.getPoint(axisPt, 0, yIdx);
+                    if (axisPt.y() != symmRoutingAxisCoord) {
+                        continue;
+                    }
+                    for (frMIdx xIdx = 0; xIdx < xDim; ++xIdx) {
+                        axisDstIdxs.emplace_back(xIdx, yIdx, zIdx);
+                    }
+                    break;
+                }
+            } else {
+                for (frMIdx xIdx = 0; xIdx < xDim; ++xIdx) {
+                    frPoint axisPt;
+                    gridGraph.getPoint(axisPt, xIdx, 0);
+                    if (axisPt.x() != symmRoutingAxisCoord) {
+                        continue;
+                    }
+                    for (frMIdx yIdx = 0; yIdx < yDim; ++yIdx) {
+                        axisDstIdxs.emplace_back(xIdx, yIdx, zIdx);
+                    }
+                    break;
+                }
+            }
+        }
+        if (axisDstIdxs.empty()) {
+            cout << "DR symmetry axis stub for net " << netName
+                 << ": status=failed (no legal axis target)" << endl;
+            return false;
+        }
+        auto buildDirectAxisPath = [&](vector<FlexMazeIdx> &axisPath) {
+            auto isPreferredLayer = [&](frLayerNum lNum) -> bool {
+                const auto isVertRoute =
+                    (getDesign()->getTech()->getLayer(lNum)->getDir() ==
+                     frcVertPrefRoutingDir);
+                return isHorizontalAxis ? isVertRoute : !isVertRoute;
+            };
+
+            FlexMazeIdx bestSourceIdx;
+            int bestAxisLayerIdx = -1;
+            frPoint bestTargetPt;
+            frCoord bestDist = numeric_limits<frCoord>::max();
+            for (auto &sourceIdx : connComps) {
+                frPoint sourcePt;
+                gridGraph.getPoint(sourcePt, sourceIdx.x(), sourceIdx.y());
+                frPoint axisTargetPt(sourcePt);
+                if (isHorizontalAxis) {
+                    axisTargetPt.set(sourcePt.x(), symmRoutingAxisCoord);
+                } else {
+                    axisTargetPt.set(symmRoutingAxisCoord, sourcePt.y());
+                }
+
+                int axisLayerIdx = -1;
+                for (int pass = 0; pass < 2; ++pass) {
+                    for (frMIdx layerIdx = 0; layerIdx < zDim; ++layerIdx) {
+                        auto layerNum = gridGraph.getLayerNum(layerIdx);
+                        if (!isRoutingLayer(layerNum)) {
+                            continue;
+                        }
+                        if ((pass == 0) && !isPreferredLayer(layerNum)) {
+                            continue;
+                        }
+                        if ((pass == 1) && isPreferredLayer(layerNum)) {
+                            continue;
+                        }
+                        if (!gridGraph.hasMazeIdx(sourcePt, layerNum) ||
+                            !gridGraph.hasMazeIdx(axisTargetPt, layerNum)) {
+                            continue;
+                        }
+                        axisLayerIdx = layerIdx;
+                        break;
+                    }
+                    if (axisLayerIdx >= 0) {
+                        break;
+                    }
+                }
+                if (axisLayerIdx < 0) {
+                    continue;
+                }
+                const auto dist =
+                    isHorizontalAxis ? abs(sourcePt.y() - symmRoutingAxisCoord)
+                                     : abs(sourcePt.x() - symmRoutingAxisCoord);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    bestSourceIdx = sourceIdx;
+                    bestAxisLayerIdx = axisLayerIdx;
+                    bestTargetPt = axisTargetPt;
+                }
+            }
+            if (bestAxisLayerIdx < 0) {
+                return false;
+            }
+
+            FlexMazeIdx axisTargetIdx;
+            gridGraph.getMazeIdx(axisTargetIdx, bestTargetPt,
+                                 gridGraph.getLayerNum(bestAxisLayerIdx));
+            axisPath.push_back(bestSourceIdx);
+            if (bestSourceIdx.z() != bestAxisLayerIdx) {
+                axisPath.emplace_back(bestSourceIdx.x(), bestSourceIdx.y(),
+                                      bestAxisLayerIdx);
+            }
+            if (!(axisPath.back() == axisTargetIdx)) {
+                axisPath.push_back(axisTargetIdx);
+            }
+            return axisPath.size() >= 2;
+        };
+
+        for (auto &axisIdx : axisDstIdxs) {
+            gridGraph.setDst(axisIdx);
+        }
+        mazePinInit();
+        vector<FlexMazeIdx> axisPath;
+        FlexMazeIdx axisCcMazeIdx1 = ccMazeIdx1;
+        FlexMazeIdx axisCcMazeIdx2 = ccMazeIdx2;
+        const bool isRouted = gridGraph.search(
+            connComps, axisDstIdxs, axisPath, axisCcMazeIdx1, axisCcMazeIdx2,
+            centerPt);
+        for (auto &axisIdx : axisDstIdxs) {
+            gridGraph.resetDst(axisIdx);
+        }
+        bool usedDirectFallback = false;
+        if (!isRouted || axisPath.empty()) {
+            axisPath.clear();
+            usedDirectFallback = buildDirectAxisPath(axisPath);
+            if (!usedDirectFallback) {
+                cout << "DR symmetry axis stub for net " << netName
+                     << ": status=failed (maze search)" << endl;
+                return false;
+            }
+        }
+
+        routeNet_postAstarWritePath(net, axisPath, realPinAPMazeIdx);
+        routeNet_postAstarPatchMinAreaVio(net, axisPath, areaMap);
+        if (!routeTouchesAxis()) {
+            cout << "DR symmetry axis stub for net " << netName
+                 << ": status=failed (no axis touch after write)" << endl;
+            return false;
+        }
+        cout << "DR symmetry axis stub for net " << netName
+             << ": status=done"
+             << (usedDirectFallback ? " (direct fallback)" : "") << endl;
+        return true;
+    };
 
     vector<FlexMazeIdx> path;  // astar must return with >= 1 idx
     bool isFirstConn = true;
@@ -4260,6 +6706,9 @@ bool FlexDRWorker::routeNet(drNet *net) {
         auto nextPin =
             routeNet_getNextDst(ccMazeIdx1, ccMazeIdx2, mazeIdx2unConnPins);
         path.clear();
+        const bool isRouted = gridGraph.search(connComps, nextPin, path, ccMazeIdx1,
+                                              ccMazeIdx2, centerPt);
+
         // if (nextPin->hasFrTerm()) {
         //   if (nextPin->getFrTerm()->typeId() == frcTerm) {
         //     cout << "next pin (frTermName) = " <<
@@ -4273,8 +6722,7 @@ bool FlexDRWorker::routeNet(drNet *net) {
         // } else {
         //   cout << "next pin is boundary pin\n";
         // }
-        if (gridGraph.search(connComps, nextPin, path, ccMazeIdx1, ccMazeIdx2,
-                             centerPt)) {
+        if (isRouted) {
             routeNet_postAstarUpdate(path, connComps, unConnPins,
                                      mazeIdx2unConnPins, isFirstConn);
             routeNet_postAstarWritePath(net, path,
@@ -4294,10 +6742,34 @@ bool FlexDRWorker::routeNet(drNet *net) {
             //   //      << bp.x() / 2000.0 << ", " << bp.y() / 2000.0 << ")\n";
             //   ++apCnt;
             // }
+            clearSymmetryRoutingState();
+            return false;
+        }
+    }
+    if (!appendSymmetryAxisStub()) {
+        clearSymmetryRoutingState();
+        return false;
+    }
+    if (isSymmFilteringEnabled && allowSymmetricCopy) {
+        vector<drConnFig *> copiedRouteConnFigs;
+        auto copiedCnt = routeNet_addSymmetricCopies(net, &copiedRouteConnFigs);
+        cout << "DR symmetry post-copy for net " << net->getFrNet()->getName()
+             << ": expected copy-intended mirrorPins="
+             << preflightRes.copyPinCnt
+             << ", copied path/via = " << copiedCnt.first << "/"
+             << copiedCnt.second << endl;
+        if (copiedRouteConnFigs.empty()) {
+            cout << "DR symmetry mirror attach for net " << net->getFrNet()->getName()
+                 << ": skipped (no copied body source)" << endl;
+        } else if (!routeNet_attachSymmetricMirrorPins(
+                       net, preflightRes.mirrorPinPairs,
+                       copiedRouteConnFigs)) {
+            clearSymmetryRoutingState();
             return false;
         }
     }
     routeNet_postRouteAddPathCost(net);
+    clearSymmetryRoutingState();
     return true;
 }
 

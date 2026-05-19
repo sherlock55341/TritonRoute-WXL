@@ -259,6 +259,7 @@ class FlexTAWorker {
     std::vector<std::unique_ptr<taPin> > iroutes;  // unsorterd iroutes
     std::vector<std::unique_ptr<taPin> > extIroutes;
     std::vector<std::vector<frCoord> > trackLocs;
+    std::vector<std::vector<int> > symmetryTrackPairs;
     // std::vector<std::vector<taTrack> >   tracks;
     // std::priority_queue<taIroute*, std::vector<taIroute*>, taIrouteComp> pq;
     std::set<taPin *, taPinComp>
@@ -282,6 +283,7 @@ class FlexTAWorker {
     void initFixedObjs_helper(const frBox &box, frCoord bloatDist,
                               frLayerNum lNum, frNet *net);
     void initTracks();
+    void initSymmetryTrackPairs();
     void initIroutes();
     void initIroute(frGuide *in);
     void initIroute_helper(frGuide *guide, frCoord &maxBegin, frCoord &minEnd,
@@ -334,7 +336,12 @@ class FlexTAWorker {
     void assignIroute_bestTrack_helper(taPin *iroute, frLayerNum lNum,
                                        int trackIdx, frUInt4 &bestCost,
                                        frCoord &bestTrackLoc, int &bestTrackIdx,
-                                       frUInt4 &drcCost);
+                                       frUInt4 &drcCost, bool isSymmetryNet,
+                                       bool &bestHasSymmetryTrackPair,
+                                       frUInt4 &bestRouteCost,
+                                       frUInt4 &bestDrcCost);
+    bool assignIroute_isSymmetryNet(taPin *iroute) const;
+    bool assignIroute_hasSymmetryTrackPair(frLayerNum lNum, int trackIdx) const;
     frUInt4 assignIroute_getCost(taPin *iroute, frCoord trackLoc,
                                  frUInt4 &drcCost);
     frUInt4 assignIroute_getWlenCost(taPin *iroute, frCoord trackLoc);

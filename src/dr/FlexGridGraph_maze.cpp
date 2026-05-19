@@ -357,11 +357,6 @@ using namespace fr;
     // bendCnt -= bendCnt ? 1 : 0;
     //  return (deltaX + deltaY + VIACOST * deltaZ + ((deltaX && deltaY) ? 1 :
     //  0));
-    if (enableOutput) {
-        cout << "  est cost = " << minCostX + minCostY + minCostZ + bendCnt
-             << endl;
-    }
-
     int gridX = src.x();
     int gridY = src.y();
     int gridZ = src.z();
@@ -409,6 +404,22 @@ using namespace fr;
                 // }
             }
         }
+    }
+
+    if (drWorker && drWorker->isSingleSideRoutingEnabled() &&
+        drWorker->isSymmetryRoutingCostEnabled()) {
+        const auto relaxedEstCost =
+            (frCost)((minCostX + minCostY + minCostZ) / 4);
+        if (enableOutput) {
+            cout << "  single-side symmetry relaxed est cost = "
+                 << relaxedEstCost << endl;
+        }
+        return relaxedEstCost;
+    }
+
+    if (enableOutput) {
+        cout << "  est cost = " << minCostX + minCostY + minCostZ + bendCnt
+             << endl;
     }
 
     return (minCostX + minCostY + minCostZ + bendCnt + forbiddenPenalty);
@@ -765,19 +776,48 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ,
     bool shapeCost = hasShapeCost(gridX, gridY, gridZ, dir);
     bool blockCost = isBlocked(gridX, gridY, gridZ, dir);
     bool guideCost = hasGuide(gridX, gridY, gridZ, dir);
+    auto edgeLen = getEdgeLength(gridX, gridY, gridZ, dir);
+
+    auto baseLengthCost = (frCost)edgeLen;
+    auto symmetryPenalty = (frCost)0;
+    auto forbiddenSingleSidePenalty = (frCost)0;
+    bool isCleanEdge = !drcCost && !markerCost && !blockCost && !shapeCost;
+    bool isLegalAxisEdge = false;
+    if (drWorker && drWorker->isSymmetryRoutingCostEnabled()) {
+        frMIdx nextGridX = gridX;
+        frMIdx nextGridY = gridY;
+        frMIdx nextGridZ = gridZ;
+        getNextGrid(nextGridX, nextGridY, nextGridZ, dir);
+        FlexMazeIdx u(gridX, gridY, gridZ);
+        FlexMazeIdx v(nextGridX, nextGridY, nextGridZ);
+        const bool isForbiddenSingleSideEdge =
+            drWorker->isSingleSideSymmetryEdgeForbidden(u, v);
+        if (isForbiddenSingleSideEdge) {
+            forbiddenSingleSidePenalty =
+                (frCost)(10 * ggDRCCost * edgeLen);
+        } else if (isCleanEdge && drWorker->isSymmetryRoutingAxisEdge(u, v)) {
+            isLegalAxisEdge = true;
+            baseLengthCost = max<frCost>(edgeLen / 4, 1);
+        } else if (isCleanEdge && drWorker->isSymmRoutingEdgePrefEnabled()) {
+            if (drWorker->isSymmetryRoutingPreferredEdge(u, v)) {
+                symmetryPenalty = edgeLen / 4;
+            } else {
+                symmetryPenalty = max<frCost>(edgeLen * 2, 1);
+            }
+        }
+    }
 
     // temporarily disable guideCost
     nextPathCost +=
-        getEdgeLength(gridX, gridY, gridZ, dir) +
-        (gridCost ? GRIDCOST * getEdgeLength(gridX, gridY, gridZ, dir) : 0) +
-        (drcCost ? ggDRCCost * getEdgeLength(gridX, gridY, gridZ, dir) : 0) +
-        (markerCost ? ggMarkerCost * getEdgeLength(gridX, gridY, gridZ, dir)
-                    : 0)
+        baseLengthCost + (gridCost ? GRIDCOST * edgeLen : 0) +
+        (drcCost ? ggDRCCost * edgeLen : 0) +
+        (markerCost ? ggMarkerCost * edgeLen : 0)
         // + (markerCost ? ggMarkerCost     * pathWidth : 0)
         +
-        (shapeCost ? SHAPECOST * getEdgeLength(gridX, gridY, gridZ, dir) : 0) +
+        (shapeCost ? SHAPECOST * edgeLen : 0) +
         (blockCost ? BLOCKCOST * pathWidth * 20 : 0) +
-        (!guideCost ? GUIDECOST * getEdgeLength(gridX, gridY, gridZ, dir) : 0);
+        (!guideCost && !isLegalAxisEdge ? GUIDECOST * edgeLen : 0) +
+        symmetryPenalty + forbiddenSingleSidePenalty;
     if (enableOutput) {
         cout << "edge grid/shape/drc/marker/blk/length = "
              << hasGridCost(gridX, gridY, gridZ, dir) << "/"
@@ -933,18 +973,33 @@ void FlexGridGraph::traceBackPath(const FlexWavefrontGrid &currGrid,
 bool FlexGridGraph::search(vector<FlexMazeIdx> &connComps, drPin *nextPin,
                            vector<FlexMazeIdx> &path, FlexMazeIdx &ccMazeIdx1,
                            FlexMazeIdx &ccMazeIdx2, const frPoint &centerPt) {
+    vector<FlexMazeIdx> dstMazeIdxs;
+    FlexMazeIdx mi;
+    for (auto &ap : nextPin->getAccessPatterns()) {
+        ap->getMazeIdx(mi);
+        dstMazeIdxs.push_back(mi);
+    }
+    return search(connComps, dstMazeIdxs, path, ccMazeIdx1, ccMazeIdx2,
+                  centerPt);
+}
+
+bool FlexGridGraph::search(vector<FlexMazeIdx> &connComps,
+                           const vector<FlexMazeIdx> &dstMazeIdxs,
+                           vector<FlexMazeIdx> &path, FlexMazeIdx &ccMazeIdx1,
+                           FlexMazeIdx &ccMazeIdx2, const frPoint &centerPt) {
     // bool enableOutput = true;
     bool enableOutput = false;
     int stepCnt = 0;
+    if (dstMazeIdxs.empty()) {
+        return false;
+    }
 
     // prep nextPinBox
     frMIdx xDim, yDim, zDim;
     getDim(xDim, yDim, zDim);
     FlexMazeIdx dstMazeIdx1(xDim - 1, yDim - 1, zDim - 1);
     FlexMazeIdx dstMazeIdx2(0, 0, 0);
-    FlexMazeIdx mi;
-    for (auto &ap : nextPin->getAccessPatterns()) {
-        ap->getMazeIdx(mi);
+    for (auto &mi : dstMazeIdxs) {
         dstMazeIdx1.set(min(dstMazeIdx1.x(), mi.x()),
                         min(dstMazeIdx1.y(), mi.y()),
                         min(dstMazeIdx1.z(), mi.z()));

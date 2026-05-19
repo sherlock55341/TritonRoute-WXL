@@ -111,6 +111,42 @@ void FlexTAWorker::initTracks() {
     }
 }
 
+void FlexTAWorker::initSymmetryTrackPairs() {
+    symmetryTrackPairs.clear();
+    symmetryTrackPairs.resize(getDesign()->getTech()->getLayers().size());
+    auto constraint = getDesign()->getSymmetryConstraint();
+    if (!constraint) {
+        return;
+    }
+
+    bool mirrorTrackCoord =
+        (constraint->getAxisDir() == frSymmetryAxisEnum::Horizontal &&
+         getDir() == frcHorzPrefRoutingDir) ||
+        (constraint->getAxisDir() == frSymmetryAxisEnum::Vertical &&
+         getDir() == frcVertPrefRoutingDir);
+
+    for (int lNum = 0; lNum < (int)trackLocs.size(); lNum++) {
+        auto &trackPairs = symmetryTrackPairs[lNum];
+        auto &locs = trackLocs[lNum];
+        trackPairs.assign(locs.size(), -1);
+        if (!mirrorTrackCoord) {
+            for (int i = 0; i < (int)locs.size(); i++) {
+                trackPairs[i] = i;
+            }
+            continue;
+        }
+
+        for (int i = 0; i < (int)locs.size(); i++) {
+            frCoord mirrorLoc = constraint->getAxisCoord() +
+                                (constraint->getAxisCoord() - locs[i]);
+            auto itr = std::lower_bound(locs.begin(), locs.end(), mirrorLoc);
+            if (itr != locs.end() && *itr == mirrorLoc) {
+                trackPairs[i] = int(itr - locs.begin());
+            }
+        }
+    }
+}
+
 // use prefAp, otherwise return false
 bool FlexTAWorker::initIroute_helper_pin(frGuide *guide, frCoord &maxBegin,
                                          frCoord &minEnd,
@@ -1085,6 +1121,7 @@ frCoord FlexTAWorker::initFixedObjs_calcBloatDist(frBlockObject *obj,
 void FlexTAWorker::init() {
     rq.init();
     initTracks();
+    initSymmetryTrackPairs();
     if (getTAIter() != -1) {
         initFixedObjs();
     }

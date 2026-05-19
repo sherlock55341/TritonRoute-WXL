@@ -32,6 +32,157 @@
 using namespace std;
 using namespace fr;
 
+namespace {
+
+bool collectTermFigCenters(frTerm *term, const frTransform *xform,
+                           vector<frPoint> &centers) {
+    if (!term) {
+        return false;
+    }
+    for (auto &uPin : term->getPins()) {
+        for (auto &uPinFig : uPin->getFigs()) {
+            auto *pinFig = uPinFig.get();
+            if (pinFig->typeId() != frcRect && pinFig->typeId() != frcPolygon) {
+                continue;
+            }
+            frBox box;
+            pinFig->getBBox(box);
+            if (xform) {
+                box.transform(*xform);
+            }
+            centers.push_back(frPoint((box.left() + box.right()) / 2,
+                                      (box.bottom() + box.top()) / 2));
+        }
+    }
+    return !centers.empty();
+}
+
+bool collectTermFigBoxes(frTerm *term, const frTransform *xform,
+                         vector<frBox> &boxes) {
+    if (!term) {
+        return false;
+    }
+    for (auto &uPin : term->getPins()) {
+        for (auto &uPinFig : uPin->getFigs()) {
+            auto pinFig = uPinFig.get();
+            if (pinFig->typeId() != frcRect && pinFig->typeId() != frcPolygon) {
+                continue;
+            }
+            frBox box;
+            pinFig->getBBox(box);
+            if (xform) {
+                box.transform(*xform);
+            }
+            boxes.push_back(box);
+        }
+    }
+    return !boxes.empty();
+}
+
+bool getTermFigBoxes(frBlockObject *termObj, vector<frBox> &boxes) {
+    frTerm *term = nullptr;
+    frInst *inst = nullptr;
+    frTransform instXform;
+
+    if (termObj->typeId() == frcInstTerm) {
+        auto *instTerm = static_cast<frInstTerm *>(termObj);
+        inst = instTerm->getInst();
+        term = instTerm->getTerm();
+        if (!inst || !term) {
+            return false;
+        }
+        inst->getUpdatedXform(instXform);
+    } else if (termObj->typeId() == frcTerm) {
+        term = static_cast<frTerm *>(termObj);
+    } else {
+        return false;
+    }
+
+    return collectTermFigBoxes(term, inst ? &instXform : nullptr, boxes);
+}
+
+bool isTermOverlappingBox(frBlockObject *termObj, const frBox &box) {
+    vector<frBox> pinBoxes;
+    if (!getTermFigBoxes(termObj, pinBoxes)) {
+        return false;
+    }
+    for (auto &pinBox : pinBoxes) {
+        if (box.overlaps(pinBox)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool getTermRepresentative(frBlockObject *termObj, frPoint &repPt) {
+    frTerm *term = nullptr;
+    frInst *inst = nullptr;
+    frTransform instXform;
+
+    if (termObj->typeId() == frcInstTerm) {
+        auto *instTerm = static_cast<frInstTerm *>(termObj);
+        inst = instTerm->getInst();
+        term = instTerm->getTerm();
+        if (!inst || !term) {
+            return false;
+        }
+        inst->getUpdatedXform(instXform);
+    } else if (termObj->typeId() == frcTerm) {
+        term = static_cast<frTerm *>(termObj);
+    } else {
+        return false;
+    }
+
+    vector<frPoint> centers;
+    collectTermFigCenters(term, inst ? &instXform : nullptr, centers);
+    if (centers.empty()) {
+        return false;
+    }
+
+    frCoord totalX = 0;
+    frCoord totalY = 0;
+    for (auto &center : centers) {
+        totalX += center.x();
+        totalY += center.y();
+    }
+    repPt.set(totalX / centers.size(), totalY / centers.size());
+    return true;
+}
+
+bool isSingleSideRoutingTerm(frBlockObject *termObj,
+                             const frSymmetryConstraint *constraint) {
+    if (!constraint) {
+        return true;
+    }
+    frPoint repPt;
+    if (!getTermRepresentative(termObj, repPt)) {
+        return true;
+    }
+    return constraint->isAxis(repPt) || constraint->isReference(repPt);
+}
+
+bool isSymmetryWorkerFlowEnabled(frDesign *design) {
+    return design && design->hasSymmetryConstraint();
+}
+
+void insertLogicalPinsInBox(
+    frNet *net, const frBox &box,
+    map<frBlockObject *, set<pair<frPoint, frLayerNum> >, frBlockObjectComp>
+        &pin2epMap) {
+    for (auto *instTerm : net->getInstTerms()) {
+        if (isTermOverlappingBox(instTerm, box)) {
+            pin2epMap[instTerm];
+        }
+    }
+    for (auto *term : net->getTerms()) {
+        if (isTermOverlappingBox(term, box)) {
+            pin2epMap[term];
+        }
+    }
+}
+
+}  // namespace
+
 void FlexDRWorker::initNetObjs_pathSeg(
     frPathSeg *pathSeg, set<frNet *, frBlockObjectComp> &nets,
     map<frNet *, vector<unique_ptr<drConnFig> >, frBlockObjectComp>
@@ -517,6 +668,18 @@ void FlexDRWorker::initNets_initDR(
         // initNet(net, netRouteObjs[net], netExtObjs[net], netTerms[net]);
         vector<frBlockObject *> tmpTerms;
         tmpTerms.assign(netTerms[net].begin(), netTerms[net].end());
+        if (isSingleSideRoutingEnabled() &&
+            getDesign()->hasSymmetryConstraint() &&
+            getDesign()->isSymmetryNet(net->getName())) {
+            const auto *constraint = getDesign()->getSymmetryConstraint();
+            tmpTerms.erase(
+                remove_if(tmpTerms.begin(), tmpTerms.end(),
+                          [constraint](frBlockObject *termObj) {
+                              return !isSingleSideRoutingTerm(termObj,
+                                                              constraint);
+                          }),
+                tmpTerms.end());
+        }
         // initNet(net, vRouteObjs, vExtObjs, netTerms[net]);
         initNet(net, vRouteObjs, vExtObjs, netOrigGuides[net], tmpTerms);
     }
@@ -953,6 +1116,56 @@ void FlexDRWorker::initNets_searchRepair(
         initNets_searchRepair_pin2epMap(
             net, netRouteObjs[net] /*, netExtObjs[net], netPins*/,
             pin2epMap /*, nodeMap*/);
+        if (!isSingleSideRoutingEnabled() &&
+            isSymmetryWorkerFlowEnabled(getDesign()) &&
+            getDesign()->isSymmetryNet(net->getName())) {
+            insertLogicalPinsInBox(net, getRouteBox(), pin2epMap);
+        }
+        if (isSingleSideRoutingEnabled() &&
+            getDesign()->hasSymmetryConstraint() &&
+            getDesign()->isSymmetryNet(net->getName())) {
+            const auto *constraint = getDesign()->getSymmetryConstraint();
+            for (auto it = pin2epMap.begin(); it != pin2epMap.end();) {
+                if (!isSingleSideRoutingTerm(it->first, constraint)) {
+                    it = pin2epMap.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        const bool keepSymmetryNetWholeForMirrorPinRepair =
+            !isSingleSideRoutingEnabled() &&
+            isSymmetryWorkerFlowEnabled(getDesign()) && getDRIter() == 3 &&
+            getDesign()->isSymmetryNet(net->getName());
+        if (keepSymmetryNetWholeForMirrorPinRepair) {
+            vector<frBlockObject *> netPins;
+            for (auto &[pinObj, locs] : pin2epMap) {
+                netPins.push_back(pinObj);
+            }
+
+            vector<unique_ptr<drConnFig> > vRouteObjs;
+            vector<unique_ptr<drConnFig> > vExtObjs;
+            vExtObjs = std::move(netExtObjs[net]);
+            for (int i = 0; i < (int)netRouteObjs[net].size(); i++) {
+                auto &obj = netRouteObjs[net][i];
+                if (obj->typeId() == drcPathSeg) {
+                    auto ps = static_cast<drPathSeg *>(obj.get());
+                    frPoint bp, ep;
+                    ps->getPoints(bp, ep);
+                    auto &box = getRouteBox();
+                    if (box.contains(bp) && box.contains(ep)) {
+                        vRouteObjs.push_back(std::move(netRouteObjs[net][i]));
+                    } else {
+                        vExtObjs.push_back(std::move(netRouteObjs[net][i]));
+                    }
+                } else if (obj->typeId() == drcVia ||
+                           obj->typeId() == drcPatchWire) {
+                    vRouteObjs.push_back(std::move(netRouteObjs[net][i]));
+                }
+            }
+            initNet(net, vRouteObjs, vExtObjs, netOrigGuides[net], netPins);
+            continue;
+        }
 
         vector<frBlockObject *> netPins;
         map<pair<frPoint, frLayerNum>, set<int> > nodeMap;

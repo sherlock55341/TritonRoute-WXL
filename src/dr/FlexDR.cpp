@@ -38,6 +38,18 @@
 using namespace std;
 using namespace fr;
 
+namespace {
+
+bool isSymmetryWorkerFlowEnabled(frDesign *design) {
+    return design && design->hasSymmetryConstraint();
+}
+
+bool isSingleSideSymmetryWorkerEnabled(frDesign *design, int drIter) {
+    return drIter <= 1 && isSymmetryWorkerFlowEnabled(design);
+}
+
+}  // namespace
+
 // std::chrono::duration<double> time_span_init(0);
 // std::chrono::duration<double> time_span_init0(0);
 // std::chrono::duration<double> time_span_init1(0);
@@ -1888,6 +1900,8 @@ void FlexDR::initDR(int size, bool enableDRC) {
         // int j = (94.05 * 2000 - ygp.getStartCoord()) / ygp.getSpacing();
         // worker.setDRIter(0, gcell2BoundaryPin[idx.x()][idx.y()]);
         worker.setDRIter(0, bp);
+        worker.setEnableSingleSideRouting(
+            isSingleSideSymmetryWorkerEnabled(getDesign(), 0));
         worker.setEnableDRC(enableDRC);
         // worker.setTest(true);
         worker.main();
@@ -2055,6 +2069,8 @@ void FlexDR::initDR(int size, bool enableDRC) {
                 auto bp = initDR_mergeBoundaryPin(i, j, size, routeBox);
                 worker->setDRIter(0, bp);
                 // set boundary pin
+                worker->setEnableSingleSideRouting(
+                    isSingleSideSymmetryWorkerEnabled(getDesign(), 0));
                 worker->setEnableDRC(enableDRC);
                 worker->setFollowGuide(false);
                 // worker->setFollowGuide(true);
@@ -2181,7 +2197,8 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     if (iter > END_ITERATION) {
         return;
     }
-    if (iter && getDesign()->getTopBlock()->getMarkers().size() == 0) {
+    if (iter && getDesign()->getTopBlock()->getMarkers().size() == 0 &&
+        !(iter <= 2 && isSymmetryWorkerFlowEnabled(getDesign()))) {
         return;
     }
 
@@ -2252,6 +2269,8 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
             auto bp = initDR_mergeBoundaryPin(147, 273, size, routeBox);
             worker.setDRIter(0, bp);
         }
+        worker.setEnableSingleSideRouting(
+            isSingleSideSymmetryWorkerEnabled(getDesign(), iter));
         worker.setEnableDRC(enableDRC);
         worker.setRipupMode(ripupMode);
         worker.setFollowGuide(followGuide);
@@ -2392,6 +2411,8 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
                     auto bp = initDR_mergeBoundaryPin(i, j, size, routeBox);
                     worker->setDRIter(0, bp);
                 }
+                worker->setEnableSingleSideRouting(
+                    isSingleSideSymmetryWorkerEnabled(getDesign(), iter));
                 worker->setEnableDRC(enableDRC);
                 worker->setRipupMode(ripupMode);
                 worker->setFollowGuide(followGuide);
@@ -2840,6 +2861,15 @@ int FlexDR::main() {
                  0, 0, true, 2, true, 9);  // true search and repair
     searchRepair(iterNum++ /*  1 */, 7, -5, 3, DRCCOST, DRCCOST /*MAARKERCOST*/,
                  0, 0, true, 2, true, 9);  // true search and repair
+    if (isSymmetryWorkerFlowEnabled(getDesign())) {
+        cout << endl << "start DR symmetry global copy ..." << endl;
+        copySymmetryRouteBodies();
+        markSymmetryNetsForSearchRepair();
+        cout << "start DR symmetry mirror pin repair searchRepair iteration "
+             << iterNum << " ..." << endl;
+        searchRepair(iterNum++ /* mirror pin repair */, 7, 0, 8, DRCCOST,
+                     MARKERCOST, 0, 0, true, 0, false, 9);
+    }
     searchRepair(iterNum++ /*  3 */, 7, 0, 8, DRCCOST, MARKERCOST, 0, 0, true,
                  0, false, 9);  // true search and repair
     searchRepair(iterNum++ /*  4 */, 7, -1, 8, DRCCOST, MARKERCOST, 0, 0, true,

@@ -954,29 +954,71 @@ frUInt4 FlexTAWorker::assignIroute_getCost(taPin *iroute, frCoord trackLoc,
 
 void FlexTAWorker::assignIroute_bestTrack_helper(
     taPin *iroute, frLayerNum lNum, int trackIdx, frUInt4 &bestCost,
-    frCoord &bestTrackLoc, int &bestTrackIdx, frUInt4 &drcCost) {
+    frCoord &bestTrackLoc, int &bestTrackIdx, frUInt4 &drcCost,
+    bool isSymmetryNet, bool &bestHasSymmetryTrackPair, frUInt4 &bestRouteCost,
+    frUInt4 &bestDrcCost) {
     // bool enableOutput = true;
     bool enableOutput = false;
     double dbu = getDesign()->getTopBlock()->getDBUPerUU();
     auto trackLoc = getTrackLocs(lNum)[trackIdx];
     auto currCost = assignIroute_getCost(iroute, trackLoc, drcCost);
+    bool hasSymmetryTrackPair =
+        assignIroute_hasSymmetryTrackPair(lNum, trackIdx);
+    frUInt4 adjustedCost = currCost;
+    if (isSymmetryNet && !hasSymmetryTrackPair) {
+        auto penalty = getTech()->getLayer(lNum)->getPitch();
+        adjustedCost =
+            (std::numeric_limits<frUInt4>::max() - adjustedCost >= penalty)
+                ? adjustedCost + penalty
+                : std::numeric_limits<frUInt4>::max();
+    }
+
+    bool updateBest = false;
     if (isInitTA()) {
-        if (currCost < bestCost) {
-            bestCost = currCost;
-            bestTrackLoc = trackLoc;
-            bestTrackIdx = trackIdx;
+        if (isSymmetryNet) {
+            updateBest = adjustedCost < bestCost ||
+                         (adjustedCost == bestCost && hasSymmetryTrackPair &&
+                          !bestHasSymmetryTrackPair);
+        } else {
+            updateBest = currCost < bestCost;
         }
     } else {
-        if (drcCost < bestCost) {
-            bestCost = drcCost;
-            bestTrackLoc = trackLoc;
-            bestTrackIdx = trackIdx;
+        if (isSymmetryNet) {
+            updateBest = drcCost < bestCost ||
+                         (drcCost == bestCost && (hasSymmetryTrackPair &&
+                                                  !bestHasSymmetryTrackPair)) ||
+                         (drcCost == bestCost &&
+                          hasSymmetryTrackPair == bestHasSymmetryTrackPair &&
+                          currCost < bestRouteCost);
+        } else {
+            updateBest = drcCost < bestCost;
         }
+    }
+    if (updateBest) {
+        bestCost = (isInitTA() && isSymmetryNet)
+                       ? adjustedCost
+                       : (isInitTA() ? currCost : drcCost);
+        bestTrackLoc = trackLoc;
+        bestTrackIdx = trackIdx;
+        bestHasSymmetryTrackPair = hasSymmetryTrackPair;
+        bestRouteCost = currCost;
+        bestDrcCost = drcCost;
     }
     if (enableOutput) {
         cout << "  try track@" << trackLoc / dbu << ", cost/drc=" << currCost
              << "/" << drcCost << endl;
     }
+}
+
+bool FlexTAWorker::assignIroute_isSymmetryNet(taPin *iroute) const {
+    return getDesign()->isSymmetryNet(iroute->getGuide()->getNet()->getName());
+}
+
+bool FlexTAWorker::assignIroute_hasSymmetryTrackPair(frLayerNum lNum,
+                                                     int trackIdx) const {
+    return trackIdx >= 0 && lNum < (int)symmetryTrackPairs.size() &&
+           trackIdx < (int)symmetryTrackPairs[lNum].size() &&
+           symmetryTrackPairs[lNum][trackIdx] != -1;
 }
 
 int FlexTAWorker::assignIroute_bestTrack(taPin *iroute, frLayerNum lNum,
@@ -987,7 +1029,11 @@ int FlexTAWorker::assignIroute_bestTrack(taPin *iroute, frLayerNum lNum,
     frCoord bestTrackLoc = 0;
     int bestTrackIdx = -1;
     frUInt4 bestCost = std::numeric_limits<frUInt4>::max();
+    frUInt4 bestRouteCost = std::numeric_limits<frUInt4>::max();
+    frUInt4 bestDrcCost = std::numeric_limits<frUInt4>::max();
     frUInt4 drcCost = 0;
+    bool isSymmetryNet = assignIroute_isSymmetryNet(iroute);
+    bool bestHasSymmetryTrackPair = false;
     // while (1) {
     //  if wlen2, then try from  wlen2
     //  else try from wlen1 dir
@@ -1006,19 +1052,21 @@ int FlexTAWorker::assignIroute_bestTrack(taPin *iroute, frLayerNum lNum,
             startTrackIdx = min(startTrackIdx, idx2);
             startTrackIdx = max(startTrackIdx, idx1);
             for (int i = startTrackIdx; i <= idx2; i++) {
-                assignIroute_bestTrack_helper(iroute, lNum, i, bestCost,
-                                              bestTrackLoc, bestTrackIdx,
-                                              drcCost);
-                if (!drcCost) {
+                assignIroute_bestTrack_helper(
+                    iroute, lNum, i, bestCost, bestTrackLoc, bestTrackIdx,
+                    drcCost, isSymmetryNet, bestHasSymmetryTrackPair,
+                    bestRouteCost, bestDrcCost);
+                if (!isSymmetryNet && !drcCost) {
                     break;
                 }
             }
-            if (drcCost) {
+            if (isSymmetryNet || drcCost) {
                 for (int i = startTrackIdx - 1; i >= idx1; i--) {
-                    assignIroute_bestTrack_helper(iroute, lNum, i, bestCost,
-                                                  bestTrackLoc, bestTrackIdx,
-                                                  drcCost);
-                    if (!drcCost) {
+                    assignIroute_bestTrack_helper(
+                        iroute, lNum, i, bestCost, bestTrackLoc, bestTrackIdx,
+                        drcCost, isSymmetryNet, bestHasSymmetryTrackPair,
+                        bestRouteCost, bestDrcCost);
+                    if (!isSymmetryNet && !drcCost) {
                         break;
                     }
                 }
@@ -1038,20 +1086,22 @@ int FlexTAWorker::assignIroute_bestTrack(taPin *iroute, frLayerNum lNum,
             for (int i = 0; i <= idx2 - idx1; i++) {
                 int currTrackIdx = startTrackIdx + i;
                 if (currTrackIdx >= idx1 && currTrackIdx <= idx2) {
-                    assignIroute_bestTrack_helper(iroute, lNum, currTrackIdx,
-                                                  bestCost, bestTrackLoc,
-                                                  bestTrackIdx, drcCost);
+                    assignIroute_bestTrack_helper(
+                        iroute, lNum, currTrackIdx, bestCost, bestTrackLoc,
+                        bestTrackIdx, drcCost, isSymmetryNet,
+                        bestHasSymmetryTrackPair, bestRouteCost, bestDrcCost);
                 }
-                if (!drcCost) {
+                if (!isSymmetryNet && !drcCost) {
                     break;
                 }
                 currTrackIdx = startTrackIdx - i - 1;
                 if (currTrackIdx >= idx1 && currTrackIdx <= idx2) {
-                    assignIroute_bestTrack_helper(iroute, lNum, currTrackIdx,
-                                                  bestCost, bestTrackLoc,
-                                                  bestTrackIdx, drcCost);
+                    assignIroute_bestTrack_helper(
+                        iroute, lNum, currTrackIdx, bestCost, bestTrackLoc,
+                        bestTrackIdx, drcCost, isSymmetryNet,
+                        bestHasSymmetryTrackPair, bestRouteCost, bestDrcCost);
                 }
-                if (!drcCost) {
+                if (!isSymmetryNet && !drcCost) {
                     break;
                 }
             }
@@ -1067,19 +1117,21 @@ int FlexTAWorker::assignIroute_bestTrack(taPin *iroute, frLayerNum lNum,
             startTrackIdx = min(startTrackIdx, idx2);
             startTrackIdx = max(startTrackIdx, idx1);
             for (int i = startTrackIdx; i >= idx1; i--) {
-                assignIroute_bestTrack_helper(iroute, lNum, i, bestCost,
-                                              bestTrackLoc, bestTrackIdx,
-                                              drcCost);
-                if (!drcCost) {
+                assignIroute_bestTrack_helper(
+                    iroute, lNum, i, bestCost, bestTrackLoc, bestTrackIdx,
+                    drcCost, isSymmetryNet, bestHasSymmetryTrackPair,
+                    bestRouteCost, bestDrcCost);
+                if (!isSymmetryNet && !drcCost) {
                     break;
                 }
             }
-            if (drcCost) {
+            if (isSymmetryNet || drcCost) {
                 for (int i = startTrackIdx + 1; i <= idx2; i++) {
-                    assignIroute_bestTrack_helper(iroute, lNum, i, bestCost,
-                                                  bestTrackLoc, bestTrackIdx,
-                                                  drcCost);
-                    if (!drcCost) {
+                    assignIroute_bestTrack_helper(
+                        iroute, lNum, i, bestCost, bestTrackLoc, bestTrackIdx,
+                        drcCost, isSymmetryNet, bestHasSymmetryTrackPair,
+                        bestRouteCost, bestDrcCost);
+                    if (!isSymmetryNet && !drcCost) {
                         break;
                     }
                 }
@@ -1092,10 +1144,11 @@ int FlexTAWorker::assignIroute_bestTrack(taPin *iroute, frLayerNum lNum,
                 cout << " use wlen@" << iroute->getWlenHelper() << endl;
             }
             for (int i = idx2; i >= idx1; i--) {
-                assignIroute_bestTrack_helper(iroute, lNum, i, bestCost,
-                                              bestTrackLoc, bestTrackIdx,
-                                              drcCost);
-                if (!drcCost) {
+                assignIroute_bestTrack_helper(
+                    iroute, lNum, i, bestCost, bestTrackLoc, bestTrackIdx,
+                    drcCost, isSymmetryNet, bestHasSymmetryTrackPair,
+                    bestRouteCost, bestDrcCost);
+                if (!isSymmetryNet && !drcCost) {
                     break;
                 }
             }
@@ -1104,19 +1157,21 @@ int FlexTAWorker::assignIroute_bestTrack(taPin *iroute, frLayerNum lNum,
                 cout << " use wlen@" << iroute->getWlenHelper() << endl;
             }
             for (int i = (idx1 + idx2) / 2; i <= idx2; i++) {
-                assignIroute_bestTrack_helper(iroute, lNum, i, bestCost,
-                                              bestTrackLoc, bestTrackIdx,
-                                              drcCost);
-                if (!drcCost) {
+                assignIroute_bestTrack_helper(
+                    iroute, lNum, i, bestCost, bestTrackLoc, bestTrackIdx,
+                    drcCost, isSymmetryNet, bestHasSymmetryTrackPair,
+                    bestRouteCost, bestDrcCost);
+                if (!isSymmetryNet && !drcCost) {
                     break;
                 }
             }
-            if (drcCost) {
+            if (isSymmetryNet || drcCost) {
                 for (int i = (idx1 + idx2) / 2 - 1; i >= idx1; i--) {
-                    assignIroute_bestTrack_helper(iroute, lNum, i, bestCost,
-                                                  bestTrackLoc, bestTrackIdx,
-                                                  drcCost);
-                    if (!drcCost) {
+                    assignIroute_bestTrack_helper(
+                        iroute, lNum, i, bestCost, bestTrackLoc, bestTrackIdx,
+                        drcCost, isSymmetryNet, bestHasSymmetryTrackPair,
+                        bestRouteCost, bestDrcCost);
+                    if (!isSymmetryNet && !drcCost) {
                         break;
                     }
                 }
@@ -1126,10 +1181,11 @@ int FlexTAWorker::assignIroute_bestTrack(taPin *iroute, frLayerNum lNum,
                 cout << " use wlen@" << iroute->getWlenHelper() << endl;
             }
             for (int i = idx1; i <= idx2; i++) {
-                assignIroute_bestTrack_helper(iroute, lNum, i, bestCost,
-                                              bestTrackLoc, bestTrackIdx,
-                                              drcCost);
-                if (!drcCost) {
+                assignIroute_bestTrack_helper(
+                    iroute, lNum, i, bestCost, bestTrackLoc, bestTrackIdx,
+                    drcCost, isSymmetryNet, bestHasSymmetryTrackPair,
+                    bestRouteCost, bestDrcCost);
+                if (!isSymmetryNet && !drcCost) {
                     break;
                 }
             }
@@ -1154,8 +1210,8 @@ int FlexTAWorker::assignIroute_bestTrack(taPin *iroute, frLayerNum lNum,
     }
     // totCost    -= iroute->getCost();
     // totDrcCost -= iroute->getDrcCost();
-    totCost += drcCost;
-    iroute->setCost(drcCost);
+    totCost += bestDrcCost;
+    iroute->setCost(bestDrcCost);
     // totDrcCost += drcCost;
     return bestTrackLoc;
 }
