@@ -28,10 +28,254 @@
 
 #include <iostream>
 #include "FlexGR.h"
+#include <algorithm>
+#include <array>
 #include <deque>
+#include <functional>
+#include <limits>
+#include <map>
+#include <queue>
+#include <set>
 
 using namespace std;
 using namespace fr;
+
+void FlexGR::genSelfSymmetryRootSideTopology(const vector<frPoint> &rootSideTerminalGCellIdxs,
+                                             const frPoint &rootGCellIdx,
+                                             bool isAxisHorizontal,
+                                             frCoord axisGCellIdx,
+                                             vector<frPoint> &rootSideTreeVertices,
+                                             vector<pair<frPoint, frPoint> > &rootSideTreeEdges) {
+  rootSideTreeVertices.clear();
+  rootSideTreeEdges.clear();
+
+  set<frCoord> xCoords;
+  set<frCoord> yCoords;
+  set<frPoint> terminals;
+
+  for (auto gcellIdx: rootSideTerminalGCellIdxs) {
+    xCoords.insert(gcellIdx.x());
+    yCoords.insert(gcellIdx.y());
+    terminals.insert(gcellIdx);
+  }
+  xCoords.insert(rootGCellIdx.x());
+  yCoords.insert(rootGCellIdx.y());
+  terminals.insert(rootGCellIdx);
+
+  if (isAxisHorizontal) {
+    yCoords.insert(axisGCellIdx);
+  } else {
+    xCoords.insert(axisGCellIdx);
+  }
+
+  const int LEFT = 0;
+  const int RIGHT = 1;
+  const int DOWN = 2;
+  const int UP = 3;
+
+  vector<frPoint> graphGCellIdxs;
+  vector<array<int, 4> > graphNeighbors;
+  vector<array<int, 4> > graphNeighborCosts;
+  map<frPoint, int> gcellIdx2GraphIdx;
+
+  for (auto y: yCoords) {
+    for (auto x: xCoords) {
+      frPoint gcellIdx(x, y);
+      gcellIdx2GraphIdx[gcellIdx] = (int)graphGCellIdxs.size();
+      graphGCellIdxs.push_back(gcellIdx);
+      graphNeighbors.push_back({{-1, -1, -1, -1}});
+      graphNeighborCosts.push_back({{0, 0, 0, 0}});
+    }
+  }
+
+  set<frPoint> treeVertexSet;
+  set<pair<frPoint, frPoint> > treeEdgeSet;
+
+  auto appendVertex = [&](const frPoint &vertex) {
+    if (treeVertexSet.insert(vertex).second) {
+      rootSideTreeVertices.push_back(vertex);
+    }
+  };
+
+  auto normalizeEdge = [](frPoint begin, frPoint end) {
+    if (end < begin) {
+      swap(begin, end);
+    }
+    return make_pair(begin, end);
+  };
+
+  auto appendEdge = [&](const frPoint &begin, const frPoint &end) {
+    if (begin == end) {
+      return;
+    }
+    auto edge = normalizeEdge(begin, end);
+    if (treeEdgeSet.insert(edge).second) {
+      rootSideTreeEdges.push_back(edge);
+    }
+  };
+
+  auto getAxisCoord = [&](const frPoint &gcellIdx) {
+    return isAxisHorizontal ? gcellIdx.y() : gcellIdx.x();
+  };
+
+  auto isAxisEdge = [&](const frPoint &begin, const frPoint &end) {
+    if (isAxisHorizontal) {
+      return begin.y() == axisGCellIdx && end.y() == axisGCellIdx;
+    }
+    return begin.x() == axisGCellIdx && end.x() == axisGCellIdx;
+  };
+
+  auto edgeCost = [&](const frPoint &begin, const frPoint &end) {
+    auto length = abs(end.x() - begin.x()) + abs(end.y() - begin.y());
+    return length * (isAxisEdge(begin, end) ? 1 : 4);
+  };
+
+  auto setNeighbor = [&](int fromIdx, int direction, int toIdx) {
+    graphNeighbors[fromIdx][direction] = toIdx;
+    graphNeighborCosts[fromIdx][direction] = edgeCost(graphGCellIdxs[fromIdx], graphGCellIdxs[toIdx]);
+  };
+
+  for (auto y: yCoords) {
+    int prevIdx = -1;
+    for (auto x: xCoords) {
+      int currIdx = gcellIdx2GraphIdx[frPoint(x, y)];
+      if (prevIdx != -1) {
+        setNeighbor(prevIdx, RIGHT, currIdx);
+        setNeighbor(currIdx, LEFT, prevIdx);
+      }
+      prevIdx = currIdx;
+    }
+  }
+
+  for (auto x: xCoords) {
+    int prevIdx = -1;
+    for (auto y: yCoords) {
+      int currIdx = gcellIdx2GraphIdx[frPoint(x, y)];
+      if (prevIdx != -1) {
+        setNeighbor(prevIdx, UP, currIdx);
+        setNeighbor(currIdx, DOWN, prevIdx);
+      }
+      prevIdx = currIdx;
+    }
+  }
+
+  using WavefrontNode = pair<int, int>;
+  priority_queue<WavefrontNode, vector<WavefrontNode>, greater<WavefrontNode> > wavefront;
+  const int graphSize = (int)graphGCellIdxs.size();
+  const int INF = numeric_limits<int>::max();
+  vector<int> dist(graphSize, INF);
+  vector<int> prev(graphSize, -1);
+  vector<bool> inTree(graphSize, false);
+
+  auto addTreeSource = [&](int graphIdx) {
+    inTree[graphIdx] = true;
+    dist[graphIdx] = 0;
+    prev[graphIdx] = -1;
+    wavefront.emplace(0, graphIdx);
+  };
+
+  auto searchNextTarget = [&](const function<bool(int)> &isTarget, vector<int> &path) {
+    path.clear();
+
+    while (!wavefront.empty()) {
+      auto wavefrontNode = wavefront.top();
+      wavefront.pop();
+
+      int currCost = wavefrontNode.first;
+      int currIdx = wavefrontNode.second;
+      if (currCost != dist[currIdx]) {
+        continue;
+      }
+
+      if (!inTree[currIdx] && isTarget(currIdx)) {
+        int pathIdx = currIdx;
+        path.push_back(pathIdx);
+        while (!inTree[pathIdx]) {
+          pathIdx = prev[pathIdx];
+          if (pathIdx < 0) {
+            return false;
+          }
+          path.push_back(pathIdx);
+        }
+        reverse(path.begin(), path.end());
+        return true;
+      }
+
+      for (int dir = 0; dir < 4; dir++) {
+        int nextIdx = graphNeighbors[currIdx][dir];
+        if (nextIdx < 0) {
+          continue;
+        }
+        int nextCost = currCost + graphNeighborCosts[currIdx][dir];
+        if (nextCost < dist[nextIdx]) {
+          dist[nextIdx] = nextCost;
+          prev[nextIdx] = currIdx;
+          wavefront.emplace(nextCost, nextIdx);
+        }
+      }
+    }
+
+    return false;
+  };
+
+  auto appendPath = [&](const vector<int> &path) {
+    for (auto graphIdx: path) {
+      appendVertex(graphGCellIdxs[graphIdx]);
+    }
+    for (int i = 1; i < (int)path.size(); i++) {
+      appendEdge(graphGCellIdxs[path[i - 1]], graphGCellIdxs[path[i]]);
+    }
+    for (auto graphIdx: path) {
+      addTreeSource(graphIdx);
+    }
+  };
+
+  appendVertex(rootGCellIdx);
+  int rootGraphIdx = gcellIdx2GraphIdx[rootGCellIdx];
+  addTreeSource(rootGraphIdx);
+
+  set<int> unconnectedTerminals;
+  for (auto terminal: terminals) {
+    int terminalIdx = gcellIdx2GraphIdx[terminal];
+    if (terminalIdx != rootGraphIdx) {
+      unconnectedTerminals.insert(terminalIdx);
+    }
+  }
+  while (!unconnectedTerminals.empty()) {
+    vector<int> path;
+    if (!searchNextTarget([&](int graphIdx) { return unconnectedTerminals.find(graphIdx) != unconnectedTerminals.end(); },
+                          path)) {
+      cout << "Error: failed to find root-side self-symmetry Hanan path\n";
+      exit(1);
+    }
+    appendPath(path);
+    for (auto graphIdx: path) {
+      unconnectedTerminals.erase(graphIdx);
+    }
+  }
+
+  bool intersectsAxis = false;
+  for (int graphIdx = 0; graphIdx < graphSize; graphIdx++) {
+    if (inTree[graphIdx] && getAxisCoord(graphGCellIdxs[graphIdx]) == axisGCellIdx) {
+      intersectsAxis = true;
+      break;
+    }
+  }
+
+  if (!intersectsAxis) {
+    vector<bool> isAxisTarget(graphSize, false);
+    for (int graphIdx = 0; graphIdx < graphSize; graphIdx++) {
+      isAxisTarget[graphIdx] = getAxisCoord(graphGCellIdxs[graphIdx]) == axisGCellIdx;
+    }
+
+    vector<int> path;
+    if (!searchNextTarget([&](int graphIdx) { return isAxisTarget[graphIdx]; }, path)) {
+      cout << "Error: failed to connect root-side self-symmetry tree to axis gcell\n";
+      exit(1);
+    }
+    appendPath(path);
+  }
+}
 
 // pinGCellNodes size always >= 2
 void FlexGR::genSTTopology_FLUTE(vector<frNode*> &pinGCellNodes, vector<frNode*> &steinerNodes) {

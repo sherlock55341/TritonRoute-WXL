@@ -34,6 +34,8 @@
 #include "global.h"
 #include "io/io.h"
 #include "db/tech/frConstraint.h"
+#include "db/obj/frInst.h"
+#include "db/obj/frInstTerm.h"
 #include "db/obj/frNode.h"
 
 //#include <boost/polygon/polygon.hpp>
@@ -5350,7 +5352,45 @@ void io::Parser::readLefDef() {
 
   readDef();
 
+  auto symmtry5It = design->getTopBlock()->name2net.find("Symmtry5");
+  if (symmtry5It != design->getTopBlock()->name2net.end()) {
+    auto symmtry5Net = symmtry5It->second;
+    const frCoord symmtry5Axis = 72000;
+    frBox dieBox;
+    design->getTopBlock()->getBoundaryBBox(dieBox);
+    if (symmtry5Axis < dieBox.bottom() || symmtry5Axis > dieBox.top()) {
+      cout << "Error: Symmtry5 self-symmetry axis y=" << symmtry5Axis
+           << " is outside die box " << dieBox << "\n";
+      exit(1);
+    }
 
+    int lowerCnt = 0;
+    int onAxisCnt = 0;
+    int upperCnt = 0;
+    for (auto instTerm: symmtry5Net->getInstTerms()) {
+      frPoint origin;
+      instTerm->getInst()->getOrigin(origin);
+      if (origin.y() < symmtry5Axis) {
+        lowerCnt++;
+      } else if (origin.y() > symmtry5Axis) {
+        upperCnt++;
+      } else {
+        onAxisCnt++;
+      }
+    }
+    if (lowerCnt == 0 || upperCnt == 0) {
+      cout << "Error: Symmtry5 self-symmetry axis y=" << symmtry5Axis
+           << " does not split instances on both sides; lower=" << lowerCnt
+           << ", onAxis=" << onAxisCnt << ", upper=" << upperCnt << "\n";
+      exit(1);
+    }
+
+    frSelfSymmetryConstraint selfSymmetryConstraint;
+    selfSymmetryConstraint.isAxisHorizontal = true;
+    selfSymmetryConstraint.axis = symmtry5Axis;
+    symmtry5Net->setSelfSymmetryConstraint(selfSymmetryConstraint);
+    symmtry5Net->setConstraint(frNetRoutingConstraint::frcSelfSymmetry);
+  }
 
   if (VERBOSE > 0) {
     cout <<endl;

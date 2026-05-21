@@ -156,6 +156,12 @@ namespace fr {
     void genMSTTopology_PD(std::vector<frNode*> &nodes, double alpha = 0.3);
     int genMSTTopology_PD_minIdx(const std::vector<int> &keys, const std::vector<bool> &isVisited);
 
+    void genSelfSymmetryRootSideTopology(const std::vector<frPoint> &rootSideTerminalGCellIdxs,
+                                         const frPoint &rootGCellIdx,
+                                         bool isAxisHorizontal,
+                                         frCoord axisGCellIdx,
+                                         std::vector<frPoint> &rootSideTreeVertices,
+                                         std::vector<std::pair<frPoint, frPoint> > &rootSideTreeEdges);
     void genSTTopology_FLUTE(std::vector<frNode*> &nodes, std::vector<frNode*> &steinerNodes);
     void genSTTopology_HVW(std::vector<frNode*> &nodes, std::vector<frNode*> &steinerNodes);
     void genSTTopology_HVW_compute(frNode *currNode, std::vector<frNode*> &nodes, std::vector<unsigned> &overlapL, 
