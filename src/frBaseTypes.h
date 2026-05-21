@@ -181,6 +181,10 @@ namespace fr {
     frcPowerNet,
     frcGroundNet
   };
+  enum class frNetRoutingConstraint {
+    frcNone,
+    frcSelfSymmetry
+  };
   enum class frTermDirectionEnum {
     UNKNOWN,
     INPUT,
@@ -410,6 +414,11 @@ namespace fr {
   typedef boost::polygon::point_data<int> Point;
   typedef boost::polygon::interval_data<int> Interval;
   typedef boost::polygon::segment_data<int> Segment;
+
+  struct frSelfSymmetryConstraint {
+    bool isAxisHorizontal;
+    int axis;
+  };
 }
 
 #endif

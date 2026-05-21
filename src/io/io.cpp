@@ -634,24 +634,20 @@ int io::Parser::getDefNets(defrCallbackType_e type, defiNet* net, defiUserData d
   //cout << "Net " << net->name() << " has " << net->numPaths() << " paths\n"; // no paths
   //cout << "Net " << net->name() << " has " << net->numVpins() << " vpins\n"; // no vpins
   
-  // initialize
-  string layerName   = "";
-  string viaName     = "";
-  string shape       = "";
-  bool hasBeginPoint = false;
-  bool hasEndPoint   = false;
-  frCoord beginX     = -1;
-  frCoord beginY     = -1;
-  frCoord beginExt   = -1;
-  frCoord endX       = -1;
-  frCoord endY       = -1;
-  frCoord endExt     = -1;
-  bool hasRect       = false;
-  frCoord left       = -1;
-  frCoord bottom     = -1;
-  frCoord right      = -1;
-  frCoord top        = -1;
-  frCoord width      = 0;
+  auto getEndStyleEnum = [](frCoord ext) {
+    if (ext == -1) {
+      return frcExtendEndStyle;
+    } else if (ext == 0) {
+      return frcTruncateEndStyle;
+    }
+    return frcVariableEndStyle;
+  };
+
+  auto getEndStyleExt = [](frEndStyleEnum styleEnum, frCoord ext,
+                           frCoord defaultExt) {
+    return (frUInt4)(styleEnum == frcExtendEndStyle ? defaultExt : ext);
+  };
+
   for (int i = 0; i < (int)net->numWires(); i++) {
     defiWire* tmpWire = net->wire(i);
     //cout << "Wire " << i << "\n";
@@ -665,25 +661,107 @@ int io::Parser::getDefNets(defrCallbackType_e type, defiNet* net, defiUserData d
     for (int j = 0; j < (int)tmpWire->numPaths(); j++) {
       defiPath* path     = tmpWire->path(j);
       path->initTraverse();
-      // initialize
-      layerName     = "";
-      viaName       = "";
-      shape         = "";
-      hasBeginPoint = false;
-      hasEndPoint   = false;
-      beginX        = -1;
-      beginY        = -1;
-      beginExt      = -1;
-      endX          = -1;
-      endY          = -1;
-      endExt        = -1;
-      hasRect       = false;
-      left          = -1;
-      bottom        = -1;
-      right         = -1;
-      top           = -1;
-      width         = 0;
+      string layerName = "";
+      bool hasLayer = false;
+      bool hasCurrPoint = false;
+      bool hasRect = false;
+      frPoint currPoint;
+      frCoord currExt = -1;
+      frCoord defaultExt = -1;
+      frCoord width = 0;
+      vector<unique_ptr<frShape> > pathShapes;
+      vector<unique_ptr<frVia> > pathVias;
       //cout <<"path here" <<endl;
+
+      auto getLayer = [&]() {
+        if (!hasLayer) {
+          cout <<"Error: DEF route has point before layer on net "
+               <<net->name() <<endl;
+          exit(1);
+        }
+        return ((io::Parser*)data)->tech->name2layer[layerName];
+      };
+
+      auto getRouteWidth = [&]() {
+        return width ? width : getLayer()->getWidth();
+      };
+
+      auto addPathSeg = [&](const frPoint &beginPoint, frCoord beginExt,
+                            const frPoint &endPoint, frCoord endExt) {
+        if (beginPoint == endPoint) {
+          return;
+        }
+        if (beginPoint.x() != endPoint.x() &&
+            beginPoint.y() != endPoint.y()) {
+          cout <<"Error: non-orthogonal DEF route segment on net "
+               <<net->name() <<" layer " <<layerName <<" ( "
+               <<beginPoint.x() <<" " <<beginPoint.y() <<" ) ( "
+               <<endPoint.x() <<" " <<endPoint.y() <<" )" <<endl;
+          exit(1);
+        }
+
+        auto pathSeg = make_unique<frPathSeg>();
+        frPoint styleBeginPoint = beginPoint;
+        frPoint styleEndPoint = endPoint;
+        frCoord styleBeginExt = beginExt;
+        frCoord styleEndExt = endExt;
+        if (styleBeginPoint.x() > styleEndPoint.x() ||
+            styleBeginPoint.y() > styleEndPoint.y()) {
+          swap(styleBeginPoint, styleEndPoint);
+          swap(styleBeginExt, styleEndExt);
+        }
+        pathSeg->setPoints(styleBeginPoint, styleEndPoint);
+        pathSeg->setLayerNum(getLayer()->getLayerNum());
+
+        auto routeWidth = getRouteWidth();
+        auto defaultEndExt = (frCoord)routeWidth / 2;
+        auto beginStyleEnum = getEndStyleEnum(styleBeginExt);
+        auto endStyleEnum = getEndStyleEnum(styleEndExt);
+        frSegStyle segStyle;
+        segStyle.setWidth(routeWidth);
+        segStyle.setBeginStyle(
+            frEndStyle(beginStyleEnum),
+            getEndStyleExt(beginStyleEnum, styleBeginExt, defaultEndExt));
+        segStyle.setEndStyle(
+            frEndStyle(endStyleEnum),
+            getEndStyleExt(endStyleEnum, styleEndExt, defaultEndExt));
+        pathSeg->setStyle(segStyle);
+        pathSeg->addToNet(netIn);
+        unique_ptr<frShape> pathShape(std::move(pathSeg));
+        pathShapes.push_back(std::move(pathShape));
+      };
+
+      auto addVia = [&](const string &currViaName) {
+        if (!hasCurrPoint) {
+          cout <<"Error: DEF route has via before point on net "
+               <<net->name() <<" via " <<currViaName <<endl;
+          exit(1);
+        }
+        if (((io::Parser*)data)->tech->name2via.find(currViaName) ==
+            ((io::Parser*)data)->tech->name2via.end()) {
+          if (VERBOSE > -1) {
+            cout <<"Error: unsupported via: " <<currViaName <<endl;
+          }
+          return;
+        }
+        auto viaDef = ((io::Parser*)data)->tech->name2via[currViaName];
+        auto via = make_unique<frVia>(viaDef);
+        via->setOrigin(currPoint);
+        via->addToNet(netIn);
+        pathVias.push_back(std::move(via));
+      };
+
+      auto addRoutePoint = [&](const frPoint &point, frCoord pointExt) {
+        if (!hasCurrPoint) {
+          currPoint = point;
+          currExt = pointExt;
+          hasCurrPoint = true;
+          return;
+        }
+        addPathSeg(currPoint, currExt, point, pointExt);
+        currPoint = point;
+        currExt = pointExt;
+      };
       
       int pathId;
       while ((pathId = path->next()) != DEFIPATH_DONE) {
@@ -698,6 +776,11 @@ int io::Parser::getDefNets(defrCallbackType_e type, defiNet* net, defiUserData d
               //continue;
               exit(1);
             }
+            hasLayer = true;
+            hasCurrPoint = false;
+            currExt = -1;
+            defaultExt = -1;
+            width = 0;
             if (enableOutput) {
               if (!j) {
                 cout <<" " <<layerName;
@@ -707,11 +790,14 @@ int io::Parser::getDefNets(defrCallbackType_e type, defiNet* net, defiUserData d
             }
             break;
           case DEFIPATH_VIA:
-            viaName = string(path->getVia());
+          {
+            string viaName = path->getVia();
             if (enableOutput) {
               cout <<" " <<viaName;
             }
+            addVia(viaName);
             break;
+          }
           case DEFIPATH_WIDTH:
             width = path->getWidth();
             if (enableOutput) {
@@ -719,145 +805,66 @@ int io::Parser::getDefNets(defrCallbackType_e type, defiNet* net, defiUserData d
             }
             break;
           case DEFIPATH_POINT:
-            if (!hasBeginPoint) {
-              path->getPoint(&beginX, &beginY);
-              if (enableOutput) {
-                cout <<" ( " <<beginX <<" " <<beginY <<" )";
-              }
-              hasBeginPoint = true;
-            } else {
-              path->getPoint(&endX, &endY);
-              if (enableOutput) {
-                cout <<" ( " <<endX <<" " <<endY <<" )";
-              }
-              hasEndPoint = true;
-            }
-            break;
-          case DEFIPATH_FLUSHPOINT:
-            if (!hasBeginPoint) {
-              path->getFlushPoint(&beginX, &beginY, &beginExt);
-              if (enableOutput) {
-                cout <<" ( " <<beginX <<" " <<beginY <<" " <<beginExt <<" )";
-              }
-              hasBeginPoint = true;
-            } else {
-              path->getFlushPoint(&endX, &endY, &endExt);
-              if (enableOutput) {
-                cout <<" ( " <<endX <<" " <<endY <<" " <<endExt <<" )";
-              }
-              hasEndPoint = true;
-            }
-            break;
-          case DEFIPATH_SHAPE:
-            shape = path->getShape();
-            beginExt = 0;
-            endExt = 0;
+          {
+            frCoord x, y;
+            path->getPoint(&x, &y);
             if (enableOutput) {
-              cout <<" + SHAPE " <<shape;
+              cout <<" ( " <<x <<" " <<y <<" )";
+            }
+            addRoutePoint(frPoint(x, y), defaultExt);
+            break;
+          }
+          case DEFIPATH_FLUSHPOINT:
+          {
+            frCoord x, y, ext;
+            path->getFlushPoint(&x, &y, &ext);
+            if (enableOutput) {
+              cout <<" ( " <<x <<" " <<y <<" " <<ext <<" )";
+            }
+            addRoutePoint(frPoint(x, y), ext);
+            break;
+          }
+          case DEFIPATH_SHAPE:
+            defaultExt = 0;
+            if (enableOutput) {
+              cout <<" + SHAPE " <<path->getShape();
             }
             break;
           case DEFIPATH_RECT:
+          {
+            frCoord left, bottom, right, top;
             path->getViaRect(&left, &bottom, &right, &top);
             if (enableOutput) {
               cout <<" RECT ( " <<left <<" " <<bottom <<" " <<right <<" " <<top <<" )";
             }
             hasRect = true;
             break;
+          }
           case DEFIPATH_VIRTUALPOINT:
-            if (!hasBeginPoint) {
-              path->getVirtualPoint(&beginX, &beginY);
-              if (enableOutput) {
-                cout <<" ( " <<beginX <<" " <<beginY <<" )";
-              }
-              hasBeginPoint = true;
-            } else {
-              path->getVirtualPoint(&endX, &endY);
-              if (enableOutput) {
-                cout <<" ( " <<endX <<" " <<endY <<" )";
-              }
-              hasEndPoint = true;
+          {
+            frCoord x, y;
+            path->getVirtualPoint(&x, &y);
+            if (enableOutput) {
+              cout <<" ( " <<x <<" " <<y <<" )";
             }
+            addRoutePoint(frPoint(x, y), defaultExt);
             break;
+          }
           default : cout <<" net " <<net->name() <<" unknown pathId " <<pathId <<endl; break;
         }
       }
 
-
-      auto layerNum = ((io::Parser*)data)->tech->name2layer[layerName]->getLayerNum();
-      // add rect
       if (hasRect) {
         //shared_ptr<frBlockObject> rect = make_shared<frRect>(); // incomplete
         // end steiner = frRect
         continue;
       }
 
-      // add wire, currently do not consider extension
-      if (hasEndPoint) {
-        // route
-        auto tmpP = make_unique<frPathSeg>();
-
-        // avoid begin > end case
-        if (beginX > endX || beginY > endY) {
-          tmpP->setPoints(frPoint(endX, endY), frPoint(beginX, beginY));
-          swap(beginExt, endExt);
-        } else {
-          tmpP->setPoints(frPoint(beginX, beginY), frPoint(endX, endY));
-        }
-        tmpP->addToNet(netIn);
-        tmpP->setLayerNum(layerNum);
-
-        width = (width) ? width : ((io::Parser*)data)->tech->name2layer[layerName]->getWidth();
-        auto defaultBeginExt = width / 2;
-        auto defaultEndExt   = width / 2;
-
-        frEndStyleEnum tmpBeginEnum;
-        if (beginExt == -1) {
-          tmpBeginEnum = frcExtendEndStyle;
-        } else if (beginExt == 0) {
-          tmpBeginEnum = frcTruncateEndStyle;
-        } else {
-          tmpBeginEnum = frcVariableEndStyle;
-        }
-        frEndStyle tmpBeginStyle(tmpBeginEnum);
-
-        frEndStyleEnum tmpEndEnum;
-        if (endExt == -1) {
-          tmpEndEnum = frcExtendEndStyle;
-        } else if (endExt == 0) {
-          tmpEndEnum = frcTruncateEndStyle;
-        } else {
-          tmpEndEnum = frcVariableEndStyle;
-        }
-        frEndStyle tmpEndStyle(tmpEndEnum);
-
-        frSegStyle tmpSegStyle;
-        tmpSegStyle.setWidth(width);
-        tmpSegStyle.setBeginStyle(tmpBeginStyle, tmpBeginEnum == frcExtendEndStyle ? defaultBeginExt : beginExt);
-        tmpSegStyle.setEndStyle(tmpEndStyle, tmpEndEnum == frcExtendEndStyle ? defaultEndExt : endExt);
-        tmpP->setStyle(tmpSegStyle);
-        unique_ptr<frShape> tmpS(std::move(tmpP));
-        netIn->addShape(tmpS);
+      for (auto &pathShape: pathShapes) {
+        netIn->addShape(pathShape);
       }
-
-      // add via
-      if (viaName != "") {
-        if (((io::Parser*)data)->tech->name2via.find(viaName) == ((io::Parser*)data)->tech->name2via.end()) {
-          if (VERBOSE > -1) {
-            cout <<"Error: unsupported via: " <<viaName <<endl;
-          }
-        } else {
-          frPoint p;
-          if (hasEndPoint) {
-            p.set(endX, endY);
-          } else {
-            p.set(beginX, beginY);
-          }
-          auto viaDef = ((io::Parser*)data)->tech->name2via[viaName];
-          auto tmpP = make_unique<frVia>(viaDef);
-          tmpP->setOrigin(p);
-          tmpP->addToNet(netIn);
-          netIn->addVia(tmpP);
-        }
+      for (auto &pathVia: pathVias) {
+        netIn->addVia(pathVia);
       }
     } // end path
   } // end wire

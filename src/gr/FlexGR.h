@@ -109,6 +109,7 @@ namespace fr {
     void initGR();
     void initGR_genTopology();
     void initGR_genTopology_net(frNet *net);
+    void initGR_genTopology_selfsymmetry_net(frNet* net);
     void initGR_updateCongestion();
     void initGR_updateCongestion_net(frNet *net);
     void initGR_updateCongestion2D_net(frNet *net);

@@ -51,6 +51,7 @@ namespace fr {
     frNet(const frString &in): frBlockObject(), name(in), instTerms(), terms(), shapes(), vias(), 
                                pwires(), grShapes(), grVias(), nodes(), root(nullptr), rootGCellNode(nullptr), 
                                firstNonRPinNode(nullptr), rpins(), guides(), type(frNetEnum::frcNormalNet), 
+                               constraint(frNetRoutingConstraint::frcNone), 
                                modified(false), isFakeNet(false) {}
     // getters
     const frString& getName() const {
@@ -242,6 +243,18 @@ namespace fr {
     void setType(frNetEnum in) {
       type = in;
     }
+    frSelfSymmetryConstraint getSelfSymmetryConstraint() const {
+      return selfSymmetryConstraint;
+    }
+    void setSelfSymmetryConstraint(frSelfSymmetryConstraint in) {
+      selfSymmetryConstraint = in;
+    }
+    frNetRoutingConstraint getConstraint() const {
+      return constraint;
+    }
+    void setConstraint(frNetRoutingConstraint in) {
+      constraint = in;
+    }
     virtual frBlockObjectEnum typeId() const override {
       return frcNet;
     }
@@ -266,6 +279,8 @@ namespace fr {
     //std::list<std::unique_ptr<frGuide> >    guides;
     std::vector<std::unique_ptr<frGuide> >    guides;
     frNetEnum                                 type;
+    frNetRoutingConstraint                    constraint;
+    frSelfSymmetryConstraint                  selfSymmetryConstraint;
     bool                                      modified;
     bool                                      isFakeNet; // indicate floating PG nets
   };
