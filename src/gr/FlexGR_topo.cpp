@@ -277,6 +277,391 @@ void FlexGR::genSelfSymmetryRootSideTopology(const vector<frPoint> &rootSideTerm
   }
 }
 
+void FlexGR::genSelfSymmetryOppositeSideTopology(const vector<frPoint> &oppositeSideTerminalGCellIdxs,
+                                                 bool isAxisHorizontal,
+                                                 frCoord axisGCellIdx,
+                                                 int rootSide,
+                                                 const vector<frPoint> &rootSideTreeVertices,
+                                                 const vector<pair<frPoint, frPoint> > &rootSideTreeEdges,
+                                                 vector<frPoint> &oppositeSideTreeVertices,
+                                                 vector<pair<frPoint, frPoint> > &oppositeSideTreeEdges) {
+  oppositeSideTreeVertices.clear();
+  oppositeSideTreeEdges.clear();
+
+  if (oppositeSideTerminalGCellIdxs.empty()) {
+    return;
+  }
+
+  const int LEFT = 0;
+  const int RIGHT = 1;
+  const int DOWN = 2;
+  const int UP = 3;
+
+  auto getAxisCoord = [&](const frPoint &gcellIdx) {
+    return isAxisHorizontal ? gcellIdx.y() : gcellIdx.x();
+  };
+
+  auto getSide = [&](frCoord coord) {
+    if (coord < axisGCellIdx) {
+      return -1;
+    }
+    if (coord > axisGCellIdx) {
+      return 1;
+    }
+    return 0;
+  };
+
+  auto isAllowedPoint = [&](const frPoint &gcellIdx) {
+    int side = getSide(getAxisCoord(gcellIdx));
+    return side == 0 || side != rootSide;
+  };
+
+  auto mirrorPoint = [&](const frPoint &gcellIdx) {
+    frPoint mirroredGCellIdx = gcellIdx;
+    if (isAxisHorizontal) {
+      mirroredGCellIdx.set(gcellIdx.x(), axisGCellIdx + (axisGCellIdx - gcellIdx.y()));
+    }
+    else {
+      mirroredGCellIdx.set(axisGCellIdx + (axisGCellIdx - gcellIdx.x()), gcellIdx.y());
+    }
+    return mirroredGCellIdx;
+  };
+
+  auto normalizeEdge = [](frPoint begin, frPoint end) {
+    if (end < begin) {
+      swap(begin, end);
+    }
+    return make_pair(begin, end);
+  };
+
+  auto pointOnSegment = [](const frPoint &segmentBegin,
+                           const frPoint &segmentEnd,
+                           const frPoint &point) {
+    if (segmentBegin.x() == segmentEnd.x()) {
+      if (point.x() != segmentBegin.x()) {
+        return false;
+      }
+      return point.y() >= min(segmentBegin.y(), segmentEnd.y()) &&
+             point.y() <= max(segmentBegin.y(), segmentEnd.y());
+    }
+    if (segmentBegin.y() == segmentEnd.y()) {
+      if (point.y() != segmentBegin.y()) {
+        return false;
+      }
+      return point.x() >= min(segmentBegin.x(), segmentEnd.x()) &&
+             point.x() <= max(segmentBegin.x(), segmentEnd.x());
+    }
+    return false;
+  };
+
+  auto coversSegment = [](const frPoint &segmentBegin,
+                          const frPoint &segmentEnd,
+                          const frPoint &candidateBegin,
+                          const frPoint &candidateEnd) {
+    if (candidateBegin == candidateEnd) {
+      return false;
+    }
+    if (candidateBegin.x() == candidateEnd.x()) {
+      if (segmentBegin.x() != segmentEnd.x() ||
+          segmentBegin.x() != candidateBegin.x()) {
+        return false;
+      }
+      return min(candidateBegin.y(), candidateEnd.y()) >= min(segmentBegin.y(), segmentEnd.y()) &&
+             max(candidateBegin.y(), candidateEnd.y()) <= max(segmentBegin.y(), segmentEnd.y());
+    }
+    if (candidateBegin.y() == candidateEnd.y()) {
+      if (segmentBegin.y() != segmentEnd.y() ||
+          segmentBegin.y() != candidateBegin.y()) {
+        return false;
+      }
+      return min(candidateBegin.x(), candidateEnd.x()) >= min(segmentBegin.x(), segmentEnd.x()) &&
+             max(candidateBegin.x(), candidateEnd.x()) <= max(segmentBegin.x(), segmentEnd.x());
+    }
+    return false;
+  };
+
+  set<frCoord> xCoords;
+  set<frCoord> yCoords;
+  set<frPoint> terminals;
+  set<frPoint> explicitAxisSources;
+  vector<pair<frPoint, frPoint> > mirroredRootSideEdges;
+
+  auto addGraphCoord = [&](const frPoint &gcellIdx) {
+    if (!isAllowedPoint(gcellIdx)) {
+      return;
+    }
+    xCoords.insert(gcellIdx.x());
+    yCoords.insert(gcellIdx.y());
+  };
+
+  for (auto terminal: oppositeSideTerminalGCellIdxs) {
+    if (!isAllowedPoint(terminal)) {
+      cout << "Error: opposite-side self-symmetry terminal crosses into root side\n";
+      exit(1);
+    }
+    terminals.insert(terminal);
+    addGraphCoord(terminal);
+  }
+
+  if (isAxisHorizontal) {
+    yCoords.insert(axisGCellIdx);
+  }
+  else {
+    xCoords.insert(axisGCellIdx);
+  }
+
+  for (auto rootSideVertex: rootSideTreeVertices) {
+    if (getAxisCoord(rootSideVertex) == axisGCellIdx) {
+      explicitAxisSources.insert(rootSideVertex);
+      addGraphCoord(rootSideVertex);
+    }
+
+    auto mirroredVertex = mirrorPoint(rootSideVertex);
+    addGraphCoord(mirroredVertex);
+  }
+
+  for (auto rootSideEdge: rootSideTreeEdges) {
+    if (getAxisCoord(rootSideEdge.first) == axisGCellIdx &&
+        getAxisCoord(rootSideEdge.second) == axisGCellIdx) {
+      addGraphCoord(rootSideEdge.first);
+      addGraphCoord(rootSideEdge.second);
+    }
+
+    auto mirroredBegin = mirrorPoint(rootSideEdge.first);
+    auto mirroredEnd = mirrorPoint(rootSideEdge.second);
+    if (mirroredBegin == mirroredEnd ||
+        !isAllowedPoint(mirroredBegin) ||
+        !isAllowedPoint(mirroredEnd)) {
+      continue;
+    }
+
+    mirroredRootSideEdges.push_back(normalizeEdge(mirroredBegin, mirroredEnd));
+    addGraphCoord(mirroredBegin);
+    addGraphCoord(mirroredEnd);
+  }
+
+  vector<frPoint> graphGCellIdxs;
+  vector<array<int, 4> > graphNeighbors;
+  vector<array<int, 4> > graphNeighborCosts;
+  map<frPoint, int> gcellIdx2GraphIdx;
+
+  for (auto y: yCoords) {
+    for (auto x: xCoords) {
+      frPoint gcellIdx(x, y);
+      if (!isAllowedPoint(gcellIdx)) {
+        continue;
+      }
+      gcellIdx2GraphIdx[gcellIdx] = (int)graphGCellIdxs.size();
+      graphGCellIdxs.push_back(gcellIdx);
+      graphNeighbors.push_back({{-1, -1, -1, -1}});
+      graphNeighborCosts.push_back({{0, 0, 0, 0}});
+    }
+  }
+
+  auto isMirrorRewardEdge = [&](const frPoint &begin, const frPoint &end) {
+    for (auto mirroredRootSideEdge: mirroredRootSideEdges) {
+      if (coversSegment(mirroredRootSideEdge.first,
+                        mirroredRootSideEdge.second,
+                        begin,
+                        end)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  auto edgeCost = [&](const frPoint &begin, const frPoint &end) {
+    auto length = abs(end.x() - begin.x()) + abs(end.y() - begin.y());
+    return length * (isMirrorRewardEdge(begin, end) ? 1 : 4);
+  };
+
+  auto setNeighbor = [&](int fromIdx, int direction, int toIdx) {
+    graphNeighbors[fromIdx][direction] = toIdx;
+    graphNeighborCosts[fromIdx][direction] = edgeCost(graphGCellIdxs[fromIdx], graphGCellIdxs[toIdx]);
+  };
+
+  for (auto y: yCoords) {
+    int prevIdx = -1;
+    for (auto x: xCoords) {
+      auto currItr = gcellIdx2GraphIdx.find(frPoint(x, y));
+      if (currItr == gcellIdx2GraphIdx.end()) {
+        continue;
+      }
+      int currIdx = currItr->second;
+      if (prevIdx != -1) {
+        setNeighbor(prevIdx, RIGHT, currIdx);
+        setNeighbor(currIdx, LEFT, prevIdx);
+      }
+      prevIdx = currIdx;
+    }
+  }
+
+  for (auto x: xCoords) {
+    int prevIdx = -1;
+    for (auto y: yCoords) {
+      auto currItr = gcellIdx2GraphIdx.find(frPoint(x, y));
+      if (currItr == gcellIdx2GraphIdx.end()) {
+        continue;
+      }
+      int currIdx = currItr->second;
+      if (prevIdx != -1) {
+        setNeighbor(prevIdx, UP, currIdx);
+        setNeighbor(currIdx, DOWN, prevIdx);
+      }
+      prevIdx = currIdx;
+    }
+  }
+
+  set<frPoint> treeVertexSet;
+  set<pair<frPoint, frPoint> > treeEdgeSet;
+
+  auto appendVertex = [&](const frPoint &vertex) {
+    if (treeVertexSet.insert(vertex).second) {
+      oppositeSideTreeVertices.push_back(vertex);
+    }
+  };
+
+  auto appendEdge = [&](const frPoint &begin, const frPoint &end) {
+    if (begin == end) {
+      return;
+    }
+    auto edge = normalizeEdge(begin, end);
+    if (treeEdgeSet.insert(edge).second) {
+      oppositeSideTreeEdges.push_back(edge);
+    }
+  };
+
+  using WavefrontNode = pair<int, int>;
+  priority_queue<WavefrontNode, vector<WavefrontNode>, greater<WavefrontNode> > wavefront;
+  const int graphSize = (int)graphGCellIdxs.size();
+  const int INF = numeric_limits<int>::max();
+  vector<int> dist(graphSize, INF);
+  vector<int> prev(graphSize, -1);
+  vector<bool> inTree(graphSize, false);
+
+  auto addTreeSource = [&](int graphIdx) {
+    inTree[graphIdx] = true;
+    dist[graphIdx] = 0;
+    prev[graphIdx] = -1;
+    wavefront.emplace(0, graphIdx);
+  };
+
+  auto isAxisSource = [&](const frPoint &gcellIdx) {
+    if (getAxisCoord(gcellIdx) != axisGCellIdx) {
+      return false;
+    }
+    if (explicitAxisSources.find(gcellIdx) != explicitAxisSources.end()) {
+      return true;
+    }
+    for (auto rootSideEdge: rootSideTreeEdges) {
+      if (getAxisCoord(rootSideEdge.first) != axisGCellIdx ||
+          getAxisCoord(rootSideEdge.second) != axisGCellIdx) {
+        continue;
+      }
+      if (pointOnSegment(rootSideEdge.first, rootSideEdge.second, gcellIdx)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  bool hasAxisSource = false;
+  for (int graphIdx = 0; graphIdx < graphSize; graphIdx++) {
+    if (!isAxisSource(graphGCellIdxs[graphIdx])) {
+      continue;
+    }
+    appendVertex(graphGCellIdxs[graphIdx]);
+    addTreeSource(graphIdx);
+    hasAxisSource = true;
+  }
+
+  if (!hasAxisSource) {
+    cout << "Error: failed to find opposite-side self-symmetry axis source\n";
+    exit(1);
+  }
+
+  auto searchNextTarget = [&](const function<bool(int)> &isTarget, vector<int> &path) {
+    path.clear();
+
+    while (!wavefront.empty()) {
+      auto wavefrontNode = wavefront.top();
+      wavefront.pop();
+
+      int currCost = wavefrontNode.first;
+      int currIdx = wavefrontNode.second;
+      if (currCost != dist[currIdx]) {
+        continue;
+      }
+
+      if (!inTree[currIdx] && isTarget(currIdx)) {
+        int pathIdx = currIdx;
+        path.push_back(pathIdx);
+        while (!inTree[pathIdx]) {
+          pathIdx = prev[pathIdx];
+          if (pathIdx < 0) {
+            return false;
+          }
+          path.push_back(pathIdx);
+        }
+        reverse(path.begin(), path.end());
+        return true;
+      }
+
+      for (int dir = 0; dir < 4; dir++) {
+        int nextIdx = graphNeighbors[currIdx][dir];
+        if (nextIdx < 0) {
+          continue;
+        }
+        int nextCost = currCost + graphNeighborCosts[currIdx][dir];
+        if (nextCost < dist[nextIdx]) {
+          dist[nextIdx] = nextCost;
+          prev[nextIdx] = currIdx;
+          wavefront.emplace(nextCost, nextIdx);
+        }
+      }
+    }
+
+    return false;
+  };
+
+  auto appendPath = [&](const vector<int> &path) {
+    for (auto graphIdx: path) {
+      appendVertex(graphGCellIdxs[graphIdx]);
+    }
+    for (int i = 1; i < (int)path.size(); i++) {
+      appendEdge(graphGCellIdxs[path[i - 1]], graphGCellIdxs[path[i]]);
+    }
+    for (auto graphIdx: path) {
+      addTreeSource(graphIdx);
+    }
+  };
+
+  set<int> unconnectedTerminals;
+  for (auto terminal: terminals) {
+    auto terminalItr = gcellIdx2GraphIdx.find(terminal);
+    if (terminalItr == gcellIdx2GraphIdx.end()) {
+      cout << "Error: failed to place opposite-side self-symmetry terminal on Hanan graph\n";
+      exit(1);
+    }
+    if (!inTree[terminalItr->second]) {
+      unconnectedTerminals.insert(terminalItr->second);
+    }
+  }
+
+  while (!unconnectedTerminals.empty()) {
+    vector<int> path;
+    if (!searchNextTarget([&](int graphIdx) { return unconnectedTerminals.find(graphIdx) != unconnectedTerminals.end(); },
+                          path)) {
+      cout << "Error: failed to find opposite-side self-symmetry Hanan path\n";
+      exit(1);
+    }
+    appendPath(path);
+    for (auto graphIdx: path) {
+      unconnectedTerminals.erase(graphIdx);
+    }
+  }
+}
+
 // pinGCellNodes size always >= 2
 void FlexGR::genSTTopology_FLUTE(vector<frNode*> &pinGCellNodes, vector<frNode*> &steinerNodes) {
   auto root = pinGCellNodes[0];

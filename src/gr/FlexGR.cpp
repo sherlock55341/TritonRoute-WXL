@@ -34,6 +34,7 @@
 #include <fstream>
 #include "db/grObj/grShape.h"
 #include "db/grObj/grVia.h"
+#include <algorithm>
 #include <cmath>
 #include "db/infra/frTime.h"
 #include "frBaseTypes.h"
@@ -1749,6 +1750,12 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
         rootSideTerminalGCellIdxs.push_back(getGCellIdx(gcellNode));
     }
 
+    std::vector<frPoint> oppositeSideTerminalGCellIdxs;
+    oppositeSideTerminalGCellIdxs.reserve(oppositeSideGCellNodes.size());
+    for (auto gcellNode : oppositeSideGCellNodes) {
+        oppositeSideTerminalGCellIdxs.push_back(getGCellIdx(gcellNode));
+    }
+
     std::vector<frPoint> rootSideTreeVertices;
     std::vector<std::pair<frPoint, frPoint>> rootSideTreeEdges;
     genSelfSymmetryRootSideTopology(rootSideTerminalGCellIdxs,
@@ -1758,12 +1765,23 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
                                     rootSideTreeVertices,
                                     rootSideTreeEdges);
 
-    auto shouldDumpSelfSymmetryRootSideTopology = [&]() {
+    std::vector<frPoint> oppositeSideTreeVertices;
+    std::vector<std::pair<frPoint, frPoint>> oppositeSideTreeEdges;
+    genSelfSymmetryOppositeSideTopology(oppositeSideTerminalGCellIdxs,
+                                        selfSymmetryConstraint.isAxisHorizontal,
+                                        axisGCellIdx,
+                                        rootSide,
+                                        rootSideTreeVertices,
+                                        rootSideTreeEdges,
+                                        oppositeSideTreeVertices,
+                                        oppositeSideTreeEdges);
+
+    auto shouldDumpSelfSymmetryTopology = [&]() {
         const bool enableDump = true;
         return enableDump && net->getName() == "Symmtry5";
     };
 
-    if (shouldDumpSelfSymmetryRootSideTopology()) {
+    if (shouldDumpSelfSymmetryTopology()) {
         auto printPoint = [](const frPoint &point) {
             cout << "(" << point.x() << ", " << point.y() << ")";
         };
@@ -1780,8 +1798,58 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
             auto length = edgeLength(begin, end);
             return length * (isAxisEdge(begin, end) ? 1 : 4);
         };
+        auto mirrorPoint = [&](const frPoint &point) {
+            frPoint mirroredPoint = point;
+            if (selfSymmetryConstraint.isAxisHorizontal) {
+                mirroredPoint.set(point.x(), axisGCellIdx + (axisGCellIdx - point.y()));
+            }
+            else {
+                mirroredPoint.set(axisGCellIdx + (axisGCellIdx - point.x()), point.y());
+            }
+            return mirroredPoint;
+        };
+        auto coversSegment = [](const frPoint &segmentBegin,
+                                const frPoint &segmentEnd,
+                                const frPoint &candidateBegin,
+                                const frPoint &candidateEnd) {
+            if (candidateBegin == candidateEnd) {
+                return false;
+            }
+            if (candidateBegin.x() == candidateEnd.x()) {
+                if (segmentBegin.x() != segmentEnd.x() ||
+                    segmentBegin.x() != candidateBegin.x()) {
+                    return false;
+                }
+                return std::min(candidateBegin.y(), candidateEnd.y()) >= std::min(segmentBegin.y(), segmentEnd.y()) &&
+                       std::max(candidateBegin.y(), candidateEnd.y()) <= std::max(segmentBegin.y(), segmentEnd.y());
+            }
+            if (candidateBegin.y() == candidateEnd.y()) {
+                if (segmentBegin.y() != segmentEnd.y() ||
+                    segmentBegin.y() != candidateBegin.y()) {
+                    return false;
+                }
+                return std::min(candidateBegin.x(), candidateEnd.x()) >= std::min(segmentBegin.x(), segmentEnd.x()) &&
+                       std::max(candidateBegin.x(), candidateEnd.x()) <= std::max(segmentBegin.x(), segmentEnd.x());
+            }
+            return false;
+        };
+        auto isMirrorRewardEdge = [&](const frPoint &begin, const frPoint &end) {
+            for (auto rootSideEdge : rootSideTreeEdges) {
+                if (coversSegment(mirrorPoint(rootSideEdge.first),
+                                  mirrorPoint(rootSideEdge.second),
+                                  begin,
+                                  end)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        auto oppositeEdgeCost = [&](const frPoint &begin, const frPoint &end) {
+            auto length = edgeLength(begin, end);
+            return length * (isMirrorRewardEdge(begin, end) ? 1 : 4);
+        };
 
-        cout << "@@@ self-symmetry root-side topology @@@\n";
+        cout << "@@@ self-symmetry topology @@@\n";
         cout << "net: " << net->getName() << "\n";
         cout << "axis coord: "
              << (selfSymmetryConstraint.isAxisHorizontal ? "y=" : "x=")
@@ -1789,25 +1857,26 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
         cout << "axis gcell: "
              << (selfSymmetryConstraint.isAxisHorizontal ? "y=" : "x=")
              << axisGCellIdx << "\n";
+        cout << "root side: " << rootSide << "\n";
         cout << "root: ";
         printPoint(rootGCellIdx);
         cout << "\n\n";
 
-        cout << "terminals:\n";
+        cout << "root-side terminals:\n";
         for (int i = 0; i < (int)rootSideTerminalGCellIdxs.size(); i++) {
             cout << "  t" << i << ": ";
             printPoint(rootSideTerminalGCellIdxs[i]);
             cout << "\n";
         }
 
-        cout << "\nvertices:\n";
+        cout << "\nroot-side vertices:\n";
         for (int i = 0; i < (int)rootSideTreeVertices.size(); i++) {
             cout << "  v" << i << ": ";
             printPoint(rootSideTreeVertices[i]);
             cout << "\n";
         }
 
-        cout << "\nedges:\n";
+        cout << "\nroot-side edges:\n";
         for (int i = 0; i < (int)rootSideTreeEdges.size(); i++) {
             const auto &edge = rootSideTreeEdges[i];
             cout << "  e" << i << ": ";
@@ -1819,7 +1888,34 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
                  << ", axis=" << (isAxisEdge(edge.first, edge.second) ? 1 : 0)
                  << "\n";
         }
-        cout << "@@@ end self-symmetry root-side topology @@@\n";
+
+        cout << "\nopposite-side terminals:\n";
+        for (int i = 0; i < (int)oppositeSideTerminalGCellIdxs.size(); i++) {
+            cout << "  t" << i << ": ";
+            printPoint(oppositeSideTerminalGCellIdxs[i]);
+            cout << "\n";
+        }
+
+        cout << "\nopposite-side vertices:\n";
+        for (int i = 0; i < (int)oppositeSideTreeVertices.size(); i++) {
+            cout << "  v" << i << ": ";
+            printPoint(oppositeSideTreeVertices[i]);
+            cout << "\n";
+        }
+
+        cout << "\nopposite-side edges:\n";
+        for (int i = 0; i < (int)oppositeSideTreeEdges.size(); i++) {
+            const auto &edge = oppositeSideTreeEdges[i];
+            cout << "  e" << i << ": ";
+            printPoint(edge.first);
+            cout << " -> ";
+            printPoint(edge.second);
+            cout << ", length=" << edgeLength(edge.first, edge.second)
+                 << ", cost=" << oppositeEdgeCost(edge.first, edge.second)
+                 << ", mirror=" << (isMirrorRewardEdge(edge.first, edge.second) ? 1 : 0)
+                 << "\n";
+        }
+        cout << "@@@ end self-symmetry topology @@@\n";
     }
 }
 

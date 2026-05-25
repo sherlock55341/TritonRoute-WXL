@@ -162,6 +162,14 @@ namespace fr {
                                          frCoord axisGCellIdx,
                                          std::vector<frPoint> &rootSideTreeVertices,
                                          std::vector<std::pair<frPoint, frPoint> > &rootSideTreeEdges);
+    void genSelfSymmetryOppositeSideTopology(const std::vector<frPoint> &oppositeSideTerminalGCellIdxs,
+                                             bool isAxisHorizontal,
+                                             frCoord axisGCellIdx,
+                                             int rootSide,
+                                             const std::vector<frPoint> &rootSideTreeVertices,
+                                             const std::vector<std::pair<frPoint, frPoint> > &rootSideTreeEdges,
+                                             std::vector<frPoint> &oppositeSideTreeVertices,
+                                             std::vector<std::pair<frPoint, frPoint> > &oppositeSideTreeEdges);
     void genSTTopology_FLUTE(std::vector<frNode*> &nodes, std::vector<frNode*> &steinerNodes);
     void genSTTopology_HVW(std::vector<frNode*> &nodes, std::vector<frNode*> &steinerNodes);
     void genSTTopology_HVW_compute(frNode *currNode, std::vector<frNode*> &nodes, std::vector<unsigned> &overlapL, 
