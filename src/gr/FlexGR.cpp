@@ -1172,6 +1172,193 @@ void FlexGR::patternRoute_LShape(frNode *child, frNode *parent) {
   }
 }
 
+const frSelfSymmetryConstraint* FlexGR::getSelfSymmetryConstraintPtr(const frNet* net) const {
+  return net ? net->getSelfSymmetryConstraintPtr() : nullptr;
+}
+
+bool FlexGR::isSelfSymmetryNet(const frNet* net) const {
+  return getSelfSymmetryConstraintPtr(net) != nullptr;
+}
+
+int FlexGR::getSelfSymmetryPointSide(const frPoint &point,
+                                     const frSelfSymmetryConstraint &constraint) const {
+  frCoord coord = constraint.isAxisHorizontal ? point.y() : point.x();
+  if (coord < constraint.axis) {
+    return -1;
+  }
+  if (coord > constraint.axis) {
+    return 1;
+  }
+  return 0;
+}
+
+int FlexGR::getSelfSymmetryGCellSide(const frPoint &gcellIdx,
+                                     bool isAxisHorizontal,
+                                     frCoord axisGCellIdx) const {
+  frCoord coord = isAxisHorizontal ? gcellIdx.y() : gcellIdx.x();
+  if (coord < axisGCellIdx) {
+    return -1;
+  }
+  if (coord > axisGCellIdx) {
+    return 1;
+  }
+  return 0;
+}
+
+int FlexGR::getSelfSymmetryRootSide(frNet *net,
+                                    const frSelfSymmetryConstraint &constraint) const {
+  if (net == nullptr) {
+    return -1;
+  }
+
+  frNode *rootNode = net->getRootGCellNode();
+  if (rootNode == nullptr) {
+    rootNode = net->getRoot();
+  }
+  if (rootNode == nullptr) {
+    return -1;
+  }
+
+  frPoint rootLoc;
+  rootNode->getLoc(rootLoc);
+  int rootSide = getSelfSymmetryPointSide(rootLoc, constraint);
+  return rootSide == 0 ? -1 : rootSide;
+}
+
+bool FlexGR::isOnSelfSymmetryAxis(const frPoint &point,
+                                  const frSelfSymmetryConstraint &constraint) const {
+  return getSelfSymmetryPointSide(point, constraint) == 0;
+}
+
+bool FlexGR::isOnSelfSymmetryAxisGCell(const frPoint &gcellIdx,
+                                       bool isAxisHorizontal,
+                                       frCoord axisGCellIdx) const {
+  return getSelfSymmetryGCellSide(gcellIdx, isAxisHorizontal, axisGCellIdx) == 0;
+}
+
+frPoint FlexGR::mirrorPoint(const frPoint &point,
+                            const frSelfSymmetryConstraint &constraint) const {
+  frPoint mirroredPoint(point);
+  if (constraint.isAxisHorizontal) {
+    mirroredPoint.set(point.x(), constraint.axis + (constraint.axis - point.y()));
+  } else {
+    mirroredPoint.set(constraint.axis + (constraint.axis - point.x()), point.y());
+  }
+  return mirroredPoint;
+}
+
+frPoint FlexGR::mirrorGCellIdx(const frPoint &gcellIdx,
+                               bool isAxisHorizontal,
+                               frCoord axisGCellIdx) const {
+  frPoint mirroredGCellIdx(gcellIdx);
+  if (isAxisHorizontal) {
+    mirroredGCellIdx.set(gcellIdx.x(), axisGCellIdx + (axisGCellIdx - gcellIdx.y()));
+  } else {
+    mirroredGCellIdx.set(axisGCellIdx + (axisGCellIdx - gcellIdx.x()), gcellIdx.y());
+  }
+  return mirroredGCellIdx;
+}
+
+void FlexGR::modSelfSymmetrySourceDemand(frNet *net,
+                                         const frPoint &begin,
+                                         const frPoint &end,
+                                         frLayerNum layerNum,
+                                         bool isAdd,
+                                         bool is2D) {
+  if (begin == end) {
+    return;
+  }
+  if (begin.x() != end.x() && begin.y() != end.y()) {
+    cout << "Error: non-colinear nodes in modSelfSymmetrySourceDemand";
+    if (net) {
+      cout << " for net " << net->getName();
+    }
+    cout << "\n";
+    return;
+  }
+
+  frPoint bp, ep;
+  if (begin < end) {
+    bp = begin;
+    ep = end;
+  } else {
+    bp = end;
+    ep = begin;
+  }
+
+  frPoint bpIdx, epIdx;
+  design->getTopBlock()->getGCellIdx(bp, bpIdx);
+  design->getTopBlock()->getGCellIdx(ep, epIdx);
+  if (bpIdx == epIdx) {
+    return;
+  }
+  if (bpIdx.x() != epIdx.x() && bpIdx.y() != epIdx.y()) {
+    cout << "Error: non-colinear nodes in modSelfSymmetrySourceDemand";
+    if (net) {
+      cout << " for net " << net->getName();
+    }
+    cout << "\n";
+    return;
+  }
+
+  auto targetCMap = is2D ? cmap2D.get() : cmap.get();
+  unsigned zIdx = is2D ? 0 : layerNum / 2 - 1;
+  auto modRawDemand = [&](int xIdx, int yIdx, frDirEnum dir) {
+    if (isAdd) {
+      targetCMap->addRawDemand(xIdx, yIdx, zIdx, dir);
+    } else {
+      targetCMap->subRawDemand(xIdx, yIdx, zIdx, dir);
+    }
+  };
+
+  if (bpIdx.y() == epIdx.y()) {
+    int yIdx = bpIdx.y();
+    for (int xIdx = bpIdx.x(); xIdx < epIdx.x(); xIdx++) {
+      modRawDemand(xIdx, yIdx, frDirEnum::E);
+      modRawDemand(xIdx + 1, yIdx, frDirEnum::E);
+    }
+  } else {
+    int xIdx = bpIdx.x();
+    for (int yIdx = bpIdx.y(); yIdx < epIdx.y(); yIdx++) {
+      modRawDemand(xIdx, yIdx, frDirEnum::N);
+      modRawDemand(xIdx, yIdx + 1, frDirEnum::N);
+    }
+  }
+}
+
+void FlexGR::modSelfSymmetryMirrorShadowDemand(frNet *net,
+                                               const frPoint &begin,
+                                               const frPoint &end,
+                                               frLayerNum layerNum,
+                                               bool isAdd,
+                                               bool is2D) {
+  auto constraint = getSelfSymmetryConstraintPtr(net);
+  if (constraint == nullptr) {
+    return;
+  }
+  if (isOnSelfSymmetryAxis(begin, *constraint) &&
+      isOnSelfSymmetryAxis(end, *constraint)) {
+    return;
+  }
+
+  modSelfSymmetrySourceDemand(net,
+                              mirrorPoint(begin, *constraint),
+                              mirrorPoint(end, *constraint),
+                              layerNum,
+                              isAdd,
+                              is2D);
+}
+
+void FlexGR::modSelfSymmetrySourceAndShadowDemand(frNet *net,
+                                                  const frPoint &begin,
+                                                  const frPoint &end,
+                                                  frLayerNum layerNum,
+                                                  bool isAdd,
+                                                  bool is2D) {
+  modSelfSymmetrySourceDemand(net, begin, end, layerNum, isAdd, is2D);
+  modSelfSymmetryMirrorShadowDemand(net, begin, end, layerNum, isAdd, is2D);
+}
+
 double FlexGR::getCongCost(unsigned supply, unsigned demand) {
   return demand * (1.0 + 8.0 / (1.0 + exp(supply - demand))) / (supply + 1);
 }

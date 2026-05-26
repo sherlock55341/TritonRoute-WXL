@@ -246,6 +246,9 @@ namespace fr {
     frSelfSymmetryConstraint getSelfSymmetryConstraint() const {
       return selfSymmetryConstraint;
     }
+    const frSelfSymmetryConstraint* getSelfSymmetryConstraintPtr() const {
+      return constraint == frNetRoutingConstraint::frcSelfSymmetry ? &selfSymmetryConstraint : nullptr;
+    }
     void setSelfSymmetryConstraint(frSelfSymmetryConstraint in) {
       selfSymmetryConstraint = in;
     }

@@ -123,6 +123,24 @@ namespace fr {
     // pattern route
     void patternRoute_LShape(frNode *child, frNode *parent);
 
+  private:
+    const frSelfSymmetryConstraint* getSelfSymmetryConstraintPtr(const frNet* net) const;
+    bool isSelfSymmetryNet(const frNet* net) const;
+    int getSelfSymmetryPointSide(const frPoint &point, const frSelfSymmetryConstraint &constraint) const;
+    int getSelfSymmetryGCellSide(const frPoint &gcellIdx, bool isAxisHorizontal, frCoord axisGCellIdx) const;
+    int getSelfSymmetryRootSide(frNet *net, const frSelfSymmetryConstraint &constraint) const;
+    bool isOnSelfSymmetryAxis(const frPoint &point, const frSelfSymmetryConstraint &constraint) const;
+    bool isOnSelfSymmetryAxisGCell(const frPoint &gcellIdx, bool isAxisHorizontal, frCoord axisGCellIdx) const;
+    frPoint mirrorPoint(const frPoint &point, const frSelfSymmetryConstraint &constraint) const;
+    frPoint mirrorGCellIdx(const frPoint &gcellIdx, bool isAxisHorizontal, frCoord axisGCellIdx) const;
+    void modSelfSymmetrySourceDemand(frNet *net, const frPoint &begin, const frPoint &end,
+                                     frLayerNum layerNum, bool isAdd, bool is2D);
+    void modSelfSymmetryMirrorShadowDemand(frNet *net, const frPoint &begin, const frPoint &end,
+                                           frLayerNum layerNum, bool isAdd, bool is2D);
+    void modSelfSymmetrySourceAndShadowDemand(frNet *net, const frPoint &begin, const frPoint &end,
+                                              frLayerNum layerNum, bool isAdd, bool is2D);
+
+  protected:
     // layer assignment
     void layerAssign();
     void layerAssign_net(frNet *net);

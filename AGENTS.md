@@ -14,6 +14,8 @@ Follow the existing style: two-space indentation, braces on the same line for fu
 
 ## Testing Guidelines
 There is no committed unit-test or CTest suite. Validate changes by rebuilding and running at least one representative LEF/DEF flow. For routing changes, compare output DEFs, guide files, DRC reports, logs, and congestion summaries against a known baseline. Keep large benchmark inputs out of git unless the project explicitly adds a fixture directory.
+Available local smoke-test inputs: LEF `~/benchmark/primarius/outdata/ispd18_test1.input.lef`, DEF `~/benchmark/primarius/outdata/pattern_route_lay.def`.
+Do not write test outputs to `/tmp`; place generated DEFs, guides, logs, summaries, and param files under `build/` or a subdirectory of `build/`. Test results should be easy for a reviewer to verify by running the compiled `build/TritonRoute` binary and reading the generated output/log files.
 
 ## Commit & Pull Request Guidelines
 Recent commits use short imperative summaries such as `add root side tree` and `split to two sides`. Keep commit titles concise, lowercase when natural, and scoped to one logical change. Pull requests should describe the routing stage affected, list build and smoke-test commands run, note any benchmark/design used, and call out changes to external parser modules or FLUTE data.
