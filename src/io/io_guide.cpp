@@ -688,6 +688,46 @@ void io::Parser::genGuides(frNet *net, vector<frRect> &rects) {
   genGuides_initPin2GCellMap(net, pin2GCellMap);
   //cout <<"init pin2gcell done" <<endl <<flush;
 
+  if (net->getSelfSymmetryConstraintPtr()) {
+    set<frBlockObject*, frBlockObjectComp> sourcePins;
+    for (auto &uNode: net->getNodes()) {
+      auto node = uNode.get();
+      auto pin = node->getPin();
+      if (pin == nullptr) {
+        continue;
+      }
+      if (node == net->getRoot() || node->getParent() != nullptr ||
+          !node->getChildren().empty()) {
+        sourcePins.insert(pin);
+      }
+    }
+
+    for (auto it = pin2GCellMap.begin(); it != pin2GCellMap.end(); ) {
+      if (sourcePins.find(it->first) == sourcePins.end()) {
+        it = pin2GCellMap.erase(it);
+      }
+      else {
+        it++;
+      }
+    }
+    for (auto it = gCell2PinMap.begin(); it != gCell2PinMap.end(); ) {
+      for (auto pinIt = it->second.begin(); pinIt != it->second.end(); ) {
+        if (sourcePins.find(*pinIt) == sourcePins.end()) {
+          pinIt = it->second.erase(pinIt);
+        }
+        else {
+          pinIt++;
+        }
+      }
+      if (it->second.empty()) {
+        it = gCell2PinMap.erase(it);
+      }
+      else {
+        it++;
+      }
+    }
+  }
+
   bool retry = false;
   while(1) {
     genGuides_split(rects, intvs, gCell2PinMap, pin2GCellMap, retry); //split on LU intersecting guides and pins

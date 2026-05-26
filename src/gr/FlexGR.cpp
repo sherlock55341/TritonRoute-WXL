@@ -1802,120 +1802,33 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
         rootNode = nodes.back();
     }
     net->setRoot(rootNode);
-    std::map<std::pair<int, int>, std::vector<frNode*>> gcell2nodes;
     for (auto node : nodes) {
-        frPoint location;
-        frPoint gcellLocation;
-        node->getLoc(location);
-        design->getTopBlock()->getGCellIdx(location, gcellLocation);
-        gcell2nodes[std::make_pair(gcellLocation.x(), gcellLocation.y())].push_back(node);
+        node->setParent(nullptr);
+        node->clearChildren();
+        node->setConnFig(nullptr);
     }
 
-    std::vector<std::unique_ptr<frNode>> gcellNodeOwners;
-    std::vector<frNode*> gcellNodes;
-    std::vector<frNode*> nonRootGCellNodes;
-    std::map<frNode*, std::vector<frNode*>, frBlockObjectComp> gcellNode2RPinNodes;
-    frNode *rootGCellNode = nullptr;
-    unsigned rootGCellOwnerIdx = 0;
-    const int rootGCellNodeId = net->getNodes().back()->getId() + 1;
-    int nextNonRootGCellNodeId = rootGCellNodeId + 1;
-
-    for (auto &[gcell, gcellnodes] : gcell2nodes) {
-        bool hasRoot = false;
-        for (auto node : gcellnodes) {
-            if (node == rootNode) {
-                hasRoot = true;
-                break;
-            }
-        }
-        frBox gcellBox;
-        design->getTopBlock()->getGCellBox(frPoint(gcell.first, gcell.second),
-                                         gcellBox);
-        frPoint center((gcellBox.left() + gcellBox.right()) / 2,
-                       (gcellBox.bottom() + gcellBox.top()) / 2);
-
-        auto gcellNodeOwner = std::make_unique<frNode>();
-        auto gcellNode = gcellNodeOwner.get();
-        gcellNode->setType(frNodeTypeEnum::frcSteiner);
-        gcellNode->setLayerNum(2);
-        gcellNode->setLoc(center);
-
-        if (hasRoot) {
-            gcellNode->setId(rootGCellNodeId);
-            rootGCellNode = gcellNode;
-            rootGCellOwnerIdx = gcellNodeOwners.size();
-        }
-        else {
-            gcellNode->setId(nextNonRootGCellNodeId++);
-            nonRootGCellNodes.push_back(gcellNode);
-        }
-
-        gcellNode2RPinNodes[gcellNode] = gcellnodes;
-        gcellNodeOwners.push_back(std::move(gcellNodeOwner));
-    }
-
-    if (rootGCellNode == nullptr) {
-        std::cout << "Error: root gcell node is 0x0\n";
-        exit(1);
-    }
-
-    gcellNodes.reserve(gcellNodeOwners.size());
-    gcellNodes.push_back(rootGCellNode);
-    gcellNodes.insert(gcellNodes.end(), nonRootGCellNodes.begin(), nonRootGCellNodes.end());
-
-    net->setFirstNonRPinNode(gcellNodes.front());
-    net->setRootGCellNode(gcellNodes.front());
-    net->addNode(gcellNodeOwners[rootGCellOwnerIdx]);
-    for (unsigned i = 0; i < gcellNodeOwners.size(); i++) {
-        if (i != rootGCellOwnerIdx) {
-            net->addNode(gcellNodeOwners[i]);
-        }
-    }
-
-    auto getAxisCoord = [&](frNode* gcellNode) {
-        frPoint loc;
-        gcellNode->getLoc(loc);
-        return selfSymmetryConstraint.isAxisHorizontal ? loc.y() : loc.x();
+    auto pointKey = [](const frPoint &point) {
+        return std::make_pair(point.x(), point.y());
     };
 
-    auto getSide = [&](frCoord coord) {
-        if (coord < selfSymmetryConstraint.axis) {
-            return -1;
-        }
-        if (coord > selfSymmetryConstraint.axis) {
-            return 1;
-        }
-        return 0;
-    };
-
-    int rootSide = getSide(getAxisCoord(rootGCellNode));
-    if (rootSide == 0) {
-        rootSide = -1;
-    }
-
-    std::vector<frNode*> rootSideGCellNodes;
-    std::vector<frNode*> oppositeSideGCellNodes;
-    for (auto gcellNode : gcellNodes) {
-        int side = getSide(getAxisCoord(gcellNode));
-        if (side == 0 || side == rootSide) {
-            rootSideGCellNodes.push_back(gcellNode);
-        }
-        else {
-            oppositeSideGCellNodes.push_back(gcellNode);
-        }
-    }
-
-    auto getGCellIdx = [&](frNode* gcellNode) {
-        frPoint loc;
+    auto getGCellIdxFromLoc = [&](const frPoint &loc) {
         frPoint gcellIdx;
-        gcellNode->getLoc(loc);
         design->getTopBlock()->getGCellIdx(loc, gcellIdx);
         return gcellIdx;
     };
 
-    frPoint rootGCellIdx = getGCellIdx(rootGCellNode);
-    frPoint rootGCellLoc;
-    rootGCellNode->getLoc(rootGCellLoc);
+    auto getGCellCenter = [&](const frPoint &gcellIdx) {
+        frBox gcellBox;
+        design->getTopBlock()->getGCellBox(gcellIdx, gcellBox);
+        return frPoint((gcellBox.left() + gcellBox.right()) / 2,
+                       (gcellBox.bottom() + gcellBox.top()) / 2);
+    };
+
+    frPoint rootLoc;
+    rootNode->getLoc(rootLoc);
+    frPoint rootGCellIdx = getGCellIdxFromLoc(rootLoc);
+    frPoint rootGCellLoc = getGCellCenter(rootGCellIdx);
 
     frPoint axisProbe;
     if (selfSymmetryConstraint.isAxisHorizontal) {
@@ -1931,16 +1844,70 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
                            axisGCellLocation.y() :
                            axisGCellLocation.x();
 
-    std::vector<frPoint> rootSideTerminalGCellIdxs;
-    rootSideTerminalGCellIdxs.reserve(rootSideGCellNodes.size());
-    for (auto gcellNode : rootSideGCellNodes) {
-        rootSideTerminalGCellIdxs.push_back(getGCellIdx(gcellNode));
+    int rootSide = getSelfSymmetryRootSide(net, selfSymmetryConstraint);
+
+    std::map<std::pair<int, int>, std::vector<frNode*>> sourceGCell2PinNodes;
+    std::set<frNode*> sourcePinNodes;
+    std::set<frNode*> mirrorPinNodes;
+    for (auto node : nodes) {
+        frPoint location;
+        node->getLoc(location);
+        frPoint gcellLocation = getGCellIdxFromLoc(location);
+        int gcellSide = getSelfSymmetryGCellSide(gcellLocation,
+                                                 selfSymmetryConstraint.isAxisHorizontal,
+                                                 axisGCellIdx);
+        bool isSourcePin = (node == rootNode || gcellSide == 0 || gcellSide == rootSide);
+        if (isSourcePin) {
+            sourceGCell2PinNodes[pointKey(gcellLocation)].push_back(node);
+            sourcePinNodes.insert(node);
+        }
+        else {
+            mirrorPinNodes.insert(node);
+        }
     }
 
-    std::vector<frPoint> oppositeSideTerminalGCellIdxs;
-    oppositeSideTerminalGCellIdxs.reserve(oppositeSideGCellNodes.size());
-    for (auto gcellNode : oppositeSideGCellNodes) {
-        oppositeSideTerminalGCellIdxs.push_back(getGCellIdx(gcellNode));
+    auto &gcellIdx2Nodes = net2GCellIdx2Nodes[net];
+    auto &gcellNode2RPinNodes = net2GCellNode2RPinNodes[net];
+    auto &gcellNodes = net2GCellNodes[net];
+    auto &steinerNodes = net2SteinerNodes[net];
+    gcellIdx2Nodes.clear();
+    gcellNode2RPinNodes.clear();
+    gcellNodes.clear();
+    steinerNodes.clear();
+
+    std::map<std::pair<int, int>, frNode*> sourceTreeNodeByGCellIdx;
+
+    auto addSourceTreeNode = [&](const frPoint &gcellIdx) {
+        auto uNode = std::make_unique<frNode>();
+        auto node = uNode.get();
+        node->setType(frNodeTypeEnum::frcSteiner);
+        node->setLayerNum(2);
+        node->setLoc(getGCellCenter(gcellIdx));
+        net->addNode(uNode);
+        sourceTreeNodeByGCellIdx[pointKey(gcellIdx)] = node;
+        return node;
+    };
+
+    frNode *rootGCellNode = addSourceTreeNode(rootGCellIdx);
+    gcellNodes.push_back(rootGCellNode);
+    gcellNode2RPinNodes[rootGCellNode] = sourceGCell2PinNodes[pointKey(rootGCellIdx)];
+    gcellIdx2Nodes[pointKey(rootGCellIdx)] = sourceGCell2PinNodes[pointKey(rootGCellIdx)];
+    net->setFirstNonRPinNode(rootGCellNode);
+    net->setRootGCellNode(rootGCellNode);
+
+    std::vector<frPoint> rootSideTerminalGCellIdxs;
+    rootSideTerminalGCellIdxs.reserve(sourceGCell2PinNodes.size());
+    rootSideTerminalGCellIdxs.push_back(rootGCellIdx);
+    for (auto &[gcellKey, pinNodes] : sourceGCell2PinNodes) {
+        frPoint gcellIdx(gcellKey.first, gcellKey.second);
+        if (gcellIdx == rootGCellIdx) {
+            continue;
+        }
+        auto gcellNode = addSourceTreeNode(gcellIdx);
+        gcellNodes.push_back(gcellNode);
+        gcellNode2RPinNodes[gcellNode] = pinNodes;
+        gcellIdx2Nodes[gcellKey] = pinNodes;
+        rootSideTerminalGCellIdxs.push_back(gcellIdx);
     }
 
     std::vector<frPoint> rootSideTreeVertices;
@@ -1952,16 +1919,115 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
                                     rootSideTreeVertices,
                                     rootSideTreeEdges);
 
-    std::vector<frPoint> oppositeSideTreeVertices;
-    std::vector<std::pair<frPoint, frPoint>> oppositeSideTreeEdges;
-    genSelfSymmetryOppositeSideTopology(oppositeSideTerminalGCellIdxs,
-                                        selfSymmetryConstraint.isAxisHorizontal,
-                                        axisGCellIdx,
-                                        rootSide,
-                                        rootSideTreeVertices,
-                                        rootSideTreeEdges,
-                                        oppositeSideTreeVertices,
-                                        oppositeSideTreeEdges);
+    auto getOrCreateSourceTreeNode = [&](const frPoint &gcellIdx) {
+        auto key = pointKey(gcellIdx);
+        auto nodeIt = sourceTreeNodeByGCellIdx.find(key);
+        if (nodeIt != sourceTreeNodeByGCellIdx.end()) {
+            return nodeIt->second;
+        }
+        auto node = addSourceTreeNode(gcellIdx);
+        steinerNodes.push_back(node);
+        return node;
+    };
+
+    for (auto vertex : rootSideTreeVertices) {
+        getOrCreateSourceTreeNode(vertex);
+    }
+    for (auto edge : rootSideTreeEdges) {
+        getOrCreateSourceTreeNode(edge.first);
+        getOrCreateSourceTreeNode(edge.second);
+    }
+
+    std::map<std::pair<int, int>, std::vector<frPoint>> rootSideAdj;
+    for (auto edge : rootSideTreeEdges) {
+        rootSideAdj[pointKey(edge.first)].push_back(edge.second);
+        rootSideAdj[pointKey(edge.second)].push_back(edge.first);
+    }
+
+    std::set<std::pair<int, int>> visitedGCellIdxs;
+    std::deque<frPoint> nodeQ;
+    visitedGCellIdxs.insert(pointKey(rootGCellIdx));
+    nodeQ.push_back(rootGCellIdx);
+    while (!nodeQ.empty()) {
+        auto currGCellIdx = nodeQ.front();
+        nodeQ.pop_front();
+        auto currNode = getOrCreateSourceTreeNode(currGCellIdx);
+        for (auto childGCellIdx : rootSideAdj[pointKey(currGCellIdx)]) {
+            auto childKey = pointKey(childGCellIdx);
+            if (!visitedGCellIdxs.insert(childKey).second) {
+                continue;
+            }
+            auto childNode = getOrCreateSourceTreeNode(childGCellIdx);
+            currNode->addChild(childNode);
+            childNode->setParent(currNode);
+            nodeQ.push_back(childGCellIdx);
+        }
+    }
+
+    for (auto &[gcellNode, localPinNodes] : gcellNode2RPinNodes) {
+        for (auto localPinNode : localPinNodes) {
+            if (localPinNode == rootNode) {
+                gcellNode->setParent(localPinNode);
+                localPinNode->addChild(gcellNode);
+            }
+            else {
+                gcellNode->addChild(localPinNode);
+                localPinNode->setParent(gcellNode);
+            }
+        }
+    }
+
+    auto rootSideReachesAxis = [&]() {
+        auto axisCoord = [&](const frPoint &gcellIdx) {
+            return selfSymmetryConstraint.isAxisHorizontal ? gcellIdx.y() : gcellIdx.x();
+        };
+        for (auto vertex : rootSideTreeVertices) {
+            if (axisCoord(vertex) == axisGCellIdx) {
+                return true;
+            }
+        }
+        for (auto edge : rootSideTreeEdges) {
+            if (std::min(axisCoord(edge.first), axisCoord(edge.second)) <= axisGCellIdx &&
+                std::max(axisCoord(edge.first), axisCoord(edge.second)) >= axisGCellIdx) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    bool reachesAxis = rootSideReachesAxis();
+    if (!reachesAxis) {
+        cout << "Error: self-symmetry root-side source tree does not reach axis for net "
+             << net->getName() << "\n";
+    }
+
+    for (auto &[gcellKey, treeNode] : sourceTreeNodeByGCellIdx) {
+        frPoint gcellIdx(gcellKey.first, gcellKey.second);
+        int side = getSelfSymmetryGCellSide(gcellIdx,
+                                            selfSymmetryConstraint.isAxisHorizontal,
+                                            axisGCellIdx);
+        if (side != 0 && side != rootSide) {
+            cout << "Error: self-symmetry source tree node on mirror side for net "
+                 << net->getName() << "\n";
+        }
+        if (visitedGCellIdxs.find(gcellKey) == visitedGCellIdxs.end()) {
+            cout << "Error: self-symmetry source tree node is disconnected for net "
+                 << net->getName() << "\n";
+        }
+    }
+
+    for (auto pinNode : sourcePinNodes) {
+        if (pinNode != rootNode && pinNode->getParent() == nullptr) {
+            cout << "Error: self-symmetry source-side non-root pin does not have parent for net "
+                 << net->getName() << "\n";
+        }
+    }
+    for (auto pinNode : mirrorPinNodes) {
+        if (pinNode->getParent() != nullptr || !pinNode->getChildren().empty()) {
+            cout << "Error: self-symmetry mirror-side pin is connected for net "
+                 << net->getName() << "\n";
+        }
+    }
 
     auto shouldDumpSelfSymmetryTopology = [&]() {
         const bool enableDump = true;
@@ -1971,6 +2037,23 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
     if (shouldDumpSelfSymmetryTopology()) {
         auto printPoint = [](const frPoint &point) {
             cout << "(" << point.x() << ", " << point.y() << ")";
+        };
+        auto printPinName = [](frBlockObject *pin) {
+            if (pin == nullptr) {
+                cout << "<null>";
+            }
+            else if (pin->typeId() == frcInstTerm) {
+                auto instTerm = static_cast<frInstTerm*>(pin);
+                cout << instTerm->getInst()->getName() << "/"
+                     << instTerm->getTerm()->getName();
+            }
+            else if (pin->typeId() == frcTerm) {
+                auto term = static_cast<frTerm*>(pin);
+                cout << "PIN/" << term->getName();
+            }
+            else {
+                cout << "<unknown>";
+            }
         };
         auto isAxisEdge = [&](const frPoint &begin, const frPoint &end) {
             if (selfSymmetryConstraint.isAxisHorizontal) {
@@ -1985,69 +2068,43 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
             auto length = edgeLength(begin, end);
             return length * (isAxisEdge(begin, end) ? 1 : 4);
         };
-        auto mirrorPoint = [&](const frPoint &point) {
-            frPoint mirroredPoint = point;
-            if (selfSymmetryConstraint.isAxisHorizontal) {
-                mirroredPoint.set(point.x(), axisGCellIdx + (axisGCellIdx - point.y()));
-            }
-            else {
-                mirroredPoint.set(axisGCellIdx + (axisGCellIdx - point.x()), point.y());
-            }
-            return mirroredPoint;
-        };
-        auto coversSegment = [](const frPoint &segmentBegin,
-                                const frPoint &segmentEnd,
-                                const frPoint &candidateBegin,
-                                const frPoint &candidateEnd) {
-            if (candidateBegin == candidateEnd) {
-                return false;
-            }
-            if (candidateBegin.x() == candidateEnd.x()) {
-                if (segmentBegin.x() != segmentEnd.x() ||
-                    segmentBegin.x() != candidateBegin.x()) {
-                    return false;
-                }
-                return std::min(candidateBegin.y(), candidateEnd.y()) >= std::min(segmentBegin.y(), segmentEnd.y()) &&
-                       std::max(candidateBegin.y(), candidateEnd.y()) <= std::max(segmentBegin.y(), segmentEnd.y());
-            }
-            if (candidateBegin.y() == candidateEnd.y()) {
-                if (segmentBegin.y() != segmentEnd.y() ||
-                    segmentBegin.y() != candidateBegin.y()) {
-                    return false;
-                }
-                return std::min(candidateBegin.x(), candidateEnd.x()) >= std::min(segmentBegin.x(), segmentEnd.x()) &&
-                       std::max(candidateBegin.x(), candidateEnd.x()) <= std::max(segmentBegin.x(), segmentEnd.x());
-            }
-            return false;
-        };
-        auto isMirrorRewardEdge = [&](const frPoint &begin, const frPoint &end) {
-            for (auto rootSideEdge : rootSideTreeEdges) {
-                if (coversSegment(mirrorPoint(rootSideEdge.first),
-                                  mirrorPoint(rootSideEdge.second),
-                                  begin,
-                                  end)) {
-                    return true;
-                }
-            }
-            return false;
-        };
-        auto oppositeEdgeCost = [&](const frPoint &begin, const frPoint &end) {
-            auto length = edgeLength(begin, end);
-            return length * (isMirrorRewardEdge(begin, end) ? 1 : 4);
-        };
 
         cout << "@@@ self-symmetry topology @@@\n";
         cout << "net: " << net->getName() << "\n";
-        cout << "axis coord: "
-             << (selfSymmetryConstraint.isAxisHorizontal ? "y=" : "x=")
-             << selfSymmetryConstraint.axis << "\n";
-        cout << "axis gcell: "
-             << (selfSymmetryConstraint.isAxisHorizontal ? "y=" : "x=")
+        cout << "axis: "
+             << (selfSymmetryConstraint.isAxisHorizontal ? "horizontal y=" : "vertical x=")
+             << selfSymmetryConstraint.axis << ", "
+             << (selfSymmetryConstraint.isAxisHorizontal ? "gcell_y=" : "gcell_x=")
              << axisGCellIdx << "\n";
         cout << "root side: " << rootSide << "\n";
-        cout << "root: ";
-        printPoint(rootGCellIdx);
-        cout << "\n\n";
+
+        cout << "pins:\n";
+        for (int i = 0; i < (int)nodes.size(); i++) {
+            auto pinNode = nodes[i];
+            frPoint pinLoc;
+            pinNode->getLoc(pinLoc);
+            frPoint pinGCellIdx = getGCellIdxFromLoc(pinLoc);
+            int pinSide = getSelfSymmetryPointSide(pinLoc, selfSymmetryConstraint);
+            bool inSourceTree = (pinNode == rootNode || pinNode->getParent() != nullptr);
+            cout << "  p" << i << ": ";
+            printPinName(pinNode->getPin());
+            cout << " loc=";
+            printPoint(pinLoc);
+            cout << ", gcell=";
+            printPoint(pinGCellIdx);
+            cout << ", layer=" << pinNode->getLayerNum()
+                 << ", side=" << pinSide
+                 << ", root=" << (pinNode == rootNode ? 1 : 0)
+                 << ", in_source_tree=" << (inSourceTree ? 1 : 0)
+                 << ", parent=";
+            if (pinNode->getParent()) {
+                cout << pinNode->getParent()->getId();
+            }
+            else {
+                cout << "null";
+            }
+            cout << "\n";
+        }
 
         cout << "root-side terminals:\n";
         for (int i = 0; i < (int)rootSideTerminalGCellIdxs.size(); i++) {
@@ -2076,32 +2133,33 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
                  << "\n";
         }
 
-        cout << "\nopposite-side terminals:\n";
-        for (int i = 0; i < (int)oppositeSideTerminalGCellIdxs.size(); i++) {
-            cout << "  t" << i << ": ";
-            printPoint(oppositeSideTerminalGCellIdxs[i]);
-            cout << "\n";
+        cout << "\nsource tree parent-child:\n";
+        for (auto &[gcellKey, treeNode] : sourceTreeNodeByGCellIdx) {
+            frPoint treeGCellIdx(gcellKey.first, gcellKey.second);
+            cout << "  node " << treeNode->getId() << " gcell=";
+            printPoint(treeGCellIdx);
+            cout << " parent=";
+            if (treeNode->getParent() && treeNode->getParent()->getType() == frNodeTypeEnum::frcSteiner) {
+                cout << treeNode->getParent()->getId();
+            }
+            else {
+                cout << "null";
+            }
+            cout << " children=[";
+            bool isFirstChild = true;
+            for (auto child : treeNode->getChildren()) {
+                if (child->getType() != frNodeTypeEnum::frcSteiner) {
+                    continue;
+                }
+                if (!isFirstChild) {
+                    cout << ",";
+                }
+                cout << child->getId();
+                isFirstChild = false;
+            }
+            cout << "]\n";
         }
-
-        cout << "\nopposite-side vertices:\n";
-        for (int i = 0; i < (int)oppositeSideTreeVertices.size(); i++) {
-            cout << "  v" << i << ": ";
-            printPoint(oppositeSideTreeVertices[i]);
-            cout << "\n";
-        }
-
-        cout << "\nopposite-side edges:\n";
-        for (int i = 0; i < (int)oppositeSideTreeEdges.size(); i++) {
-            const auto &edge = oppositeSideTreeEdges[i];
-            cout << "  e" << i << ": ";
-            printPoint(edge.first);
-            cout << " -> ";
-            printPoint(edge.second);
-            cout << ", length=" << edgeLength(edge.first, edge.second)
-                 << ", cost=" << oppositeEdgeCost(edge.first, edge.second)
-                 << ", mirror=" << (isMirrorRewardEdge(edge.first, edge.second) ? 1 : 0)
-                 << "\n";
-        }
+        cout << "root-side reaches axis: " << (reachesAxis ? 1 : 0) << "\n";
         cout << "@@@ end self-symmetry topology @@@\n";
     }
 }
@@ -2181,6 +2239,12 @@ void FlexGR::layerAssign_net(frNet *net) {
       break;
     }
 
+    if (isSelfSymmetryNet(net) && node.get() != net->getRoot() &&
+        node->getParent() == nullptr) {
+      nodeCnt++;
+      continue;
+    }
+
     if (node.get() == net->getRoot()) {
       gcellNode2RPinNodes[node->getChildren().front()].push_back(node.get());
     } else {
@@ -2196,6 +2260,15 @@ void FlexGR::layerAssign_net(frNet *net) {
   // cout << net->getName() << endl << flush;
 
   for (auto &node: nodes) {
+    if (isSelfSymmetryNet(net) && node.get() != net->getRoot() &&
+        node->getParent() == nullptr) {
+      rpinNodeCnt++;
+      if (rpinNodeCnt >= rpinNodeSize) {
+        break;
+      }
+      continue;
+    }
+
     if (node.get() == net->getRoot()) {
       node->getChildren().front()->setParent(nullptr);
       net->setRootGCellNode(node->getChildren().front());

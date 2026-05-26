@@ -66,6 +66,28 @@ real route objects = lead route + axis anchor/axis edges
 mirror effect       = demand(mirror(non-axis lead route))
 ```
 
+## 当前实现阶段：单侧 Parent-Child Tree
+
+当前 Task 3 只 materialize root/lead side + axis anchor 的 `frNode`
+parent-child tree：
+
+- 保留所有原始 pin node。
+- root/lead/axis 侧 pin node 挂到对应 GCell node。
+- root pin 连接到 root GCell node。
+- axis anchor 和额外 Steiner vertex 按 GCell center 创建 `frNode`。
+- `genSelfSymmetryRootSideTopology()` 产出的 root-side edges 从 `rootGCellIdx`
+  开始定向为真实 parent-child tree。
+- mirror-side pin node 保留在 net 中，但 `parent=null`，不挂 child，不进入 source
+  tree terminal list。
+- 不创建 mirror-side GCell node、Steiner tree、`grPathSeg`、`grVia` 或 region-query
+  object。
+
+这是当前阶段的预期行为，不是连接性失败。后续如果 DEF / guide / DR 必须看到完整
+物理自对称网，需要在 search repair 之后统一 materialize mirror side。
+
+guide 生成/检查在当前阶段只验证已连接的 self-symmetry source pins。断开的 mirror
+pins 不作为当前 guide 连通性错误；它们的最终物理连接属于后续 materialization。
+
 ## Lead Side 判定
 
 lead/source side 不需要额外枚举或持久化字段。实现上直接使用当前拓扑 root 所在侧：
@@ -127,6 +149,44 @@ root / lead pins -> lead-side tree -> axis anchor
 - search repair 不能破坏 lead-to-axis 的连通性。
 - worker window 内如果包含 axis anchor，需要把它当固定 terminal。
 - worker window 外如果 axis anchor 不在窗口内，则通过 boundary pin 保持原有 lead-to-axis 连接。
+
+## Symmtry5 Debug Dump
+
+`Symmtry5` 会输出 self-symmetry topology dump，用于验收当前单侧树：
+
+```text
+@@@ self-symmetry topology @@@
+net: Symmtry5
+axis: horizontal y=<physical_axis>, gcell_y=<axis_gcell_idx>
+root side: <-1|1>
+pins:
+  p0: <inst>/<term> loc=(x,y), gcell=(gx,gy), layer=<layer>, side=<-1|0|1>, root=<0|1>, in_source_tree=<0|1>, parent=<node_id_or_null>
+root-side terminals:
+root-side vertices:
+root-side edges:
+source tree parent-child:
+  node <id> gcell=(gx,gy) parent=<id|null> children=[...]
+root-side reaches axis: <0|1>
+@@@ end self-symmetry topology @@@
+```
+
+字段含义：
+
+- `side` 是 pin AP 相对 physical symmetry axis 的位置。
+- `in_source_tree=1` 表示 pin 参与当前 root/lead/axis source tree。
+- mirror-side pin 应显示 `in_source_tree=0` 且 `parent=null`。
+- `source tree parent-child` 只列 route tree node，不把 pin child 混入 children 列表。
+- `root-side reaches axis: 1` 表示 root-side vertex 或 edge 接触 axis GCell；mirror
+  侧断开不算失败。
+
+验收方式：
+
+```bash
+rg -n "self-symmetry topology|axis:|pins:|source tree parent-child|root-side reaches axis" \
+  build/selfsym-task3-tree/selfsym_task3_tree.log
+```
+
+期望能看到 `pins`、`source tree parent-child` 和 `root-side reaches axis: 1`。
 
 ## Mirror Shadow Demand
 

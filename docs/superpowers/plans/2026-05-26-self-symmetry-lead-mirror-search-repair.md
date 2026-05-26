@@ -23,6 +23,16 @@
 - Other nets see mirror pressure through congestion maps, not through region-query objects.
 - If final guide/DEF/DR requires explicit mirror shapes, materialize them after search repair from the final lead route.
 
+## Task 3 Revision: One-Side Source Tree
+
+Task 3 is intentionally narrower than the full lead/mirror-shadow architecture:
+
+- Implement only the root/lead side + axis anchor parent-child tree.
+- Keep mirror-side pin nodes in the net but disconnected.
+- Do not add mirror A* cost, worker repair, writeback, layer-assignment specialization, or final mirror materialization in this task.
+- Treat `Symmtry5` debug output plus the local smoke run as the Task 3 acceptance evidence.
+- Guide connectivity validation is limited to connected source pins for self-symmetry nets during this phase; disconnected mirror pins are expected until final materialization exists.
+
 ## Code Review Baseline
 
 Current GR flow in `src/gr/FlexGR.cpp`:
@@ -67,7 +77,7 @@ Optional create:
 - Modify: `src/gr/FlexGR.h`
 - Modify: `src/gr/FlexGR.cpp`
 
-- [ ] Add nullable constraint access on `frNet` as the first code change:
+- [x] Add nullable constraint access on `frNet` as the first code change:
 
 ```cpp
     const frSelfSymmetryConstraint* getSelfSymmetryConstraintPtr() const {
@@ -75,9 +85,9 @@ Optional create:
     }
 ```
 
-- [ ] Do not modify `src/frBaseTypes.h`, node/object side fields, `CMakeLists.txt`, or routing behavior in this task.
+- [x] Do not modify `src/frBaseTypes.h`, node/object side fields, `CMakeLists.txt`, or routing behavior in this task.
 
-- [ ] Add helper declarations:
+- [x] Add helper declarations:
 
 ```cpp
     const frSelfSymmetryConstraint* getSelfSymmetryConstraintPtr(const frNet* net) const;
@@ -91,9 +101,9 @@ Optional create:
     frPoint mirrorGCellIdx(const frPoint&, bool isAxisHorizontal, frCoord axisGCellIdx) const;
 ```
 
-- [ ] Implement side helpers as coordinate-derived utilities. Point/GCell side returns `-1`, `0`, or `1`; `getSelfSymmetryRootSide()` maps root-on-axis side `0` to the existing fallback `-1`.
+- [x] Implement side helpers as coordinate-derived utilities. Point/GCell side returns `-1`, `0`, or `1`; `getSelfSymmetryRootSide()` maps root-on-axis side `0` to the existing fallback `-1`.
 
-- [ ] Build check:
+- [x] Build check:
 
 ```bash
 cmake --build build -j$(nproc)
@@ -108,7 +118,7 @@ Expected: build succeeds without behavior change.
 - Modify: `src/gr/FlexGR.cpp` or `src/gr/FlexGR_selfsym.cpp`
 - Modify: `src/gr/FlexGR_maze.cpp`
 
-- [ ] Add helpers to add/sub demand for a source path segment:
+- [x] Add helpers to add/sub demand for a source path segment:
 
 ```cpp
     void modSelfSymmetrySourceDemand(frNet* net,
@@ -125,11 +135,11 @@ Expected: build succeeds without behavior change.
                                            bool is2D);
 ```
 
-- [ ] `modSelfSymmetrySourceDemand()` updates normal lead/axis demand.
+- [x] `modSelfSymmetrySourceDemand()` updates normal lead/axis demand.
 
-- [ ] `modSelfSymmetryMirrorShadowDemand()` mirrors only non-axis source geometry and updates cmap/cmap2D at the mirrored edge. Axis geometry is skipped to avoid double count.
+- [x] `modSelfSymmetryMirrorShadowDemand()` mirrors only non-axis source geometry and updates cmap/cmap2D at the mirrored edge. Axis geometry is skipped to avoid double count.
 
-- [ ] Add one wrapper:
+- [x] Add one wrapper:
 
 ```cpp
     void modSelfSymmetrySourceAndShadowDemand(frNet* net,
@@ -142,7 +152,7 @@ Expected: build succeeds without behavior change.
 
 It calls source demand plus mirror shadow demand.
 
-- [ ] Build check:
+- [x] Build check:
 
 ```bash
 cmake --build build -j$(nproc)
@@ -150,44 +160,55 @@ cmake --build build -j$(nproc)
 
 Expected: build succeeds.
 
-### Task 3: Make Self-Symmetry Topology a Lead-to-Axis Source Tree
+### Task 3: One-Side Parent-Child Tree, Debug Output, And Docs
 
 **Files:**
 - Modify: `src/gr/FlexGR.cpp`
-- Modify: `src/gr/FlexGR_topo.cpp` only if helper extraction is needed
+- Modify: `src/io/io_guide.cpp`
+- Modify: `docs/self_symmetry_lead_mirror_search_repair.md`
+- Modify: `docs/superpowers/plans/2026-05-26-self-symmetry-lead-mirror-search-repair.md`
 
-- [ ] In `initGR_genTopology_selfsymmetry_net()`, keep AP assignment, root selection, GCell node creation, axis GCell computation, and root-side selection.
+- [x] In `initGR_genTopology_selfsymmetry_net()`, keep AP assignment, root selection, axis GCell computation, and root-side selection.
 
-- [ ] Treat the axis GCell as a mandatory lead-side terminal. Keep the existing `genSelfSymmetryRootSideTopology()` behavior that connects the root-side tree to the axis if needed.
+- [x] Treat the axis GCell as mandatory source topology. Keep the existing `genSelfSymmetryRootSideTopology()` behavior that connects the root-side tree to the axis if needed.
 
-- [ ] Stop using `genSelfSymmetryOppositeSideTopology()` as a repair source route. Opposite-side topology may remain only for debug comparison.
+- [x] Stop using `genSelfSymmetryOppositeSideTopology()` as a repair source route.
 
-- [ ] Convert `rootSideTreeVertices/rootSideTreeEdges` into a real `frNode` source tree:
-- Use existing GCell nodes for root/lead terminal GCells.
-- Create Steiner nodes for non-terminal root-side vertices.
-- Create or reuse an axis anchor node at the axis GCell.
-- Parent the tree from the root GCell node.
+- [x] Convert `rootSideTreeVertices/rootSideTreeEdges` into a real `frNode` source tree:
+  - Create root/lead terminal GCell nodes only for source-side pins.
+  - Create Steiner nodes for non-terminal root-side vertices and axis anchors.
+  - Parent the tree from the root GCell node.
 
-- [ ] Do not create mirror-side route nodes or mirror-side route objects in this phase.
+- [x] Do not create mirror-side route nodes or mirror-side route objects in this phase.
 
-- [ ] Mirror-side original pin nodes may remain as logical net pins, but they must not become search repair terminals. Their physical mirror connection is implicit during search repair and can be materialized after repair if output requires it.
+- [x] Mirror-side original pin nodes remain as logical net pins but do not become source-tree terminals. Their physical mirror connection is implicit and can be materialized after repair if output requires it.
 
-- [ ] Add assertions:
-- The root-side source tree reaches the axis anchor.
-- Every lead-side non-root pin has a parent.
-- No stored GR route object is on the mirror side.
-- Axis source objects are counted once.
+- [x] Add debug/error checks:
+  - The root-side source tree reaches the axis anchor.
+  - Every source-side non-root pin has a parent.
+  - Mirror-side pins stay disconnected.
+  - Source tree nodes stay on root/axis side.
 
-- [ ] Build and smoke run:
+- [x] Add `Symmtry5` debug dump with `pins`, `root-side terminals`, `root-side vertices`, `root-side edges`, `source tree parent-child`, and `root-side reaches axis`.
+
+- [x] Build and smoke run:
 
 ```bash
-cmake --build build -j$(nproc)
-mkdir -p build/selfsym-shadow-smoke
-cd build/selfsym-shadow-smoke
-../TritonRoute -lef ~/benchmark/primarius/outdata/ispd18_test1.input.lef -def ~/benchmark/primarius/outdata/pattern_route_lay.def -output selfsym_topology.def > selfsym_topology.log 2>&1
+clangd --compile-commands-dir=build --check=src/gr/FlexGR.cpp
+cmake --build build -j$(nproc) --target flexroutelib
+cmake --build build -j$(nproc) --target TritonRoute
+mkdir -p build/selfsym-task3-tree
+cd build/selfsym-task3-tree
+cp ../../src/gr/flute/POST9.dat ../../src/gr/flute/POWV9.dat .
+../TritonRoute \
+  -lef ~/benchmark/primarius/outdata/ispd18_test1.input.lef \
+  -def ~/benchmark/primarius/outdata/pattern_route_lay.def \
+  -output selfsym_task3_tree.def \
+  > selfsym_task3_tree.log 2>&1
+rg -n "self-symmetry topology|axis:|pins:|source tree parent-child|root-side reaches axis" selfsym_task3_tree.log
 ```
 
-Expected: no crash in topology generation; log reaches at least the first 2D congestion report.
+Expected: `Symmtry5` dump appears, mirror-side pins show `in_source_tree=0` and `parent=null`, root/lead/axis side has a parent-child tree, `root-side reaches axis: 1`, and the smoke run exits successfully.
 
 ### Task 4: Pattern Route Only Lead-to-Axis Source Geometry
 
