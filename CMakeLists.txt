@@ -46,12 +46,15 @@ set (FLEXROUTE_SRC
   ${FLEXROUTE_HOME}/src/gr/FlexGRCMap.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR_end.cpp
+  ${FLEXROUTE_HOME}/src/gr/FlexGR_self_sym.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGRGridGraph.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGRGridGraph_maze.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR_init.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR_maze.cpp
+  ${FLEXROUTE_HOME}/src/gr/FlexGR_maze_self_sym.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR_rq.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR_topo.cpp
+  ${FLEXROUTE_HOME}/src/gr/FlexGR_topo_self_sym.cpp
   ${FLEXROUTE_HOME}/src/gr/flute/flute.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexDR_conn.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexDR_init.cpp
@@ -233,4 +236,3 @@ target_link_libraries( TritonRoute
 install(FILES ${FLEXROUTE_HEADER} DESTINATION include)
 install(TARGETS TritonRoute DESTINATION bin)
 install(TARGETS TritonRoute DESTINATION lib)
-

@@ -440,6 +440,35 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
                   + (histCost   ? 4 * getCongCost(rawDemand, rawSupply * grWorker->getCongThresh()) * getHistoryCost(gridX, gridY, gridZ) *  getEdgeLength(gridX, gridY, gridZ, dir) : 0)
                   + (blockCost  ? BLOCKCOST                         * getEdgeLength(gridX, gridY, gridZ, dir) * 100  : 0)
                   + (overflowCost ? 128 * getEdgeLength(gridX, gridY, gridZ, dir) : 0);
+  if (is2DRouting && activeNet && activeNet->getSelfSymmetryConstraintPtr() &&
+      (dir == frDirEnum::E || dir == frDirEnum::N ||
+       dir == frDirEnum::S || dir == frDirEnum::W)) {
+    frMIdx mirrorX = 0;
+    frMIdx mirrorY = 0;
+    frMIdx mirrorZ = 0;
+    frDirEnum mirrorDir = frDirEnum::UNKNOWN;
+    if (grWorker->getSelfSymmetry2DMirrorEdge(activeNet, gridX, gridY, gridZ, dir,
+                                              mirrorX, mirrorY, mirrorZ, mirrorDir)) {
+      frMIdx tmpMirrorX = mirrorX;
+      frMIdx tmpMirrorY = mirrorY;
+      frMIdx tmpMirrorZ = mirrorZ;
+      frDirEnum tmpMirrorDir = mirrorDir;
+      correct(tmpMirrorX, tmpMirrorY, tmpMirrorZ, tmpMirrorDir);
+      if (tmpMirrorDir != frDirEnum::U && tmpMirrorDir != frDirEnum::D) {
+        unsigned mirrorRawDemand = getRawDemand(tmpMirrorX, tmpMirrorY, tmpMirrorZ, tmpMirrorDir);
+        unsigned mirrorRawSupply = getRawSupply(tmpMirrorX, tmpMirrorY, tmpMirrorZ, tmpMirrorDir);
+        bool mirrorOverflowCost = (mirrorRawDemand >= mirrorRawSupply * grWorker->getCongThresh());
+        frCost mirrorCost = getCongCost(mirrorRawDemand, mirrorRawSupply * grWorker->getCongThresh()) *
+                            getEdgeLength(gridX, gridY, gridZ, dir);
+        if (mirrorOverflowCost) {
+          mirrorCost += 128 * getEdgeLength(gridX, gridY, gridZ, dir);
+        }
+        nextPathCost += mirrorCost;
+        mirrorCostTotal += mirrorCost;
+        mirrorCostQueries++;
+      }
+    }
+  }
   // discourage using layer below VIA_ACCESS_LAYERNUM
   // if ((tmpZ + 1) * 2 <= VIA_ACCESS_LAYERNUM && !grWorker->is2D() && (dir != frDirEnum::U && dir != frDirEnum::D)) {
   //   nextPathCost += BLOCKCOST * getEdgeLength(gridX, gridY, gridZ, dir) * 100;

@@ -39,6 +39,7 @@
 #include "frDesign.h"
 #include "db/grObj/grPin.h"
 #include "gr/FlexGRWavefront.h"
+#include "db/obj/frNet.h"
 #include <map>
 #include <iostream>
 
@@ -52,7 +53,8 @@ namespace fr {
       prevDirs(), srcs(), dsts(),
       xCoords(), yCoords(), zCoords(), zHeights(), zDirs(),
       ggCongCost(0), ggHistCost(0),
-      wavefront(), is2DRouting(false) {}
+      wavefront(), is2DRouting(false), activeNet(nullptr),
+      mirrorCostQueries(0), mirrorCostTotal(0) {}
     // getters
     frTechObject* getTech() const {
       return design->getTech();
@@ -568,6 +570,20 @@ namespace fr {
     void set2D(bool in) {
       is2DRouting = in;
     }
+    void setActiveNet(frNet* in) {
+      activeNet = in;
+      mirrorCostQueries = 0;
+      mirrorCostTotal = 0;
+    }
+    frNet* getActiveNet() const {
+      return activeNet;
+    }
+    long long getMirrorCostQueries() const {
+      return mirrorCostQueries;
+    }
+    frCost getMirrorCostTotal() const {
+      return mirrorCostTotal;
+    }
     
     // functions
     void init();
@@ -627,6 +643,9 @@ namespace fr {
 
     // flags
     bool                              is2DRouting;
+    frNet*                            activeNet;
+    long long                         mirrorCostQueries;
+    frCost                            mirrorCostTotal;
 
     // internal getters
     bool getBit(frMIdx idx, frMIdx pos) const {
