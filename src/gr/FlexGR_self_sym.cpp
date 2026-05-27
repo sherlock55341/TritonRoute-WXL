@@ -56,6 +56,45 @@ namespace {
     return isAxisHorizontal ? gcellIdx.y() : gcellIdx.x();
   }
 
+  long long getSelfSymmetryEdgeLen(const frPoint &begin, const frPoint &end) {
+    long long dx = begin.x() >= end.x() ? begin.x() - end.x() : end.x() - begin.x();
+    long long dy = begin.y() >= end.y() ? begin.y() - end.y() : end.y() - begin.y();
+    return max(1ll, dx + dy);
+  }
+
+  unsigned saturateSelfSymmetryCost(unsigned long long cost) {
+    return cost > numeric_limits<unsigned>::max() ?
+           numeric_limits<unsigned>::max() :
+           (unsigned)cost;
+  }
+
+  struct SelfSymmetryLayerAssignDebug {
+    bool sawSymmtry5 = false;
+    bool printed = false;
+    unsigned long long mirrorCostQueries = 0;
+    unsigned long long mirrorCostHits = 0;
+    unsigned long long mirrorInvalidEdges = 0;
+    unsigned long long mirrorInvalidPenalty = 0;
+    unsigned long long mirrorCostTotal = 0;
+
+    void print() {
+      if (!sawSymmtry5 || printed) {
+        return;
+      }
+      printed = true;
+      cout << "@@@ self-symmetry layer assignment mirror cost @@@\n";
+      cout << "net: Symmtry5\n";
+      cout << "layerassign_mirror_cost_queries: " << mirrorCostQueries << "\n";
+      cout << "layerassign_mirror_cost_hits: " << mirrorCostHits << "\n";
+      cout << "layerassign_mirror_invalid_edges: " << mirrorInvalidEdges << "\n";
+      cout << "layerassign_mirror_invalid_penalty: " << mirrorInvalidPenalty << "\n";
+      cout << "layerassign_mirror_cost_total: " << mirrorCostTotal << "\n";
+      cout << "@@@ end self-symmetry layer assignment mirror cost @@@\n";
+    }
+  };
+
+  SelfSymmetryLayerAssignDebug layerAssignDebug;
+
   bool selfSymmetrySegmentCovers(const frPoint &segmentBegin,
                                  const frPoint &segmentEnd,
                                  const frPoint &candidateBegin,
@@ -168,6 +207,146 @@ frPoint FlexGR::mirrorGCellIdx(const frPoint &gcellIdx,
     mirroredGCellIdx.set(axisGCellIdx + (axisGCellIdx - gcellIdx.x()), gcellIdx.y());
   }
   return mirroredGCellIdx;
+}
+
+unsigned FlexGR::getSelfSymmetryLayerAssignMirrorCost(frNode *currNode,
+                                                       frNet *net,
+                                                       frLayerNum layerNum) {
+  auto constraint = getSelfSymmetryConstraintPtr(net);
+  if (constraint == nullptr || currNode == nullptr ||
+      design == nullptr || design->getTopBlock() == nullptr) {
+    return 0;
+  }
+
+  bool debugNet = net->getName() == "Symmtry5";
+  if (debugNet) {
+    layerAssignDebug.sawSymmtry5 = true;
+  }
+  if (currNode->getParent() == nullptr) {
+    if (debugNet) {
+      layerAssignDebug.print();
+    }
+    return 0;
+  }
+
+  auto block = design->getTopBlock();
+  auto &gCellPatterns = block->getGCellPatterns();
+  if (gCellPatterns.size() < 2 || gCellPatterns.at(0).getCount() == 0 ||
+      gCellPatterns.at(1).getCount() == 0) {
+    return 0;
+  }
+
+  frPoint currLoc, parentLoc;
+  currNode->getLoc(currLoc);
+  currNode->getParent()->getLoc(parentLoc);
+
+  frPoint beginIdx, endIdx;
+  block->getGCellIdx(currLoc, beginIdx);
+  block->getGCellIdx(parentLoc, endIdx);
+  if (beginIdx == endIdx) {
+    return 0;
+  }
+
+  frPoint axisProbe;
+  if (constraint->isAxisHorizontal) {
+    axisProbe.set(currLoc.x(), constraint->axis);
+  } else {
+    axisProbe.set(constraint->axis, currLoc.y());
+  }
+  frPoint axisGCellLocation;
+  block->getGCellIdx(axisProbe, axisGCellLocation);
+  frCoord axisGCellIdx = constraint->isAxisHorizontal ?
+                         axisGCellLocation.y() :
+                         axisGCellLocation.x();
+
+  bool isAxisOnly =
+      getSelfSymmetryAxisCoord(beginIdx, constraint->isAxisHorizontal) == axisGCellIdx &&
+      getSelfSymmetryAxisCoord(endIdx, constraint->isAxisHorizontal) == axisGCellIdx;
+  if (isAxisOnly) {
+    return 0;
+  }
+
+  auto recordInvalidMirror = [&]() {
+    unsigned long long penalty =
+        (unsigned long long)getSelfSymmetryEdgeLen(beginIdx, endIdx) *
+        ((unsigned long long)BLOCKCOST * 100 + (unsigned long long)MARKERCOST * 8);
+    if (debugNet) {
+      layerAssignDebug.mirrorInvalidEdges++;
+      layerAssignDebug.mirrorInvalidPenalty += penalty;
+      layerAssignDebug.mirrorCostTotal += penalty;
+    }
+    return saturateSelfSymmetryCost(penalty);
+  };
+
+  if (debugNet) {
+    layerAssignDebug.mirrorCostQueries++;
+  }
+
+  if (cmap == nullptr || layerNum < 0 || layerNum >= cmap->getNumLayers()) {
+    return recordInvalidMirror();
+  }
+
+  frPoint mirrorBegin = mirrorGCellIdx(beginIdx, constraint->isAxisHorizontal, axisGCellIdx);
+  frPoint mirrorEnd = mirrorGCellIdx(endIdx, constraint->isAxisHorizontal, axisGCellIdx);
+  int xCnt = (int)gCellPatterns.at(0).getCount();
+  int yCnt = (int)gCellPatterns.at(1).getCount();
+  auto isValidGCellIdx = [&](const frPoint &gcellIdx) {
+    return gcellIdx.x() >= 0 && gcellIdx.y() >= 0 &&
+           gcellIdx.x() < xCnt && gcellIdx.y() < yCnt;
+  };
+  if (!isValidGCellIdx(mirrorBegin) || !isValidGCellIdx(mirrorEnd) ||
+      (mirrorBegin.x() != mirrorEnd.x() && mirrorBegin.y() != mirrorEnd.y())) {
+    return recordInvalidMirror();
+  }
+
+  unsigned long long mirrorCost = 0;
+  if (mirrorBegin.y() == mirrorEnd.y()) {
+    bool isLayerBlocked =
+        design->getTech()->getLayer((layerNum + 1) * 2)->getDir() == frcVertPrefRoutingDir;
+    int yIdx = mirrorBegin.y();
+    int xBegin = min(mirrorBegin.x(), mirrorEnd.x());
+    int xEnd = max(mirrorBegin.x(), mirrorEnd.x());
+    for (int xIdx = xBegin; xIdx < xEnd; xIdx++) {
+      auto supply = cmap->getRawSupply(xIdx, yIdx, layerNum, frDirEnum::E);
+      auto demand = cmap->getRawDemand(xIdx, yIdx, layerNum, frDirEnum::E);
+      mirrorCost += cmap->getHistoryCost(xIdx, yIdx, layerNum);
+      if (isLayerBlocked || cmap->hasBlock(xIdx, yIdx, layerNum, frDirEnum::E)) {
+        mirrorCost += (unsigned long long)BLOCKCOST * 100;
+      }
+      if (demand > supply / 4) {
+        mirrorCost += demand * 10 / (supply + 1);
+      }
+      if (demand >= supply) {
+        mirrorCost += (unsigned long long)MARKERCOST * 8;
+      }
+    }
+  } else {
+    bool isLayerBlocked =
+        design->getTech()->getLayer((layerNum + 1) * 2)->getDir() == frcHorzPrefRoutingDir;
+    int xIdx = mirrorBegin.x();
+    int yBegin = min(mirrorBegin.y(), mirrorEnd.y());
+    int yEnd = max(mirrorBegin.y(), mirrorEnd.y());
+    for (int yIdx = yBegin; yIdx < yEnd; yIdx++) {
+      auto supply = cmap->getRawSupply(xIdx, yIdx, layerNum, frDirEnum::N);
+      auto demand = cmap->getRawDemand(xIdx, yIdx, layerNum, frDirEnum::N);
+      mirrorCost += cmap->getHistoryCost(xIdx, yIdx, layerNum);
+      if (isLayerBlocked || cmap->hasBlock(xIdx, yIdx, layerNum, frDirEnum::N)) {
+        mirrorCost += (unsigned long long)BLOCKCOST * 100;
+      }
+      if (demand > supply / 4) {
+        mirrorCost += demand * 10 / (supply + 1);
+      }
+      if (demand >= supply) {
+        mirrorCost += (unsigned long long)MARKERCOST * 8;
+      }
+    }
+  }
+
+  if (debugNet) {
+    layerAssignDebug.mirrorCostHits++;
+    layerAssignDebug.mirrorCostTotal += mirrorCost;
+  }
+  return saturateSelfSymmetryCost(mirrorCost);
 }
 
 void FlexGR::dumpSelfSymmetry2DAscii(const string &tag,

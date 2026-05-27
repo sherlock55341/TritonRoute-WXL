@@ -134,6 +134,7 @@ namespace fr {
     bool isOnSelfSymmetryAxisGCell(const frPoint &gcellIdx, bool isAxisHorizontal, frCoord axisGCellIdx) const;
     frPoint mirrorPoint(const frPoint &point, const frSelfSymmetryConstraint &constraint) const;
     frPoint mirrorGCellIdx(const frPoint &gcellIdx, bool isAxisHorizontal, frCoord axisGCellIdx) const;
+    unsigned getSelfSymmetryLayerAssignMirrorCost(frNode *currNode, frNet *net, frLayerNum layerNum);
     void dumpSelfSymmetry2DAscii(const std::string &tag,
                                  const std::string &netName = "Symmtry5") const;
     void modSelfSymmetrySourceDemand(frNet *net, const frPoint &begin, const frPoint &end,

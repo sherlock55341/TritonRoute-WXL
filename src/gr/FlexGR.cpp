@@ -2092,7 +2092,9 @@ void FlexGR::layerAssign_node_compute(frNode *currNode,
       // if (throughOverFlow) {
       //   currLayerCost = upstreamViaCost + downstreamViaCost + 10000 * congestionCost + downstreamCost;
       // } else {
-        currLayerCost = upstreamViaCost + downstreamCost + downstreamViaCost + congestionCost;
+        unsigned mirrorCost = getSelfSymmetryLayerAssignMirrorCost(currNode, net, layerNum);
+        currLayerCost = upstreamViaCost + downstreamCost + downstreamViaCost +
+                        congestionCost + mirrorCost;
       // }
 
       // get overall cost
