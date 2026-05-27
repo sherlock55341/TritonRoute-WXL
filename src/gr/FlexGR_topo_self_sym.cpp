@@ -475,7 +475,41 @@ void FlexGR::genSelfSymmetryOppositeSideTopology(const vector<frPoint> &opposite
 
   auto edgeCost = [&](const frPoint &begin, const frPoint &end) {
     auto length = abs(end.x() - begin.x()) + abs(end.y() - begin.y());
-    return length * (isMirrorRewardEdge(begin, end) ? 1 : 4);
+    int cost = length * (isMirrorRewardEdge(begin, end) ? 1 : 8);
+    if (cmap2D) {
+      if (begin.y() == end.y()) {
+        int yIdx = begin.y();
+        for (int xIdx = min(begin.x(), end.x()); xIdx < max(begin.x(), end.x()); xIdx++) {
+          auto supply = cmap2D->getRawSupply(xIdx, yIdx, 0, frDirEnum::E);
+          auto demand = cmap2D->getRawDemand(xIdx, yIdx, 0, frDirEnum::E);
+          cost += cmap2D->getHistoryCost(xIdx, yIdx, 0);
+          if (cmap2D->hasBlock(xIdx, yIdx, 0, frDirEnum::E)) {
+            cost += BLOCKCOST;
+          }
+          if (demand >= supply) {
+            cost += MARKERCOST;
+          } else if (demand > supply / 4) {
+            cost += demand * 10 / (supply + 1);
+          }
+        }
+      } else if (begin.x() == end.x()) {
+        int xIdx = begin.x();
+        for (int yIdx = min(begin.y(), end.y()); yIdx < max(begin.y(), end.y()); yIdx++) {
+          auto supply = cmap2D->getRawSupply(xIdx, yIdx, 0, frDirEnum::N);
+          auto demand = cmap2D->getRawDemand(xIdx, yIdx, 0, frDirEnum::N);
+          cost += cmap2D->getHistoryCost(xIdx, yIdx, 0);
+          if (cmap2D->hasBlock(xIdx, yIdx, 0, frDirEnum::N)) {
+            cost += BLOCKCOST;
+          }
+          if (demand >= supply) {
+            cost += MARKERCOST;
+          } else if (demand > supply / 4) {
+            cost += demand * 10 / (supply + 1);
+          }
+        }
+      }
+    }
+    return cost;
   };
 
   auto setNeighbor = [&](int fromIdx, int direction, int toIdx) {
@@ -1086,4 +1120,3 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
         cout << "@@@ end self-symmetry topology @@@\n";
     }
 }
-

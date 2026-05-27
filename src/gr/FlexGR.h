@@ -142,6 +142,19 @@ namespace fr {
                                            frLayerNum layerNum, bool isAdd, bool is2D);
     void modSelfSymmetrySourceAndShadowDemand(frNet *net, const frPoint &begin, const frPoint &end,
                                               frLayerNum layerNum, bool isAdd, bool is2D);
+    struct SelfSymmetryMirror2DStats {
+      int mirrorPins = 0;
+      int mirrorHananPinsCovered = 0;
+      int mirrorRepairPinsCovered = 0;
+      int mirrorGuideEdges = 0;
+      int mirrorRepairGuideHits = 0;
+      int mirrorRepairGuideMisses = 0;
+      int mirrorNodesCreated = 0;
+      int mirrorEdgesCreated = 0;
+    };
+    void searchRepairSelfSymmetryMirror();
+    void buildSelfSymmetryMirror2DTopology();
+    SelfSymmetryMirror2DStats buildSelfSymmetryMirror2DTopology_net(frNet *net);
 
   protected:
     // layer assignment

@@ -89,6 +89,9 @@ void FlexGR::main() {
   // reportCong2D();
   
   reportCong2D();
+
+  searchRepairSelfSymmetryMirror();
+  dumpSelfSymmetry2DAscii("after self-symmetry mirror repair");
   
   layerAssign();
   

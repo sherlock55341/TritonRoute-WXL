@@ -3,10 +3,10 @@
 本文记录自对称 net 在 GR search repair 中的设计取舍。当前结论是：
 
 ```text
-self-symmetry net 只搜索、只保存 lead/axis 侧的真实 route。
-mirror 侧不保存具体 route object，只保存由 lead 镜像得到的 shadow demand / cost。
-lead 侧拓扑必须连到 symmetry axis。
-如果 mirror 侧造成拥塞，只允许通过修改 lead 侧间接修复。
+ordinary 2D search repair 只修改 lead/axis 侧的真实 route。
+repair 期间 mirror 侧用 shadow demand / cost 影响 lead 侧选择。
+所有 root/lead-side 2D repair 结束后，在 layerAssign() 前 materialize mirror 侧。
+mirror materialization 使用最终 lead route 的镜像 guide，在 Hanan grid 上覆盖 mirror pins。
 ```
 
 这不是追求全局最优的方案，而是主动把优先级定为：
@@ -51,25 +51,29 @@ source of truth
 
 对 self-symmetry net 引入 lead / axis / mirror-shadow 分工：
 
-- lead 侧是唯一允许被 topology、pattern route、search repair 修改的一侧。
+- ordinary worker repair 期间，lead 侧是唯一允许被 topology、pattern route、search repair 修改的一侧。
 - lead 侧拓扑必须连接到 symmetry axis；不能只是布一半孤立子网。
 - axis 上的拓扑和 demand 是真实共享部分，只记录一次，不能被 mirror 重复计数。
-- mirror 侧不参与独立 topology 生成，不参与独立 pattern route，不参与独立 maze search。
-- mirror 侧不保存 `grPathSeg`、`grVia`、`frNode` 等具体 route object。
-- mirror 侧只通过 shadow demand / shadow cost 进入 `cmap` / `cmap2D`。
-- 普通 worker 不会扫到 self-symmetry net 的 mirror objects，因为 mirror objects 不存在。
+- root-side repair 完成前，mirror 侧不参与独立 topology 生成，不参与独立 pattern route，不参与独立 maze search。
+- root-side repair 完成前，mirror 侧不保存 `grPathSeg`、`grVia`、`frNode` 等具体 route object。
+- root-side repair 期间，mirror 侧只通过 shadow demand / shadow cost 进入 `cmap` / `cmap2D`。
+- 普通 worker 不会扫到 self-symmetry net 的 mirror objects，因为 mirror objects 在 worker repair 阶段还不存在。
+- `searchRepairSelfSymmetryMirror()` 运行后，mirror 侧 pin 会挂到真实 `frNode` tree，随后由 `layerAssign()` 生成 guide/DEF 可见的 route objects。
 
 因此 search repair 期间 self-symmetry net 的表示应满足：
 
 ```text
-real route objects = lead route + axis anchor/axis edges
-mirror effect       = demand(mirror(non-axis lead route))
+ordinary repair real route objects = lead route + axis anchor/axis edges
+ordinary repair mirror effect      = demand(mirror(non-axis lead route))
+post-repair mirror route           = guide-aware Hanan tree from axis to mirror pins
 ```
 
-## 当前实现阶段：单侧 Parent-Child Tree
+## 当前实现阶段：Root Repair 后 Mirror Materialization
 
-当前 Task 3 只 materialize root/lead side + axis anchor 的 `frNode`
-parent-child tree：
+当前实现分成两个阶段。
+
+第一阶段在 `initGR_genTopology_selfsymmetry_net()` 只 materialize root/lead side + axis
+anchor 的 `frNode` parent-child tree：
 
 - 保留所有原始 pin node。
 - root/lead/axis 侧 pin node 挂到对应 GCell node。
@@ -82,11 +86,22 @@ parent-child tree：
 - 不创建 mirror-side GCell node、Steiner tree、`grPathSeg`、`grVia` 或 region-query
   object。
 
-这是当前阶段的预期行为，不是连接性失败。后续如果 DEF / guide / DR 必须看到完整
-物理自对称网，需要在 search repair 之后统一 materialize mirror side。
+这是第一阶段的预期行为，不是连接性失败。此时 guide 生成/检查只验证已连接的
+self-symmetry source pins；断开的 mirror pins 会在第二阶段 materialize。
 
-guide 生成/检查在当前阶段只验证已连接的 self-symmetry source pins。断开的 mirror
-pins 不作为当前 guide 连通性错误；它们的最终物理连接属于后续 materialization。
+第二阶段在三轮普通 2D `searchRepair()` 后、`layerAssign()` 前运行
+`searchRepairSelfSymmetryMirror()`：
+
+- 从最终 lead/axis parent-child tree 收集 root-side route vertices/edges。
+- 将非 axis lead edges 镜像为 mirror guide edges。
+- 以 axis 上已有 route node 为 source，在 Hanan grid 上连接所有 opposite-side pin GCell。
+- guide edge cost 低，非 guide edge cost 高；pin 覆盖是硬要求，精确镜像是软偏好。
+- 将 Hanan 结果写回同一个 `frNet` 的真实 parent-child tree，mirror pins 不再保持断开。
+- 刷新 `rootGCellNode` / `firstNonRPinNode` 和 self-symmetry topology cache，供
+  `layerAssign()` 使用。
+
+这意味着 root-side repair 期间 mirror pins 断开是预期状态，但进入 `layerAssign()` 前，
+mirror pins 应已经被 materialized 并覆盖。最终 guide/DEF/DR 可以看到 mirror 侧 route。
 
 ## Lead Side 判定
 
@@ -179,6 +194,21 @@ root-side reaches axis: <0|1>
 - `root-side reaches axis: 1` 表示 root-side vertex 或 edge 接触 axis GCell；mirror
   侧断开不算失败。
 
+mirror 阶段还会输出：
+
+```text
+@@@ self-symmetry mirror repair 2d @@@
+net: Symmtry5
+mirror_hanan_pins_covered: <covered>/<total>
+mirror_guide_edges: <N>
+mirror_repair_guide_hits: <N>
+mirror_repair_guide_misses: <N>
+mirror_repair_pins_covered: <covered>/<total>
+@@@ end self-symmetry mirror repair 2d @@@
+```
+
+期望 `mirror_hanan_pins_covered` 和 `mirror_repair_pins_covered` 都是 `N/N`。
+
 验收方式：
 
 ```bash
@@ -223,8 +253,8 @@ axis edge 只加/减一次 demand，不做 mirror shadow 复制。
 
 ## Search Repair 行为
 
-search repair 只对 lead/axis 侧执行真实搜索。
-lead 侧搜索时，cost 需要感知 mirror shadow 的代价。
+普通 search repair 只对 lead/axis 侧执行真实搜索。
+lead 侧搜索时，cost 会感知 mirror shadow 的代价。
 
 对 lead 侧候选 edge `e`，计算其镜像 edge `mirror(e)`，总代价可以表达为：
 
@@ -242,12 +272,16 @@ mirror shadow 的 source of truth 永远是 lead route。不要单独维护一�
 需要删除旧 mirror demand 时，遍历旧 lead route 并镜像扣除；需要加入新 mirror demand 时，
 遍历新 lead route 并镜像加入。
 
+普通 2D repair 全部结束后，mirror 阶段不再修改 lead route。它以最终 lead route 镜像
+出的 guide 为软约束，materialize mirror-side tree 并覆盖所有 mirror pins。若 guide
+不能直接覆盖所有 pins，Hanan 搜索允许偏离 guide。
+
 ## 与 Worker Window 的关系
 
 这个方案的关键收益是 mirror side 不会进入 region query：
 
 ```text
-region query 中只有 lead/axis 真实对象
+ordinary worker repair 阶段 region query 中只有 lead/axis 真实对象
 cmap/cmap2D 中有 lead demand + mirror shadow demand
 ```
 
@@ -257,6 +291,8 @@ cmap/cmap2D 中有 lead demand + mirror shadow demand
 - mirror side 不会被普通 search repair 独立 ripup/reroute。
 - 其他 net 仍会通过 cmap/cmap2D 看到 mirror side 的资源压力。
 - 如果 mirror side 造成拥塞，只能通过 lead candidate 的 mirror cost 反馈回来。
+- mirror materialization 在 ordinary 2D worker repair 全部结束后才运行，因此新写入的
+  mirror topology 不会再被普通 2D worker 独立打开。
 
 ## 一次 Reroute 的状态更新
 
@@ -278,26 +314,33 @@ mirror side 被普通 worker 独立 ripup/reroute
 axis edge 被 lead 和 mirror 重复计数
 ```
 
-## Final Materialization
+## Mirror Materialization
 
-search repair 期间不保存 mirror route object。
+ordinary search repair 期间不保存 mirror route object。
 
-如果后续 guide 输出、DEF 输出、DR 输入必须看到具体 mirror 形状，可以在 search repair
-全部结束后做一次受控 materialization：
+guide 输出、DEF 输出、DR 输入需要看到具体 mirror 形状，因此当前实现会在 ordinary
+2D search repair 全部结束后做一次受控 materialization：
 
 ```text
-final mirror route objects = mirror(final lead route objects)
+mirror guide = mirror(final lead route objects)
+final mirror topology = Hanan(axis source, mirror pins, mirror guide)
 ```
 
-这个阶段不参与 search repair，不允许再独立优化 mirror side。它只是把隐式 mirror shadow
-转成输出需要的显式形状。
+这个阶段以 guide-aware Hanan search 新增 mirror-side parent-child tree：
+
+- 在所有 GR worker search repair 完成之后执行。
+- 在 `layerAssign()` 之前执行，使 mirror 侧进入后续 layer assignment。
+- 不 ripup 或重写 lead/axis source tree。
+- axis 上共享的对象仍只保留一份，不复制 axis-only edge。
+- 输出 guide / DEF 时，mirror-side route 已经是 `frNode` tree 的一部分。
 
 ## 已接受的代价
 
 - mirror 侧没有独立局部最优能力。
 - 如果 lead 侧和 mirror 侧 routing 环境差异很大，lead 侧可能需要绕远路。
 - 某些 mirror 侧拥塞无法通过 mirror 本地调整解决，只能通过 lead 间接缓解。
-- search repair 期间 `frNet::grShapes/grVias` 不再完整表达最终物理全网，只表达 lead/axis source route。
+- ordinary search repair 期间 `frNet::grShapes/grVias` 不完整表达最终物理全网，只表达 lead/axis source route。
+- mirror materialization 后，进入 `layerAssign()` 的 parent-child tree 覆盖 lead/axis 和 mirror pins。
 - 这个方案不保证全局最优，目标是工程上可控的强自对称。
 
 ## 后续实现关注点
@@ -307,4 +350,5 @@ final mirror route objects = mirror(final lead route objects)
 - pattern route 只选择 lead 侧 L-shape，但 cost 包含 mirror shadow。
 - lead A* cost 能查询候选 edge 镜像后的 congestion/blockage。
 - writeback 阶段更新真实 lead/axis objects，同时按 lead route 增删 mirror shadow demand。
-- final output 如需 mirror 具体形状，应在 search repair 之后统一 materialize。
+- mirror materialization 阶段需要维持 `mirror_hanan_pins_covered: N/N` 和
+  `mirror_repair_pins_covered: N/N`，并避免让后续普通 2D worker 再打开 mirror-side route。
