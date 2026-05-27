@@ -29,6 +29,7 @@
 #include "gr/FlexGR.h"
 #include <algorithm>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -53,6 +54,12 @@ namespace {
       return 1;
     }
     return 0;
+  }
+
+  unsigned saturateSelfSymmetry3DCost(unsigned long long cost) {
+    return cost > numeric_limits<unsigned>::max() ?
+           numeric_limits<unsigned>::max() :
+           (unsigned)cost;
   }
 }
 
@@ -376,6 +383,251 @@ int FlexGRWorker::modSelfSymmetry2DPathSegMirrorDemand(grPathSeg* pathSeg, bool 
     cout << "Error: non-colinear mirror pathSeg in modSelfSymmetry2DPathSegMirrorDemand\n";
   }
   return modCnt;
+}
+
+int FlexGRWorker::modSelfSymmetry3DPathSegDemand(grPathSeg* pathSeg, bool isAdd) {
+  FlexMazeIdx bi, ei;
+  frPoint bp, ep;
+  auto lNum = pathSeg->getLayerNum();
+  pathSeg->getPoints(bp, ep);
+  gridGraph.getMazeIdx(bp, lNum, bi);
+  gridGraph.getMazeIdx(ep, lNum, ei);
+  int modCnt = 0;
+  auto modRawDemand = [&](int xIdx, int yIdx, int zIdx, frDirEnum dir) {
+    if (isAdd) {
+      gridGraph.addRawDemand(xIdx, yIdx, zIdx, dir);
+    } else {
+      gridGraph.subRawDemand(xIdx, yIdx, zIdx, dir);
+    }
+    modCnt++;
+  };
+
+  if (bi.x() == ei.x()) {
+    for (auto yIdx = bi.y(); yIdx < ei.y(); yIdx++) {
+      modRawDemand(bi.x(), yIdx, bi.z(), frDirEnum::N);
+      modRawDemand(bi.x(), yIdx + 1, bi.z(), frDirEnum::N);
+    }
+  } else if (bi.y() == ei.y()) {
+    for (auto xIdx = bi.x(); xIdx < ei.x(); xIdx++) {
+      modRawDemand(xIdx, bi.y(), bi.z(), frDirEnum::E);
+      modRawDemand(xIdx + 1, bi.y(), bi.z(), frDirEnum::E);
+    }
+  } else {
+    cout << "Error: non-colinear pathSeg in modSelfSymmetry3DPathSegDemand\n";
+  }
+  return modCnt;
+}
+
+int FlexGRWorker::modSelfSymmetry3DPathSegMirrorDemand(grPathSeg* pathSeg,
+                                                       bool isAdd,
+                                                       int &outsideDelta) {
+  outsideDelta = 0;
+  auto net = pathSeg->getGrNet()->getFrNet();
+  auto constraint = net->getSelfSymmetryConstraint();
+  frPoint bp, ep, bpIdx, epIdx;
+  auto lNum = pathSeg->getLayerNum();
+  FlexMazeIdx bi, ei;
+  pathSeg->getPoints(bp, ep);
+  design->getTopBlock()->getGCellIdx(bp, bpIdx);
+  design->getTopBlock()->getGCellIdx(ep, epIdx);
+  gridGraph.getMazeIdx(bp, lNum, bi);
+  gridGraph.getMazeIdx(ep, lNum, ei);
+
+  frPoint axisProbe;
+  if (constraint.isAxisHorizontal) {
+    axisProbe.set(routeBox.left(), constraint.axis);
+  } else {
+    axisProbe.set(constraint.axis, routeBox.bottom());
+  }
+  frPoint axisGCellLocation;
+  design->getTopBlock()->getGCellIdx(axisProbe, axisGCellLocation);
+  frCoord axisGCellIdx = constraint.isAxisHorizontal ? axisGCellLocation.y() : axisGCellLocation.x();
+  if (getAxisCoord(bpIdx, constraint.isAxisHorizontal) == axisGCellIdx &&
+      getAxisCoord(epIdx, constraint.isAxisHorizontal) == axisGCellIdx) {
+    return 0;
+  }
+
+  auto mirrorGCellIdx = [&](const frPoint &gcellIdx) {
+    frPoint mirrored(gcellIdx);
+    if (constraint.isAxisHorizontal) {
+      mirrored.set(gcellIdx.x(), axisGCellIdx + (axisGCellIdx - gcellIdx.y()));
+    } else {
+      mirrored.set(axisGCellIdx + (axisGCellIdx - gcellIdx.x()), gcellIdx.y());
+    }
+    return mirrored;
+  };
+  frPoint mirrorBpIdx = mirrorGCellIdx(bpIdx);
+  frPoint mirrorEpIdx = mirrorGCellIdx(epIdx);
+  if (mirrorBpIdx == mirrorEpIdx) {
+    return 0;
+  }
+  if (mirrorEpIdx < mirrorBpIdx) {
+    std::swap(mirrorBpIdx, mirrorEpIdx);
+  }
+
+  int modCnt = 0;
+  auto modRawDemand = [&](int xIdx, int yIdx, frDirEnum dir) {
+    if (xIdx < routeGCellIdxLL.x() || xIdx > routeGCellIdxUR.x() ||
+        yIdx < routeGCellIdxLL.y() || yIdx > routeGCellIdxUR.y()) {
+      outsideDelta++;
+      return;
+    }
+    int localXIdx = xIdx - routeGCellIdxLL.x();
+    int localYIdx = yIdx - routeGCellIdxLL.y();
+    if (isAdd) {
+      gridGraph.addRawDemand(localXIdx, localYIdx, bi.z(), dir);
+    } else {
+      gridGraph.subRawDemand(localXIdx, localYIdx, bi.z(), dir);
+    }
+    modCnt++;
+  };
+
+  if (mirrorBpIdx.y() == mirrorEpIdx.y()) {
+    for (int xIdx = mirrorBpIdx.x(); xIdx < mirrorEpIdx.x(); xIdx++) {
+      modRawDemand(xIdx, mirrorBpIdx.y(), frDirEnum::E);
+      modRawDemand(xIdx + 1, mirrorBpIdx.y(), frDirEnum::E);
+    }
+  } else if (mirrorBpIdx.x() == mirrorEpIdx.x()) {
+    for (int yIdx = mirrorBpIdx.y(); yIdx < mirrorEpIdx.y(); yIdx++) {
+      modRawDemand(mirrorBpIdx.x(), yIdx, frDirEnum::N);
+      modRawDemand(mirrorBpIdx.x(), yIdx + 1, frDirEnum::N);
+    }
+  } else {
+    cout << "Error: non-colinear mirror pathSeg in modSelfSymmetry3DPathSegMirrorDemand\n";
+  }
+  return modCnt;
+}
+
+frCost FlexGRWorker::getSelfSymmetry3DGuidedMirrorCost(frNet* net,
+                                                       frMIdx x,
+                                                       frMIdx y,
+                                                       frMIdx z,
+                                                       frDirEnum dir) {
+  if (!net || !net->getSelfSymmetryConstraintPtr() ||
+      !gr->isSelfSymmetry3DGuidedActive(net) ||
+      (dir != frDirEnum::E && dir != frDirEnum::N &&
+       dir != frDirEnum::S && dir != frDirEnum::W)) {
+    return 0;
+  }
+
+  auto constraint = net->getSelfSymmetryConstraint();
+  frPoint axisProbe;
+  if (constraint.isAxisHorizontal) {
+    axisProbe.set(routeBox.left(), constraint.axis);
+  } else {
+    axisProbe.set(constraint.axis, routeBox.bottom());
+  }
+  frPoint axisGCellLocation;
+  design->getTopBlock()->getGCellIdx(axisProbe, axisGCellLocation);
+  frCoord axisGCellIdx = constraint.isAxisHorizontal ? axisGCellLocation.y() : axisGCellLocation.x();
+
+  frMIdx x2 = x;
+  frMIdx y2 = y;
+  switch (dir) {
+    case frDirEnum::E:
+      ++x2;
+      break;
+    case frDirEnum::W:
+      --x2;
+      break;
+    case frDirEnum::N:
+      ++y2;
+      break;
+    case frDirEnum::S:
+      --y2;
+      break;
+    default:
+      return 0;
+  }
+
+  frPoint beginGCellIdx(x + routeGCellIdxLL.x(), y + routeGCellIdxLL.y());
+  frPoint endGCellIdx(x2 + routeGCellIdxLL.x(), y2 + routeGCellIdxLL.y());
+  if (getAxisCoord(beginGCellIdx, constraint.isAxisHorizontal) == axisGCellIdx &&
+      getAxisCoord(endGCellIdx, constraint.isAxisHorizontal) == axisGCellIdx) {
+    return 0;
+  }
+
+  auto edgeLen = max<frCoord>(1, gridGraph.getEdgeLength(x, y, z, dir));
+  unsigned long long invalidPenalty =
+      (unsigned long long)edgeLen *
+      ((unsigned long long)BLOCKCOST * 100 + (unsigned long long)MARKERCOST * 8);
+  auto getInvalidPenalty = [&]() {
+    return saturateSelfSymmetry3DCost(invalidPenalty);
+  };
+
+  frPoint mirrorBegin = beginGCellIdx;
+  frPoint mirrorEnd = endGCellIdx;
+  if (constraint.isAxisHorizontal) {
+    mirrorBegin.set(beginGCellIdx.x(), axisGCellIdx + (axisGCellIdx - beginGCellIdx.y()));
+    mirrorEnd.set(endGCellIdx.x(), axisGCellIdx + (axisGCellIdx - endGCellIdx.y()));
+  } else {
+    mirrorBegin.set(axisGCellIdx + (axisGCellIdx - beginGCellIdx.x()), beginGCellIdx.y());
+    mirrorEnd.set(axisGCellIdx + (axisGCellIdx - endGCellIdx.x()), endGCellIdx.y());
+  }
+
+  frMIdx zDimX = 0;
+  frMIdx zDimY = 0;
+  frMIdx zDim = 0;
+  gridGraph.getDim(zDimX, zDimY, zDim);
+  if (z < 0 || z >= zDim ||
+      mirrorBegin.x() < routeGCellIdxLL.x() || mirrorBegin.x() > routeGCellIdxUR.x() ||
+      mirrorEnd.x() < routeGCellIdxLL.x() || mirrorEnd.x() > routeGCellIdxUR.x() ||
+      mirrorBegin.y() < routeGCellIdxLL.y() || mirrorBegin.y() > routeGCellIdxUR.y() ||
+      mirrorEnd.y() < routeGCellIdxLL.y() || mirrorEnd.y() > routeGCellIdxUR.y()) {
+    return getInvalidPenalty();
+  }
+
+  frMIdx mirrorX = mirrorBegin.x() - routeGCellIdxLL.x();
+  frMIdx mirrorY = mirrorBegin.y() - routeGCellIdxLL.y();
+  frDirEnum mirrorDir = frDirEnum::UNKNOWN;
+  if (mirrorBegin.x() != mirrorEnd.x()) {
+    mirrorDir = mirrorBegin.x() < mirrorEnd.x() ? frDirEnum::E : frDirEnum::W;
+  } else if (mirrorBegin.y() != mirrorEnd.y()) {
+    mirrorDir = mirrorBegin.y() < mirrorEnd.y() ? frDirEnum::N : frDirEnum::S;
+  } else {
+    return getInvalidPenalty();
+  }
+
+  frMIdx tmpMirrorX = mirrorX;
+  frMIdx tmpMirrorY = mirrorY;
+  frMIdx tmpMirrorZ = z;
+  frDirEnum tmpMirrorDir = mirrorDir;
+  if (tmpMirrorDir == frDirEnum::W) {
+    --tmpMirrorX;
+    tmpMirrorDir = frDirEnum::E;
+  } else if (tmpMirrorDir == frDirEnum::S) {
+    --tmpMirrorY;
+    tmpMirrorDir = frDirEnum::N;
+  }
+  if (tmpMirrorX < 0 || tmpMirrorY < 0 ||
+      tmpMirrorX >= zDimX || tmpMirrorY >= zDimY) {
+    return getInvalidPenalty();
+  }
+
+  unsigned mirrorRawDemand = gridGraph.getRawDemand(tmpMirrorX, tmpMirrorY,
+                                                    tmpMirrorZ, tmpMirrorDir);
+  unsigned mirrorRawSupply = gridGraph.getRawSupply(tmpMirrorX, tmpMirrorY,
+                                                    tmpMirrorZ, tmpMirrorDir);
+  bool mirrorOverflowCost = mirrorRawDemand >= mirrorRawSupply * getCongThresh();
+  unsigned long long mirrorCost =
+      (unsigned long long)(gridGraph.getCongCost(mirrorRawDemand,
+                                                 mirrorRawSupply * getCongThresh()) *
+                           edgeLen);
+  auto histCost = gridGraph.getHistoryCost(tmpMirrorX, tmpMirrorY, tmpMirrorZ);
+  if (histCost) {
+    mirrorCost +=
+        (unsigned long long)(4 * gridGraph.getCongCost(mirrorRawDemand,
+                                                       mirrorRawSupply * getCongThresh()) *
+                             histCost * edgeLen);
+  }
+  if (gridGraph.hasBlock(tmpMirrorX, tmpMirrorY, tmpMirrorZ, tmpMirrorDir)) {
+    mirrorCost += (unsigned long long)BLOCKCOST * edgeLen * 100;
+  }
+  if (mirrorOverflowCost) {
+    mirrorCost += (unsigned long long)128 * edgeLen;
+  }
+
+  return saturateSelfSymmetry3DCost(mirrorCost);
 }
 
 bool FlexGRWorker::hasSelfSymmetry2DAxisContact(grNet* net) const {

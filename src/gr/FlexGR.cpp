@@ -94,6 +94,7 @@ void FlexGR::main() {
   dumpSelfSymmetry2DAscii("after self-symmetry mirror repair");
   
   layerAssign();
+  stageSelfSymmetry3DLeadOnly();
   
   // populate region query for 3D
   getRegionQuery()->initGRObj(getTech()->getLayers().size());
@@ -101,6 +102,10 @@ void FlexGR::main() {
   // reportCong3D();
 
   searchRepair(/*iter*/0, /*size*/10, /*offset*/0, /*mazeEndIter*/2, /*workerCongCost*/4 * CONGCOST, /*workerHistCost*/0.25 * HISTCOST, /*congThresh*/1.0, /*is2DRouting*/false, 1, /*TEST*/false);
+  restoreSelfSymmetry3DLayerAssignMirror();
+  beginSelfSymmetry3DGuidedSearchRepair();
+  searchRepair(/*iter*/1, /*size*/10, /*offset*/0, /*mazeEndIter*/2, /*workerCongCost*/4 * CONGCOST, /*workerHistCost*/0.25 * HISTCOST, /*congThresh*/1.0, /*is2DRouting*/false, 1, /*TEST*/false);
+  endSelfSymmetry3DGuidedSearchRepair();
   reportCong3D();
 
   writeToGuide();

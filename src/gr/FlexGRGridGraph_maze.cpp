@@ -469,6 +469,15 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
       }
     }
   }
+  if (!is2DRouting && activeNet && activeNet->getSelfSymmetryConstraintPtr() &&
+      (dir == frDirEnum::E || dir == frDirEnum::N ||
+       dir == frDirEnum::S || dir == frDirEnum::W)) {
+    nextPathCost += grWorker->getSelfSymmetry3DGuidedMirrorCost(activeNet,
+                                                                gridX,
+                                                                gridY,
+                                                                gridZ,
+                                                                dir);
+  }
   // discourage using layer below VIA_ACCESS_LAYERNUM
   // if ((tmpZ + 1) * 2 <= VIA_ACCESS_LAYERNUM && !grWorker->is2D() && (dir != frDirEnum::U && dir != frDirEnum::D)) {
   //   nextPathCost += BLOCKCOST * getEdgeLength(gridX, gridY, gridZ, dir) * 100;

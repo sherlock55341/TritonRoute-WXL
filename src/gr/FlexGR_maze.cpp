@@ -357,6 +357,14 @@ void FlexGRWorker::modCong_pathSeg(grPathSeg* pathSeg, bool isAdd) {
     selfSym2DOutsideShadowDelta += outsideDelta;
     return;
   }
+  if (!is2DRouting && pathSeg->hasGrNet() &&
+      pathSeg->getGrNet()->getFrNet()->getSelfSymmetryConstraintPtr() &&
+      gr->isSelfSymmetry3DLeadOnlyActive(pathSeg->getGrNet()->getFrNet())) {
+    int outsideDelta = 0;
+    modSelfSymmetry3DPathSegDemand(pathSeg, isAdd);
+    modSelfSymmetry3DPathSegMirrorDemand(pathSeg, isAdd, outsideDelta);
+    return;
+  }
 
   FlexMazeIdx bi, ei;
   frPoint bp, ep;

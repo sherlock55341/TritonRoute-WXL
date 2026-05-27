@@ -66,6 +66,8 @@ namespace fr {
 
     // others
     void main();
+    bool isSelfSymmetry3DLeadOnlyActive(frNet *net) const;
+    bool isSelfSymmetry3DGuidedActive(frNet *net) const;
 
   protected:
     frDesign *design;
@@ -156,6 +158,10 @@ namespace fr {
     void searchRepairSelfSymmetryMirror();
     void buildSelfSymmetryMirror2DTopology();
     SelfSymmetryMirror2DStats buildSelfSymmetryMirror2DTopology_net(frNet *net);
+    void stageSelfSymmetry3DLeadOnly();
+    void restoreSelfSymmetry3DLayerAssignMirror();
+    void beginSelfSymmetry3DGuidedSearchRepair();
+    void endSelfSymmetry3DGuidedSearchRepair();
 
   protected:
     // layer assignment
@@ -394,6 +400,8 @@ namespace fr {
                                      frDirEnum dir, frMIdx &mirrorX,
                                      frMIdx &mirrorY, frMIdx &mirrorZ,
                                      frDirEnum &mirrorDir) const;
+    frCost getSelfSymmetry3DGuidedMirrorCost(frNet* net, frMIdx x, frMIdx y,
+                                             frMIdx z, frDirEnum dir);
     void resetSelfSymmetry2DDebug();
     void printSelfSymmetry2DDebug(grNet* net, bool mustTouchAxis,
                                   bool axisContactAfter) const;
@@ -497,6 +505,9 @@ namespace fr {
     void modCong_pathSeg(grPathSeg* pathSeg, bool isAdd);
     int modSelfSymmetry2DPathSegDemand(grPathSeg* pathSeg, bool isAdd);
     int modSelfSymmetry2DPathSegMirrorDemand(grPathSeg* pathSeg, bool isAdd,
+                                             int &outsideDelta);
+    int modSelfSymmetry3DPathSegDemand(grPathSeg* pathSeg, bool isAdd);
+    int modSelfSymmetry3DPathSegMirrorDemand(grPathSeg* pathSeg, bool isAdd,
                                              int &outsideDelta);
     void mazeNetInit_removeNetNodes(grNet* net);
     void mazeNetInit_collectSelfSymmetry2DFrozenAxisNodes(grNet* net,
