@@ -1180,6 +1180,20 @@ bool FlexGR::isSelfSymmetry3DGuidedActive(frNet *net) const {
   return stateIt->second.netStates.find(net) != stateIt->second.netStates.end();
 }
 
+bool FlexGR::hasSelfSymmetryNets() const {
+  auto block = design ? design->getTopBlock() : nullptr;
+  if (block == nullptr) {
+    return false;
+  }
+  for (auto &uNet: block->getNets()) {
+    auto net = uNet.get();
+    if (net != nullptr && net->getSelfSymmetryConstraintPtr() != nullptr) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void FlexGR::stageSelfSymmetry3DLeadOnly() {
   auto block = design ? design->getTopBlock() : nullptr;
   if (block == nullptr || cmap == nullptr) {

@@ -142,6 +142,7 @@ namespace fr {
     void searchRepairSelfSymmetryMirror();
     void buildSelfSymmetryMirror2DTopology();
     SelfSymmetryMirror2DStats buildSelfSymmetryMirror2DTopology_net(frNet *net);
+    bool hasSelfSymmetryNets() const;
     void stageSelfSymmetry3DLeadOnly();
     void restoreSelfSymmetry3DLayerAssignMirror();
     void beginSelfSymmetry3DGuidedSearchRepair();

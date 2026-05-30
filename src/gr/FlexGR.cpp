@@ -319,8 +319,9 @@ void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
 
     omp_set_num_threads(min(8, MAX_THREADS));
     // omp_set_num_threads(1);
+    const bool runWorkersSerially = hasSelfSymmetryNets();
 
-    // parallel execution
+    // worker execution
     for (auto &workerBatch: workers) {
       for (auto &workersInBatch: workerBatch) {
         // single thread
@@ -328,10 +329,16 @@ void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
         for (int i = 0; i < (int)workersInBatch.size(); i++) {
           workersInBatch[i]->initBoundary();
         }
-        // multi thread
-        #pragma omp parallel for schedule(dynamic)
-        for (int i = 0; i < (int)workersInBatch.size(); i++) {
-          workersInBatch[i]->main_mt();
+        // route workers
+        if (runWorkersSerially) {
+          for (int i = 0; i < (int)workersInBatch.size(); i++) {
+            workersInBatch[i]->main_mt();
+          }
+        } else {
+          #pragma omp parallel for schedule(dynamic)
+          for (int i = 0; i < (int)workersInBatch.size(); i++) {
+            workersInBatch[i]->main_mt();
+          }
         }
         // single thread
         for (int i = 0; i < (int)workersInBatch.size(); i++) {
