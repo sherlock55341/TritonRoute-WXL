@@ -768,7 +768,7 @@ namespace fr {
       return;
     }
     void getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, const frDirEnum dir) const;
-    void getNextGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, const frDirEnum dir);
+    void getNextGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, const frDirEnum dir) const;
     bool isValid(frMIdx x, frMIdx y, frMIdx z) const {
       if (x < 0 || y < 0 || z < 0 ||
           x >= (frMIdx)xCoords.size() || y >= (frMIdx)yCoords.size() || z >= (frMIdx)zCoords.size()) {

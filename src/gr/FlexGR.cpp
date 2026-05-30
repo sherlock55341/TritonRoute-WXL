@@ -1646,7 +1646,7 @@ void FlexGR::layerAssign_net(frNet *net) {
       break;
     }
 
-    if (isSelfSymmetryNet(net) && node.get() != net->getRoot() &&
+    if (net->getSelfSymmetryConstraintPtr() && node.get() != net->getRoot() &&
         node->getParent() == nullptr) {
       nodeCnt++;
       continue;
@@ -1667,7 +1667,7 @@ void FlexGR::layerAssign_net(frNet *net) {
   // cout << net->getName() << endl << flush;
 
   for (auto &node: nodes) {
-    if (isSelfSymmetryNet(net) && node.get() != net->getRoot() &&
+    if (net->getSelfSymmetryConstraintPtr() && node.get() != net->getRoot() &&
         node->getParent() == nullptr) {
       rpinNodeCnt++;
       if (rpinNodeCnt >= rpinNodeSize) {

@@ -369,7 +369,7 @@ void FlexGRGridGraph::expand(FlexGRWavefrontGrid &currGrid, const frDirEnum &dir
   return;
 }
 
-void FlexGRGridGraph::getNextGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, const frDirEnum dir) {
+void FlexGRGridGraph::getNextGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, const frDirEnum dir) const {
   switch(dir) {
     case frDirEnum::E:
       ++gridX;

@@ -127,24 +127,8 @@ namespace fr {
     void patternRoute_LShape(frNode *child, frNode *parent);
 
   private:
-    const frSelfSymmetryConstraint* getSelfSymmetryConstraintPtr(const frNet* net) const;
-    bool isSelfSymmetryNet(const frNet* net) const;
-    int getSelfSymmetryPointSide(const frPoint &point, const frSelfSymmetryConstraint &constraint) const;
-    int getSelfSymmetryGCellSide(const frPoint &gcellIdx, bool isAxisHorizontal, frCoord axisGCellIdx) const;
-    int getSelfSymmetryRootSide(frNet *net, const frSelfSymmetryConstraint &constraint) const;
-    bool isOnSelfSymmetryAxis(const frPoint &point, const frSelfSymmetryConstraint &constraint) const;
-    bool isOnSelfSymmetryAxisGCell(const frPoint &gcellIdx, bool isAxisHorizontal, frCoord axisGCellIdx) const;
-    frPoint mirrorPoint(const frPoint &point, const frSelfSymmetryConstraint &constraint) const;
-    frPoint mirrorGCellIdx(const frPoint &gcellIdx, bool isAxisHorizontal, frCoord axisGCellIdx) const;
     unsigned getSelfSymmetryLayerAssignMirrorCost(frNode *currNode, frNet *net, frLayerNum layerNum);
-    void dumpSelfSymmetry2DAscii(const std::string &tag,
-                                 const std::string &netName = "Symmtry5") const;
-    void modSelfSymmetrySourceDemand(frNet *net, const frPoint &begin, const frPoint &end,
-                                     frLayerNum layerNum, bool isAdd, bool is2D);
-    void modSelfSymmetryMirrorShadowDemand(frNet *net, const frPoint &begin, const frPoint &end,
-                                           frLayerNum layerNum, bool isAdd, bool is2D);
-    void modSelfSymmetrySourceAndShadowDemand(frNet *net, const frPoint &begin, const frPoint &end,
-                                              frLayerNum layerNum, bool isAdd, bool is2D);
+    void dumpSelfSymmetry2DAscii(const std::string &tag) const;
     struct SelfSymmetryMirror2DStats {
       int mirrorPins = 0;
       int mirrorHananPinsCovered = 0;

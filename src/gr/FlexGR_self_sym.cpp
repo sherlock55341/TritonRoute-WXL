@@ -28,6 +28,7 @@
 
 #include <iostream>
 #include "FlexGR.h"
+#include "gr/FlexGR_self_sym_utils.h"
 #include <algorithm>
 #include <deque>
 #include <iomanip>
@@ -42,35 +43,8 @@ using namespace std;
 using namespace fr;
 
 namespace {
-  pair<int, int> getSelfSymmetryGCellKey(const frPoint &point) {
-    return make_pair((int)point.x(), (int)point.y());
-  }
-
-  pair<frPoint, frPoint> normalizeSelfSymmetryEdge(frPoint begin, frPoint end) {
-    if (end < begin) {
-      swap(begin, end);
-    }
-    return make_pair(begin, end);
-  }
-
-  int getSelfSymmetryAxisCoord(const frPoint &gcellIdx, bool isAxisHorizontal) {
-    return isAxisHorizontal ? gcellIdx.y() : gcellIdx.x();
-  }
-
-  long long getSelfSymmetryEdgeLen(const frPoint &begin, const frPoint &end) {
-    long long dx = begin.x() >= end.x() ? begin.x() - end.x() : end.x() - begin.x();
-    long long dy = begin.y() >= end.y() ? begin.y() - end.y() : end.y() - begin.y();
-    return max(1ll, dx + dy);
-  }
-
-  unsigned saturateSelfSymmetryCost(unsigned long long cost) {
-    return cost > numeric_limits<unsigned>::max() ?
-           numeric_limits<unsigned>::max() :
-           (unsigned)cost;
-  }
-
   struct SelfSymmetryLayerAssignDebug {
-    bool sawSymmtry5 = false;
+    bool sawDebugNet = false;
     bool printed = false;
     unsigned long long mirrorCostQueries = 0;
     unsigned long long mirrorCostHits = 0;
@@ -79,12 +53,12 @@ namespace {
     unsigned long long mirrorCostTotal = 0;
 
     void print() {
-      if (!sawSymmtry5 || printed) {
+      if (!sawDebugNet || printed) {
         return;
       }
       printed = true;
       cout << "@@@ self-symmetry layer assignment mirror cost @@@\n";
-      cout << "net: Symmtry5\n";
+      cout << "net: " << SelfSymmetryDebug::netName() << "\n";
       cout << "layerassign_mirror_cost_queries: " << mirrorCostQueries << "\n";
       cout << "layerassign_mirror_cost_hits: " << mirrorCostHits << "\n";
       cout << "layerassign_mirror_invalid_edges: " << mirrorInvalidEdges << "\n";
@@ -95,6 +69,109 @@ namespace {
   };
 
   SelfSymmetryLayerAssignDebug layerAssignDebug;
+
+  unsigned long long computeLayerAssignMirrorCongestionCost(
+      frDesign *design,
+      FlexGRCMap *cmap,
+      const frPoint &mirrorBegin,
+      const frPoint &mirrorEnd,
+      frLayerNum layerNum) {
+    unsigned long long mirrorCost = 0;
+    if (mirrorBegin.y() == mirrorEnd.y()) {
+      bool isLayerBlocked =
+          design->getTech()->getLayer((layerNum + 1) * 2)->getDir() ==
+          frcVertPrefRoutingDir;
+      int yIdx = mirrorBegin.y();
+      int xBegin = min(mirrorBegin.x(), mirrorEnd.x());
+      int xEnd = max(mirrorBegin.x(), mirrorEnd.x());
+      for (int xIdx = xBegin; xIdx < xEnd; xIdx++) {
+        auto supply = cmap->getRawSupply(xIdx, yIdx, layerNum, frDirEnum::E);
+        auto demand = cmap->getRawDemand(xIdx, yIdx, layerNum, frDirEnum::E);
+        mirrorCost += cmap->getHistoryCost(xIdx, yIdx, layerNum);
+        if (isLayerBlocked ||
+            cmap->hasBlock(xIdx, yIdx, layerNum, frDirEnum::E)) {
+          mirrorCost += (unsigned long long)BLOCKCOST * 100;
+        }
+        if (demand > supply / 4) {
+          mirrorCost += demand * 10 / (supply + 1);
+        }
+        if (demand >= supply) {
+          mirrorCost += (unsigned long long)MARKERCOST * 8;
+        }
+      }
+    } else {
+      bool isLayerBlocked =
+          design->getTech()->getLayer((layerNum + 1) * 2)->getDir() ==
+          frcHorzPrefRoutingDir;
+      int xIdx = mirrorBegin.x();
+      int yBegin = min(mirrorBegin.y(), mirrorEnd.y());
+      int yEnd = max(mirrorBegin.y(), mirrorEnd.y());
+      for (int yIdx = yBegin; yIdx < yEnd; yIdx++) {
+        auto supply = cmap->getRawSupply(xIdx, yIdx, layerNum, frDirEnum::N);
+        auto demand = cmap->getRawDemand(xIdx, yIdx, layerNum, frDirEnum::N);
+        mirrorCost += cmap->getHistoryCost(xIdx, yIdx, layerNum);
+        if (isLayerBlocked ||
+            cmap->hasBlock(xIdx, yIdx, layerNum, frDirEnum::N)) {
+          mirrorCost += (unsigned long long)BLOCKCOST * 100;
+        }
+        if (demand > supply / 4) {
+          mirrorCost += demand * 10 / (supply + 1);
+        }
+        if (demand >= supply) {
+          mirrorCost += (unsigned long long)MARKERCOST * 8;
+        }
+      }
+    }
+    return mirrorCost;
+  }
+
+  frNode* getSelfSymmetryReferenceNode(frNet *net) {
+    if (net == nullptr) {
+      return nullptr;
+    }
+    frNode *refNode = net->getRootGCellNode();
+    if (refNode == nullptr) {
+      refNode = net->getRoot();
+    }
+    if (refNode == nullptr && !net->getNodes().empty()) {
+      refNode = net->getNodes().front().get();
+    }
+    return refNode;
+  }
+
+  SelfSymmetryAxisContext getSelfSymmetryNetAxisContext(
+      frDesign *design,
+      frNet *net,
+      const frSelfSymmetryConstraint &constraint) {
+    auto refNode = getSelfSymmetryReferenceNode(net);
+    if (refNode == nullptr) {
+      return SelfSymmetryAxisContext();
+    }
+    frPoint refLoc;
+    refNode->getLoc(refLoc);
+    auto ctx = SelfSymmetryAxisContext::fromReferencePoint(design,
+                                                           constraint,
+                                                           refLoc);
+    if (!ctx.valid) {
+      return ctx;
+    }
+    auto block = design ? design->getTopBlock() : nullptr;
+    frNode *rootNode = net ? net->getRootGCellNode() : nullptr;
+    if (rootNode == nullptr && net != nullptr) {
+      rootNode = net->getRoot();
+    }
+    if (rootNode == nullptr) {
+      ctx.rootSide = -1;
+    } else if (block != nullptr) {
+      frPoint rootLoc;
+      frPoint rootGCellIdx;
+      rootNode->getLoc(rootLoc);
+      block->getGCellIdx(rootLoc, rootGCellIdx);
+      ctx.rootSide =
+          normalizeSelfSymmetryRootSide(ctx.sideOfGCell(rootGCellIdx));
+    }
+    return ctx;
+  }
 
   struct SelfSymmetry3DNodeDesc {
     bool valid = false;
@@ -218,94 +295,43 @@ namespace {
     return ensureSelfSymmetry3DAnchor(net, nodeDesc);
   }
 
-  bool getSelfSymmetry3DAxisGCellIdx(frDesign *design,
-                                     frNet *net,
-                                     const frSelfSymmetryConstraint &constraint,
-                                     frCoord &axisGCellIdx) {
-    auto block = design ? design->getTopBlock() : nullptr;
-    if (block == nullptr || net == nullptr) {
-      return false;
-    }
-    frNode *refNode = net->getRootGCellNode();
-    if (refNode == nullptr) {
-      refNode = net->getRoot();
-    }
-    if (refNode == nullptr && !net->getNodes().empty()) {
-      refNode = net->getNodes().front().get();
-    }
-    if (refNode == nullptr) {
-      return false;
-    }
-    frPoint refLoc;
-    refNode->getLoc(refLoc);
-    frPoint axisProbe;
-    if (constraint.isAxisHorizontal) {
-      axisProbe.set(refLoc.x(), constraint.axis);
-    } else {
-      axisProbe.set(constraint.axis, refLoc.y());
-    }
-    frPoint axisGCellLocation;
-    block->getGCellIdx(axisProbe, axisGCellLocation);
-    axisGCellIdx = constraint.isAxisHorizontal ?
-                   axisGCellLocation.y() :
-                   axisGCellLocation.x();
-    return true;
-  }
-
-  int getSelfSymmetry3DGCellSide(const frPoint &gcellIdx,
-                                 bool isAxisHorizontal,
-                                 frCoord axisGCellIdx) {
-    frCoord coord = isAxisHorizontal ? gcellIdx.y() : gcellIdx.x();
-    if (coord < axisGCellIdx) {
-      return -1;
-    }
-    if (coord > axisGCellIdx) {
-      return 1;
-    }
-    return 0;
-  }
-
   int getSelfSymmetry3DNodeSide(frDesign *design,
                                 frNode *node,
-                                bool isAxisHorizontal,
-                                frCoord axisGCellIdx) {
+                                const SelfSymmetryAxisContext &axisCtx) {
     auto block = design ? design->getTopBlock() : nullptr;
-    if (block == nullptr || node == nullptr) {
+    if (block == nullptr || node == nullptr || !axisCtx.valid) {
       return 0;
     }
     frPoint loc;
     frPoint gcellIdx;
     node->getLoc(loc);
     block->getGCellIdx(loc, gcellIdx);
-    return getSelfSymmetry3DGCellSide(gcellIdx, isAxisHorizontal, axisGCellIdx);
+    return axisCtx.sideOfGCell(gcellIdx);
   }
 
   int getSelfSymmetry3DPointSide(frDesign *design,
                                  const frPoint &point,
-                                 bool isAxisHorizontal,
-                                 frCoord axisGCellIdx) {
+                                 const SelfSymmetryAxisContext &axisCtx) {
     auto block = design ? design->getTopBlock() : nullptr;
-    if (block == nullptr) {
+    if (block == nullptr || !axisCtx.valid) {
       return 0;
     }
     frPoint gcellIdx;
     block->getGCellIdx(point, gcellIdx);
-    return getSelfSymmetry3DGCellSide(gcellIdx, isAxisHorizontal, axisGCellIdx);
+    return axisCtx.sideOfGCell(gcellIdx);
   }
 
   bool isSelfSymmetry3DAxisOnly(frDesign *design,
                                 const frPoint &begin,
                                 const frPoint &end,
-                                bool isAxisHorizontal,
-                                frCoord axisGCellIdx) {
-    return getSelfSymmetry3DPointSide(design, begin, isAxisHorizontal, axisGCellIdx) == 0 &&
-           getSelfSymmetry3DPointSide(design, end, isAxisHorizontal, axisGCellIdx) == 0;
+                                const SelfSymmetryAxisContext &axisCtx) {
+    return getSelfSymmetry3DPointSide(design, begin, axisCtx) == 0 &&
+           getSelfSymmetry3DPointSide(design, end, axisCtx) == 0;
   }
 
   bool isSelfSymmetry3DMirrorPathSeg(frDesign *design,
                                      grPathSeg *pathSeg,
-                                     bool isAxisHorizontal,
-                                     frCoord axisGCellIdx,
+                                     const SelfSymmetryAxisContext &axisCtx,
                                      int mirrorSide) {
     if (pathSeg == nullptr) {
       return false;
@@ -313,21 +339,20 @@ namespace {
     frPoint begin;
     frPoint end;
     pathSeg->getPoints(begin, end);
-    return getSelfSymmetry3DPointSide(design, begin, isAxisHorizontal, axisGCellIdx) == mirrorSide ||
-           getSelfSymmetry3DPointSide(design, end, isAxisHorizontal, axisGCellIdx) == mirrorSide;
+    return getSelfSymmetry3DPointSide(design, begin, axisCtx) == mirrorSide ||
+           getSelfSymmetry3DPointSide(design, end, axisCtx) == mirrorSide;
   }
 
   bool isSelfSymmetry3DMirrorVia(frDesign *design,
                                  grVia *via,
-                                 bool isAxisHorizontal,
-                                 frCoord axisGCellIdx,
+                                 const SelfSymmetryAxisContext &axisCtx,
                                  int mirrorSide) {
     if (via == nullptr) {
       return false;
     }
     frPoint origin;
     via->getOrigin(origin);
-    return getSelfSymmetry3DPointSide(design, origin, isAxisHorizontal, axisGCellIdx) == mirrorSide;
+    return getSelfSymmetry3DPointSide(design, origin, axisCtx) == mirrorSide;
   }
 
   void refreshSelfSymmetry3DNetAnchors(frNet *net) {
@@ -353,132 +378,20 @@ namespace {
     }
   }
 
-  bool selfSymmetrySegmentCovers(const frPoint &segmentBegin,
-                                 const frPoint &segmentEnd,
-                                 const frPoint &candidateBegin,
-                                 const frPoint &candidateEnd) {
-    if (candidateBegin == candidateEnd) {
-      return false;
-    }
-    if (candidateBegin.x() == candidateEnd.x()) {
-      if (segmentBegin.x() != segmentEnd.x() ||
-          segmentBegin.x() != candidateBegin.x()) {
-        return false;
-      }
-      return min(candidateBegin.y(), candidateEnd.y()) >= min(segmentBegin.y(), segmentEnd.y()) &&
-             max(candidateBegin.y(), candidateEnd.y()) <= max(segmentBegin.y(), segmentEnd.y());
-    }
-    if (candidateBegin.y() == candidateEnd.y()) {
-      if (segmentBegin.y() != segmentEnd.y() ||
-          segmentBegin.y() != candidateBegin.y()) {
-        return false;
-      }
-      return min(candidateBegin.x(), candidateEnd.x()) >= min(segmentBegin.x(), segmentEnd.x()) &&
-             max(candidateBegin.x(), candidateEnd.x()) <= max(segmentBegin.x(), segmentEnd.x());
-    }
-    return false;
-  }
-}
-
-const frSelfSymmetryConstraint* FlexGR::getSelfSymmetryConstraintPtr(const frNet* net) const {
-  return net ? net->getSelfSymmetryConstraintPtr() : nullptr;
-}
-
-bool FlexGR::isSelfSymmetryNet(const frNet* net) const {
-  return getSelfSymmetryConstraintPtr(net) != nullptr;
-}
-
-int FlexGR::getSelfSymmetryPointSide(const frPoint &point,
-                                     const frSelfSymmetryConstraint &constraint) const {
-  frCoord coord = constraint.isAxisHorizontal ? point.y() : point.x();
-  if (coord < constraint.axis) {
-    return -1;
-  }
-  if (coord > constraint.axis) {
-    return 1;
-  }
-  return 0;
-}
-
-int FlexGR::getSelfSymmetryGCellSide(const frPoint &gcellIdx,
-                                     bool isAxisHorizontal,
-                                     frCoord axisGCellIdx) const {
-  frCoord coord = isAxisHorizontal ? gcellIdx.y() : gcellIdx.x();
-  if (coord < axisGCellIdx) {
-    return -1;
-  }
-  if (coord > axisGCellIdx) {
-    return 1;
-  }
-  return 0;
-}
-
-int FlexGR::getSelfSymmetryRootSide(frNet *net,
-                                    const frSelfSymmetryConstraint &constraint) const {
-  if (net == nullptr) {
-    return -1;
-  }
-
-  frNode *rootNode = net->getRootGCellNode();
-  if (rootNode == nullptr) {
-    rootNode = net->getRoot();
-  }
-  if (rootNode == nullptr) {
-    return -1;
-  }
-
-  frPoint rootLoc;
-  rootNode->getLoc(rootLoc);
-  int rootSide = getSelfSymmetryPointSide(rootLoc, constraint);
-  return rootSide == 0 ? -1 : rootSide;
-}
-
-bool FlexGR::isOnSelfSymmetryAxis(const frPoint &point,
-                                  const frSelfSymmetryConstraint &constraint) const {
-  return getSelfSymmetryPointSide(point, constraint) == 0;
-}
-
-bool FlexGR::isOnSelfSymmetryAxisGCell(const frPoint &gcellIdx,
-                                       bool isAxisHorizontal,
-                                       frCoord axisGCellIdx) const {
-  return getSelfSymmetryGCellSide(gcellIdx, isAxisHorizontal, axisGCellIdx) == 0;
-}
-
-frPoint FlexGR::mirrorPoint(const frPoint &point,
-                            const frSelfSymmetryConstraint &constraint) const {
-  frPoint mirroredPoint(point);
-  if (constraint.isAxisHorizontal) {
-    mirroredPoint.set(point.x(), constraint.axis + (constraint.axis - point.y()));
-  } else {
-    mirroredPoint.set(constraint.axis + (constraint.axis - point.x()), point.y());
-  }
-  return mirroredPoint;
-}
-
-frPoint FlexGR::mirrorGCellIdx(const frPoint &gcellIdx,
-                               bool isAxisHorizontal,
-                               frCoord axisGCellIdx) const {
-  frPoint mirroredGCellIdx(gcellIdx);
-  if (isAxisHorizontal) {
-    mirroredGCellIdx.set(gcellIdx.x(), axisGCellIdx + (axisGCellIdx - gcellIdx.y()));
-  } else {
-    mirroredGCellIdx.set(axisGCellIdx + (axisGCellIdx - gcellIdx.x()), gcellIdx.y());
-  }
-  return mirroredGCellIdx;
 }
 
 unsigned FlexGR::getSelfSymmetryLayerAssignMirrorCost(frNode *currNode,
                                                        frNet *net,
                                                        frLayerNum layerNum) {
-  auto constraint = getSelfSymmetryConstraintPtr(net);
+  auto constraint = net ? net->getSelfSymmetryConstraintPtr() : nullptr;
   if (constraint == nullptr || currNode == nullptr ||
       design == nullptr || design->getTopBlock() == nullptr) {
     return 0;
   }
 
-  bool debugNet = net->getName() == "Symmtry5";
+  bool debugNet = SelfSymmetryDebug::isDebugNet(net);
   if (debugNet) {
-    layerAssignDebug.sawSymmtry5 = true;
+    layerAssignDebug.sawDebugNet = true;
   }
   if (currNode->getParent() == nullptr) {
     if (debugNet) {
@@ -505,29 +418,20 @@ unsigned FlexGR::getSelfSymmetryLayerAssignMirrorCost(frNode *currNode,
     return 0;
   }
 
-  frPoint axisProbe;
-  if (constraint->isAxisHorizontal) {
-    axisProbe.set(currLoc.x(), constraint->axis);
-  } else {
-    axisProbe.set(constraint->axis, currLoc.y());
+  auto axisCtx = SelfSymmetryAxisContext::fromReferencePoint(design,
+                                                             *constraint,
+                                                             currLoc);
+  if (!axisCtx.valid) {
+    return 0;
   }
-  frPoint axisGCellLocation;
-  block->getGCellIdx(axisProbe, axisGCellLocation);
-  frCoord axisGCellIdx = constraint->isAxisHorizontal ?
-                         axisGCellLocation.y() :
-                         axisGCellLocation.x();
 
-  bool isAxisOnly =
-      getSelfSymmetryAxisCoord(beginIdx, constraint->isAxisHorizontal) == axisGCellIdx &&
-      getSelfSymmetryAxisCoord(endIdx, constraint->isAxisHorizontal) == axisGCellIdx;
-  if (isAxisOnly) {
+  if (axisCtx.isAxisEdge(beginIdx, endIdx)) {
     return 0;
   }
 
   auto recordInvalidMirror = [&]() {
     unsigned long long penalty =
-        (unsigned long long)getSelfSymmetryEdgeLen(beginIdx, endIdx) *
-        ((unsigned long long)BLOCKCOST * 100 + (unsigned long long)MARKERCOST * 8);
+        computeInvalidMirrorPenalty(getSelfSymmetryEdgeLen(beginIdx, endIdx));
     if (debugNet) {
       layerAssignDebug.mirrorInvalidEdges++;
       layerAssignDebug.mirrorInvalidPenalty += penalty;
@@ -544,8 +448,8 @@ unsigned FlexGR::getSelfSymmetryLayerAssignMirrorCost(frNode *currNode,
     return recordInvalidMirror();
   }
 
-  frPoint mirrorBegin = mirrorGCellIdx(beginIdx, constraint->isAxisHorizontal, axisGCellIdx);
-  frPoint mirrorEnd = mirrorGCellIdx(endIdx, constraint->isAxisHorizontal, axisGCellIdx);
+  frPoint mirrorBegin = axisCtx.mirrorGCell(beginIdx);
+  frPoint mirrorEnd = axisCtx.mirrorGCell(endIdx);
   int xCnt = (int)gCellPatterns.at(0).getCount();
   int yCnt = (int)gCellPatterns.at(1).getCount();
   auto isValidGCellIdx = [&](const frPoint &gcellIdx) {
@@ -557,48 +461,9 @@ unsigned FlexGR::getSelfSymmetryLayerAssignMirrorCost(frNode *currNode,
     return recordInvalidMirror();
   }
 
-  unsigned long long mirrorCost = 0;
-  if (mirrorBegin.y() == mirrorEnd.y()) {
-    bool isLayerBlocked =
-        design->getTech()->getLayer((layerNum + 1) * 2)->getDir() == frcVertPrefRoutingDir;
-    int yIdx = mirrorBegin.y();
-    int xBegin = min(mirrorBegin.x(), mirrorEnd.x());
-    int xEnd = max(mirrorBegin.x(), mirrorEnd.x());
-    for (int xIdx = xBegin; xIdx < xEnd; xIdx++) {
-      auto supply = cmap->getRawSupply(xIdx, yIdx, layerNum, frDirEnum::E);
-      auto demand = cmap->getRawDemand(xIdx, yIdx, layerNum, frDirEnum::E);
-      mirrorCost += cmap->getHistoryCost(xIdx, yIdx, layerNum);
-      if (isLayerBlocked || cmap->hasBlock(xIdx, yIdx, layerNum, frDirEnum::E)) {
-        mirrorCost += (unsigned long long)BLOCKCOST * 100;
-      }
-      if (demand > supply / 4) {
-        mirrorCost += demand * 10 / (supply + 1);
-      }
-      if (demand >= supply) {
-        mirrorCost += (unsigned long long)MARKERCOST * 8;
-      }
-    }
-  } else {
-    bool isLayerBlocked =
-        design->getTech()->getLayer((layerNum + 1) * 2)->getDir() == frcHorzPrefRoutingDir;
-    int xIdx = mirrorBegin.x();
-    int yBegin = min(mirrorBegin.y(), mirrorEnd.y());
-    int yEnd = max(mirrorBegin.y(), mirrorEnd.y());
-    for (int yIdx = yBegin; yIdx < yEnd; yIdx++) {
-      auto supply = cmap->getRawSupply(xIdx, yIdx, layerNum, frDirEnum::N);
-      auto demand = cmap->getRawDemand(xIdx, yIdx, layerNum, frDirEnum::N);
-      mirrorCost += cmap->getHistoryCost(xIdx, yIdx, layerNum);
-      if (isLayerBlocked || cmap->hasBlock(xIdx, yIdx, layerNum, frDirEnum::N)) {
-        mirrorCost += (unsigned long long)BLOCKCOST * 100;
-      }
-      if (demand > supply / 4) {
-        mirrorCost += demand * 10 / (supply + 1);
-      }
-      if (demand >= supply) {
-        mirrorCost += (unsigned long long)MARKERCOST * 8;
-      }
-    }
-  }
+  unsigned long long mirrorCost =
+      computeLayerAssignMirrorCongestionCost(design, cmap.get(), mirrorBegin,
+                                             mirrorEnd, layerNum);
 
   if (debugNet) {
     layerAssignDebug.mirrorCostHits++;
@@ -607,19 +472,19 @@ unsigned FlexGR::getSelfSymmetryLayerAssignMirrorCost(frNode *currNode,
   return saturateSelfSymmetryCost(mirrorCost);
 }
 
-void FlexGR::dumpSelfSymmetry2DAscii(const string &tag,
-                                     const string &netName) const {
+void FlexGR::dumpSelfSymmetry2DAscii(const string &tag) const {
   auto block = design ? design->getTopBlock() : nullptr;
   if (block == nullptr) {
     return;
   }
 
+  const auto &netName = SelfSymmetryDebug::netName();
   auto netIt = block->name2net.find(netName);
   if (netIt == block->name2net.end()) {
     return;
   }
   auto net = netIt->second;
-  auto constraint = getSelfSymmetryConstraintPtr(net);
+  auto constraint = net ? net->getSelfSymmetryConstraintPtr() : nullptr;
   if (constraint == nullptr) {
     return;
   }
@@ -705,26 +570,16 @@ void FlexGR::dumpSelfSymmetry2DAscii(const string &tag,
     }
   }
 
-  frNode *axisRefNode = net->getRootGCellNode();
-  if (axisRefNode == nullptr) {
-    axisRefNode = net->getRoot();
-  }
-  if (axisRefNode == nullptr) {
-    axisRefNode = net->getNodes().front().get();
-  }
+  frNode *axisRefNode = getSelfSymmetryReferenceNode(net);
   frPoint axisRefLoc;
   axisRefNode->getLoc(axisRefLoc);
-  frPoint axisProbe;
-  if (constraint->isAxisHorizontal) {
-    axisProbe.set(axisRefLoc.x(), constraint->axis);
-  } else {
-    axisProbe.set(constraint->axis, axisRefLoc.y());
+  auto axisCtx = SelfSymmetryAxisContext::fromReferencePoint(design,
+                                                             *constraint,
+                                                             axisRefLoc);
+  if (!axisCtx.valid) {
+    return;
   }
-  frPoint axisGCellLocation;
-  block->getGCellIdx(axisProbe, axisGCellLocation);
-  int axisGCellIdx = constraint->isAxisHorizontal ?
-                     (int)axisGCellLocation.y() :
-                     (int)axisGCellLocation.x();
+  int axisGCellIdx = (int)axisCtx.axisGCellIdx;
 
   if (constraint->isAxisHorizontal) {
     if (axisGCellIdx >= minY - 1 && axisGCellIdx <= maxY + 1) {
@@ -880,247 +735,228 @@ void FlexGR::dumpSelfSymmetry2DAscii(const string &tag,
   cout << "@@@ end " << netName << " 2D ASCII " << tag << " @@@\n";
 }
 
-void FlexGR::modSelfSymmetrySourceDemand(frNet *net,
+namespace {
+  void modSelfSymmetrySourceDemand(frDesign *design,
+                                   FlexGRCMap *cmap,
+                                   FlexGRCMap *cmap2D,
+                                   frNet *net,
+                                   const frPoint &begin,
+                                   const frPoint &end,
+                                   frLayerNum layerNum,
+                                   bool isAdd,
+                                   bool is2D) {
+    if (begin == end) {
+      return;
+    }
+    if (design == nullptr || design->getTopBlock() == nullptr) {
+      return;
+    }
+    auto targetCMap = is2D ? cmap2D : cmap;
+    if (targetCMap == nullptr) {
+      return;
+    }
+    if (begin.x() != end.x() && begin.y() != end.y()) {
+      cout << "Error: non-colinear nodes in modSelfSymmetrySourceDemand";
+      if (net) {
+        cout << " for net " << net->getName();
+      }
+      cout << "\n";
+      return;
+    }
+
+    frPoint bp, ep;
+    if (begin < end) {
+      bp = begin;
+      ep = end;
+    } else {
+      bp = end;
+      ep = begin;
+    }
+
+    frPoint bpIdx, epIdx;
+    design->getTopBlock()->getGCellIdx(bp, bpIdx);
+    design->getTopBlock()->getGCellIdx(ep, epIdx);
+    if (bpIdx == epIdx) {
+      return;
+    }
+    if (bpIdx.x() != epIdx.x() && bpIdx.y() != epIdx.y()) {
+      cout << "Error: non-colinear nodes in modSelfSymmetrySourceDemand";
+      if (net) {
+        cout << " for net " << net->getName();
+      }
+      cout << "\n";
+      return;
+    }
+
+    unsigned zIdx = is2D ? 0 : layerNum / 2 - 1;
+    auto modRawDemand = [&](int xIdx, int yIdx, frDirEnum dir) {
+      if (isAdd) {
+        targetCMap->addRawDemand(xIdx, yIdx, zIdx, dir);
+      } else {
+        targetCMap->subRawDemand(xIdx, yIdx, zIdx, dir);
+      }
+    };
+
+    if (bpIdx.y() == epIdx.y()) {
+      int yIdx = bpIdx.y();
+      for (int xIdx = bpIdx.x(); xIdx < epIdx.x(); xIdx++) {
+        modRawDemand(xIdx, yIdx, frDirEnum::E);
+        modRawDemand(xIdx + 1, yIdx, frDirEnum::E);
+      }
+    } else {
+      int xIdx = bpIdx.x();
+      for (int yIdx = bpIdx.y(); yIdx < epIdx.y(); yIdx++) {
+        modRawDemand(xIdx, yIdx, frDirEnum::N);
+        modRawDemand(xIdx, yIdx + 1, frDirEnum::N);
+      }
+    }
+  }
+
+  void modSelfSymmetryMirrorShadowDemand(frDesign *design,
+                                         FlexGRCMap *cmap,
+                                         FlexGRCMap *cmap2D,
+                                         frNet *net,
                                          const frPoint &begin,
                                          const frPoint &end,
                                          frLayerNum layerNum,
                                          bool isAdd,
                                          bool is2D) {
-  if (begin == end) {
-    return;
-  }
-  if (begin.x() != end.x() && begin.y() != end.y()) {
-    cout << "Error: non-colinear nodes in modSelfSymmetrySourceDemand";
-    if (net) {
-      cout << " for net " << net->getName();
+    auto constraint = net ? net->getSelfSymmetryConstraintPtr() : nullptr;
+    if (constraint == nullptr) {
+      return;
     }
-    cout << "\n";
-    return;
-  }
-
-  frPoint bp, ep;
-  if (begin < end) {
-    bp = begin;
-    ep = end;
-  } else {
-    bp = end;
-    ep = begin;
-  }
-
-  frPoint bpIdx, epIdx;
-  design->getTopBlock()->getGCellIdx(bp, bpIdx);
-  design->getTopBlock()->getGCellIdx(ep, epIdx);
-  if (bpIdx == epIdx) {
-    return;
-  }
-  if (bpIdx.x() != epIdx.x() && bpIdx.y() != epIdx.y()) {
-    cout << "Error: non-colinear nodes in modSelfSymmetrySourceDemand";
-    if (net) {
-      cout << " for net " << net->getName();
+    auto axisCtx = SelfSymmetryAxisContext::fromReferencePoint(design,
+                                                               *constraint,
+                                                               begin);
+    if (!axisCtx.valid) {
+      return;
     }
-    cout << "\n";
-    return;
+    if (axisCtx.sideOfPoint(begin) == 0 && axisCtx.sideOfPoint(end) == 0) {
+      return;
+    }
+
+    modSelfSymmetrySourceDemand(design,
+                                cmap,
+                                cmap2D,
+                                net,
+                                axisCtx.mirrorPoint(begin),
+                                axisCtx.mirrorPoint(end),
+                                layerNum,
+                                isAdd,
+                                is2D);
   }
 
-  auto targetCMap = is2D ? cmap2D.get() : cmap.get();
-  unsigned zIdx = is2D ? 0 : layerNum / 2 - 1;
-  auto modRawDemand = [&](int xIdx, int yIdx, frDirEnum dir) {
-    if (isAdd) {
-      targetCMap->addRawDemand(xIdx, yIdx, zIdx, dir);
-    } else {
-      targetCMap->subRawDemand(xIdx, yIdx, zIdx, dir);
+  struct SelfSymmetry3DMirrorObjects {
+    set<frNode*> nodes;
+    set<grShape*> shapes;
+    set<grVia*> vias;
+
+    bool empty() const {
+      return nodes.empty() && shapes.empty() && vias.empty();
     }
   };
 
-  if (bpIdx.y() == epIdx.y()) {
-    int yIdx = bpIdx.y();
-    for (int xIdx = bpIdx.x(); xIdx < epIdx.x(); xIdx++) {
-      modRawDemand(xIdx, yIdx, frDirEnum::E);
-      modRawDemand(xIdx + 1, yIdx, frDirEnum::E);
-    }
-  } else {
-    int xIdx = bpIdx.x();
-    for (int yIdx = bpIdx.y(); yIdx < epIdx.y(); yIdx++) {
-      modRawDemand(xIdx, yIdx, frDirEnum::N);
-      modRawDemand(xIdx, yIdx + 1, frDirEnum::N);
-    }
-  }
-}
-
-void FlexGR::modSelfSymmetryMirrorShadowDemand(frNet *net,
-                                               const frPoint &begin,
-                                               const frPoint &end,
-                                               frLayerNum layerNum,
-                                               bool isAdd,
-                                               bool is2D) {
-  auto constraint = getSelfSymmetryConstraintPtr(net);
-  if (constraint == nullptr) {
-    return;
-  }
-  if (isOnSelfSymmetryAxis(begin, *constraint) &&
-      isOnSelfSymmetryAxis(end, *constraint)) {
-    return;
-  }
-
-  modSelfSymmetrySourceDemand(net,
-                              mirrorPoint(begin, *constraint),
-                              mirrorPoint(end, *constraint),
-                              layerNum,
-                              isAdd,
-                              is2D);
-}
-
-void FlexGR::modSelfSymmetrySourceAndShadowDemand(frNet *net,
-                                                  const frPoint &begin,
-                                                  const frPoint &end,
-                                                  frLayerNum layerNum,
-                                                  bool isAdd,
-                                                  bool is2D) {
-  modSelfSymmetrySourceDemand(net, begin, end, layerNum, isAdd, is2D);
-  modSelfSymmetryMirrorShadowDemand(net, begin, end, layerNum, isAdd, is2D);
-}
-
-bool FlexGR::isSelfSymmetry3DLeadOnlyActive(frNet *net) const {
-  auto stateIt = selfSymmetry3DStates.find(this);
-  if (stateIt == selfSymmetry3DStates.end() || !stateIt->second.leadOnlyActive ||
-      net == nullptr) {
-    return false;
-  }
-  return stateIt->second.netStates.find(net) != stateIt->second.netStates.end();
-}
-
-bool FlexGR::isSelfSymmetry3DGuidedActive(frNet *net) const {
-  auto stateIt = selfSymmetry3DStates.find(this);
-  if (stateIt == selfSymmetry3DStates.end() || !stateIt->second.guidedActive ||
-      net == nullptr) {
-    return false;
-  }
-  return stateIt->second.netStates.find(net) != stateIt->second.netStates.end();
-}
-
-void FlexGR::stageSelfSymmetry3DLeadOnly() {
-  auto block = design ? design->getTopBlock() : nullptr;
-  if (block == nullptr || cmap == nullptr) {
-    return;
-  }
-
-  auto &state = selfSymmetry3DStates[this];
-  state.netStates.clear();
-  state.leadOnlyActive = true;
-  state.guidedActive = false;
-
-  for (auto &uNet: block->getNets()) {
-    auto net = uNet.get();
-    auto constraint = getSelfSymmetryConstraintPtr(net);
-    if (constraint == nullptr) {
-      continue;
+  SelfSymmetry3DMirrorObjects collectSelfSymmetry3DMirrorObjects(
+      frDesign *design,
+      frNet *net,
+      const SelfSymmetryAxisContext &axisCtx,
+      int mirrorSide) {
+    SelfSymmetry3DMirrorObjects objects;
+    if (net == nullptr || !axisCtx.valid) {
+      return objects;
     }
 
-    frCoord axisGCellIdx = 0;
-    if (!getSelfSymmetry3DAxisGCellIdx(design, net, *constraint, axisGCellIdx)) {
-      continue;
-    }
-
-    frNode *rootNode = net->getRootGCellNode();
-    if (rootNode == nullptr) {
-      rootNode = net->getRoot();
-    }
-    int rootSide = getSelfSymmetry3DNodeSide(design, rootNode,
-                                             constraint->isAxisHorizontal,
-                                             axisGCellIdx);
-    if (rootSide == 0) {
-      rootSide = -1;
-    }
-    int mirrorSide = -rootSide;
-
-    set<frNode*> mirrorNodes;
     for (auto &uNode: net->getNodes()) {
       auto node = uNode.get();
       if (node == net->getRoot()) {
         continue;
       }
-      if (getSelfSymmetry3DNodeSide(design, node, constraint->isAxisHorizontal,
-                                    axisGCellIdx) == mirrorSide) {
-        mirrorNodes.insert(node);
+      if (getSelfSymmetry3DNodeSide(design, node, axisCtx) == mirrorSide) {
+        objects.nodes.insert(node);
       }
     }
 
-    set<grShape*> mirrorShapes;
     for (auto &uShape: net->getGRShapes()) {
       if (uShape->typeId() != grcPathSeg) {
         continue;
       }
       auto pathSeg = static_cast<grPathSeg*>(uShape.get());
-      if (isSelfSymmetry3DMirrorPathSeg(design, pathSeg,
-                                        constraint->isAxisHorizontal,
-                                        axisGCellIdx, mirrorSide)) {
-        mirrorShapes.insert(pathSeg);
+      if (isSelfSymmetry3DMirrorPathSeg(design, pathSeg, axisCtx, mirrorSide)) {
+        objects.shapes.insert(pathSeg);
       }
     }
 
-    set<grVia*> mirrorVias;
     for (auto &uVia: net->getGRVias()) {
       auto via = uVia.get();
-      if (isSelfSymmetry3DMirrorVia(design, via,
-                                    constraint->isAxisHorizontal,
-                                    axisGCellIdx, mirrorSide)) {
-        mirrorVias.insert(via);
+      if (isSelfSymmetry3DMirrorVia(design, via, axisCtx, mirrorSide)) {
+        objects.vias.insert(via);
       }
     }
+    return objects;
+  }
 
-    if (mirrorNodes.empty() && mirrorShapes.empty() && mirrorVias.empty()) {
-      continue;
+  void rememberSelfSymmetry3DNode(SelfSymmetry3DNetState &savedNet,
+                                  frNode *node) {
+    if (node != nullptr &&
+        savedNet.nodeDescByNode.find(node) == savedNet.nodeDescByNode.end()) {
+      savedNet.nodeDescByNode[node] = makeSelfSymmetry3DNodeDesc(node);
     }
+  }
 
+  void rememberSelfSymmetry3DConnFig(SelfSymmetry3DNetState &savedNet,
+                                     grBlockObject *obj,
+                                     frNode *child,
+                                     frNode *parent) {
+    SelfSymmetry3DConnFigDesc desc;
+    desc.child = child;
+    desc.parent = parent;
+    desc.childDesc = makeSelfSymmetry3DNodeDesc(child);
+    desc.parentDesc = makeSelfSymmetry3DNodeDesc(parent);
+    savedNet.connFigDescByObj[obj] = desc;
+    rememberSelfSymmetry3DNode(savedNet, child);
+    rememberSelfSymmetry3DNode(savedNet, parent);
+  }
+
+  SelfSymmetry3DNetState snapshotSelfSymmetry3DTopology(
+      frNet *net,
+      const SelfSymmetry3DMirrorObjects &objects) {
     SelfSymmetry3DNetState savedNet;
     savedNet.rootGCellNode = net->getRootGCellNode();
     savedNet.firstNonRPinNode = net->getFirstNonRPinNode();
 
-    auto rememberNode = [&](frNode *node) {
-      if (node != nullptr &&
-          savedNet.nodeDescByNode.find(node) == savedNet.nodeDescByNode.end()) {
-        savedNet.nodeDescByNode[node] = makeSelfSymmetry3DNodeDesc(node);
-      }
-    };
-
-    for (auto node: mirrorNodes) {
-      rememberNode(node);
+    for (auto node: objects.nodes) {
+      rememberSelfSymmetry3DNode(savedNet, node);
       savedNet.parentByNode[node] = node->getParent();
-      rememberNode(node->getParent());
+      rememberSelfSymmetry3DNode(savedNet, node->getParent());
       auto &children = savedNet.childrenByNode[node];
       for (auto child: node->getChildren()) {
         children.push_back(child);
-        rememberNode(child);
+        rememberSelfSymmetry3DNode(savedNet, child);
       }
     }
 
-    auto rememberConnFig = [&](grBlockObject *obj, frNode *child, frNode *parent) {
-      SelfSymmetry3DConnFigDesc desc;
-      desc.child = child;
-      desc.parent = parent;
-      desc.childDesc = makeSelfSymmetry3DNodeDesc(child);
-      desc.parentDesc = makeSelfSymmetry3DNodeDesc(parent);
-      savedNet.connFigDescByObj[obj] = desc;
-      rememberNode(child);
-      rememberNode(parent);
-    };
-
-    for (auto shape: mirrorShapes) {
-      rememberConnFig(shape, shape->getChild(), shape->getParent());
+    for (auto shape: objects.shapes) {
+      rememberSelfSymmetry3DConnFig(savedNet, shape, shape->getChild(),
+                                    shape->getParent());
     }
-    for (auto via: mirrorVias) {
-      rememberConnFig(via, via->getChild(), via->getParent());
+    for (auto via: objects.vias) {
+      rememberSelfSymmetry3DConnFig(savedNet, via, via->getChild(),
+                                    via->getParent());
     }
+    return savedNet;
+  }
 
-    for (auto node: mirrorNodes) {
+  void detachSelfSymmetry3DTopology(SelfSymmetry3DNetState &savedNet,
+                                    const SelfSymmetry3DMirrorObjects &objects) {
+    for (auto node: objects.nodes) {
       auto parent = savedNet.parentByNode[node];
-      if (parent != nullptr && mirrorNodes.find(parent) == mirrorNodes.end()) {
+      if (parent != nullptr && objects.nodes.find(parent) == objects.nodes.end()) {
         parent->removeChild(node);
         node->setParent(nullptr);
       }
       auto children = savedNet.childrenByNode[node];
       for (auto child: children) {
-        if (mirrorNodes.find(child) == mirrorNodes.end()) {
+        if (objects.nodes.find(child) == objects.nodes.end()) {
           node->removeChild(child);
           if (child->getParent() == node) {
             child->setParent(nullptr);
@@ -1128,15 +964,20 @@ void FlexGR::stageSelfSymmetry3DLeadOnly() {
         }
       }
     }
+  }
 
-    auto regionQuery = getRegionQuery();
-    for (auto shape: mirrorShapes) {
+  template <typename ModSourceDemand>
+  void removeSelfSymmetry3DMirrorObjects(frNet *net,
+                                         frRegionQuery *regionQuery,
+                                         SelfSymmetry3DNetState &savedNet,
+                                         const SelfSymmetry3DMirrorObjects &objects,
+                                         ModSourceDemand modSourceDemand) {
+    for (auto shape: objects.shapes) {
       auto pathSeg = static_cast<grPathSeg*>(shape);
       frPoint bp;
       frPoint ep;
       pathSeg->getPoints(bp, ep);
-      modSelfSymmetrySourceDemand(net, bp, ep, pathSeg->getLayerNum(),
-                                  /*isAdd*/false, /*is2D*/false);
+      modSourceDemand(bp, ep, pathSeg->getLayerNum(), /*isAdd*/false);
       regionQuery->removeGRObj(pathSeg);
       auto it = shape->getIter();
       auto ownedShape = std::move(*it);
@@ -1144,7 +985,7 @@ void FlexGR::stageSelfSymmetry3DLeadOnly() {
       savedNet.shapes.push_back(std::move(ownedShape));
     }
 
-    for (auto via: mirrorVias) {
+    for (auto via: objects.vias) {
       regionQuery->removeGRObj(via);
       auto it = via->getIter();
       auto ownedVia = std::move(*it);
@@ -1152,82 +993,16 @@ void FlexGR::stageSelfSymmetry3DLeadOnly() {
       savedNet.vias.push_back(std::move(ownedVia));
     }
 
-    for (auto node: mirrorNodes) {
+    for (auto node: objects.nodes) {
       auto it = node->getIter();
       auto ownedNode = std::move(*it);
       net->getNodes().erase(it);
       savedNet.nodes.push_back(std::move(ownedNode));
     }
-
-    refreshSelfSymmetry3DNetAnchors(net);
-    state.netStates.emplace(net, std::move(savedNet));
   }
 
-  for (auto &netEntry: state.netStates) {
-    auto net = netEntry.first;
-    auto constraint = getSelfSymmetryConstraintPtr(net);
-    if (constraint == nullptr) {
-      continue;
-    }
-    frCoord axisGCellIdx = 0;
-    if (!getSelfSymmetry3DAxisGCellIdx(design, net, *constraint, axisGCellIdx)) {
-      continue;
-    }
-    for (auto &uShape: net->getGRShapes()) {
-      if (uShape->typeId() != grcPathSeg) {
-        continue;
-      }
-      auto pathSeg = static_cast<grPathSeg*>(uShape.get());
-      frPoint bp;
-      frPoint ep;
-      pathSeg->getPoints(bp, ep);
-      if (isSelfSymmetry3DAxisOnly(design, bp, ep,
-                                   constraint->isAxisHorizontal,
-                                   axisGCellIdx)) {
-        continue;
-      }
-      modSelfSymmetryMirrorShadowDemand(net, bp, ep, pathSeg->getLayerNum(),
-                                        /*isAdd*/true, /*is2D*/false);
-    }
-  }
-}
-
-void FlexGR::restoreSelfSymmetry3DLayerAssignMirror() {
-  auto stateIt = selfSymmetry3DStates.find(this);
-  if (stateIt == selfSymmetry3DStates.end()) {
-    return;
-  }
-  auto &state = stateIt->second;
-  if (!state.leadOnlyActive) {
-    return;
-  }
-
-  for (auto &netEntry: state.netStates) {
-    auto net = netEntry.first;
-    auto &savedNet = netEntry.second;
-    auto constraint = getSelfSymmetryConstraintPtr(net);
-    if (constraint != nullptr) {
-      frCoord axisGCellIdx = 0;
-      if (getSelfSymmetry3DAxisGCellIdx(design, net, *constraint, axisGCellIdx)) {
-        for (auto &uShape: net->getGRShapes()) {
-          if (uShape->typeId() != grcPathSeg) {
-            continue;
-          }
-          auto pathSeg = static_cast<grPathSeg*>(uShape.get());
-          frPoint bp;
-          frPoint ep;
-          pathSeg->getPoints(bp, ep);
-          if (isSelfSymmetry3DAxisOnly(design, bp, ep,
-                                       constraint->isAxisHorizontal,
-                                       axisGCellIdx)) {
-            continue;
-          }
-          modSelfSymmetryMirrorShadowDemand(net, bp, ep, pathSeg->getLayerNum(),
-                                            /*isAdd*/false, /*is2D*/false);
-        }
-      }
-    }
-
+  set<frNode*> restoreSelfSymmetry3DNodes(frNet *net,
+                                          SelfSymmetry3DNetState &savedNet) {
     set<frNode*> restoredNodes;
     for (auto &uNode: savedNet.nodes) {
       restoredNodes.insert(uNode.get());
@@ -1237,7 +1012,12 @@ void FlexGR::restoreSelfSymmetry3DLayerAssignMirror() {
       node->setParent(nullptr);
       node->clearChildren();
     }
+    return restoredNodes;
+  }
 
+  void restoreSelfSymmetry3DTopology(frNet *net,
+                                     SelfSymmetry3DNetState &savedNet,
+                                     const set<frNode*> &restoredNodes) {
     for (auto node: restoredNodes) {
       auto childrenIt = savedNet.childrenByNode.find(node);
       if (childrenIt == savedNet.childrenByNode.end()) {
@@ -1285,7 +1065,14 @@ void FlexGR::restoreSelfSymmetry3DLayerAssignMirror() {
         node->setParent(parent);
       }
     }
+  }
 
+  template <typename ModSourceDemand>
+  void restoreSelfSymmetry3DMirrorObjects(frNet *net,
+                                          frRegionQuery *regionQuery,
+                                          SelfSymmetry3DNetState &savedNet,
+                                          const set<frNode*> &restoredNodes,
+                                          ModSourceDemand modSourceDemand) {
     for (auto &uShape: savedNet.shapes) {
       auto shape = uShape.get();
       auto descIt = savedNet.connFigDescByObj.find(shape);
@@ -1307,9 +1094,8 @@ void FlexGR::restoreSelfSymmetry3DLayerAssignMirror() {
       frPoint bp;
       frPoint ep;
       pathSeg->getPoints(bp, ep);
-      modSelfSymmetrySourceDemand(net, bp, ep, pathSeg->getLayerNum(),
-                                  /*isAdd*/true, /*is2D*/false);
-      getRegionQuery()->addGRObj(pathSeg);
+      modSourceDemand(bp, ep, pathSeg->getLayerNum(), /*isAdd*/true);
+      regionQuery->addGRObj(pathSeg);
       net->addGRShape(uShape);
     }
 
@@ -1330,10 +1116,13 @@ void FlexGR::restoreSelfSymmetry3DLayerAssignMirror() {
           child->setConnFig(via);
         }
       }
-      getRegionQuery()->addGRObj(via);
+      regionQuery->addGRObj(via);
       net->addGRVia(uVia);
     }
+  }
 
+  void restoreSelfSymmetry3DAnchors(frNet *net,
+                                    const SelfSymmetry3DNetState &savedNet) {
     if (savedNet.rootGCellNode != nullptr &&
         containsSelfSymmetry3DNode(net, savedNet.rootGCellNode)) {
       net->setRootGCellNode(savedNet.rootGCellNode);
@@ -1346,6 +1135,162 @@ void FlexGR::restoreSelfSymmetry3DLayerAssignMirror() {
     } else {
       refreshSelfSymmetry3DNetAnchors(net);
     }
+  }
+
+  template <typename ModMirrorShadowDemand>
+  void modSelfSymmetry3DLeadShadowDemand(frDesign *design,
+                                         frNet *net,
+                                         const SelfSymmetryAxisContext &axisCtx,
+                                         bool isAdd,
+                                         ModMirrorShadowDemand modShadowDemand) {
+    if (!axisCtx.valid) {
+      return;
+    }
+    for (auto &uShape: net->getGRShapes()) {
+      if (uShape->typeId() != grcPathSeg) {
+        continue;
+      }
+      auto pathSeg = static_cast<grPathSeg*>(uShape.get());
+      frPoint bp;
+      frPoint ep;
+      pathSeg->getPoints(bp, ep);
+      if (isSelfSymmetry3DAxisOnly(design, bp, ep, axisCtx)) {
+        continue;
+      }
+      modShadowDemand(bp, ep, pathSeg->getLayerNum(), isAdd);
+    }
+  }
+}
+
+bool FlexGR::isSelfSymmetry3DLeadOnlyActive(frNet *net) const {
+  auto stateIt = selfSymmetry3DStates.find(this);
+  if (stateIt == selfSymmetry3DStates.end() || !stateIt->second.leadOnlyActive ||
+      net == nullptr) {
+    return false;
+  }
+  return stateIt->second.netStates.find(net) != stateIt->second.netStates.end();
+}
+
+bool FlexGR::isSelfSymmetry3DGuidedActive(frNet *net) const {
+  auto stateIt = selfSymmetry3DStates.find(this);
+  if (stateIt == selfSymmetry3DStates.end() || !stateIt->second.guidedActive ||
+      net == nullptr) {
+    return false;
+  }
+  return stateIt->second.netStates.find(net) != stateIt->second.netStates.end();
+}
+
+void FlexGR::stageSelfSymmetry3DLeadOnly() {
+  auto block = design ? design->getTopBlock() : nullptr;
+  if (block == nullptr || cmap == nullptr) {
+    return;
+  }
+
+  auto &state = selfSymmetry3DStates[this];
+  state.netStates.clear();
+  state.leadOnlyActive = true;
+  state.guidedActive = false;
+
+  for (auto &uNet: block->getNets()) {
+    auto net = uNet.get();
+    auto constraint = net ? net->getSelfSymmetryConstraintPtr() : nullptr;
+    if (constraint == nullptr) {
+      continue;
+    }
+
+    auto axisCtx = getSelfSymmetryNetAxisContext(design, net, *constraint);
+    if (!axisCtx.valid) {
+      continue;
+    }
+
+    int mirrorSide = -axisCtx.rootSide;
+    auto mirrorObjects = collectSelfSymmetry3DMirrorObjects(design, net,
+                                                            axisCtx,
+                                                            mirrorSide);
+    if (mirrorObjects.empty()) {
+      continue;
+    }
+
+    auto savedNet = snapshotSelfSymmetry3DTopology(net, mirrorObjects);
+    detachSelfSymmetry3DTopology(savedNet, mirrorObjects);
+    auto modSourceDemand = [&](const frPoint &bp,
+                               const frPoint &ep,
+                               frLayerNum layerNum,
+                               bool isAdd) {
+      modSelfSymmetrySourceDemand(design, cmap.get(), cmap2D.get(), net, bp,
+                                  ep, layerNum, isAdd, /*is2D*/false);
+    };
+    removeSelfSymmetry3DMirrorObjects(net, getRegionQuery(), savedNet,
+                                      mirrorObjects, modSourceDemand);
+    refreshSelfSymmetry3DNetAnchors(net);
+    state.netStates.emplace(net, std::move(savedNet));
+  }
+
+  for (auto &netEntry: state.netStates) {
+    auto net = netEntry.first;
+    auto constraint = net ? net->getSelfSymmetryConstraintPtr() : nullptr;
+    if (constraint == nullptr) {
+      continue;
+    }
+    auto axisCtx = getSelfSymmetryNetAxisContext(design, net, *constraint);
+    if (!axisCtx.valid) {
+      continue;
+    }
+    auto modShadowDemand = [&](const frPoint &bp,
+                               const frPoint &ep,
+                               frLayerNum layerNum,
+                               bool isAdd) {
+      modSelfSymmetryMirrorShadowDemand(design, cmap.get(), cmap2D.get(), net,
+                                        bp, ep, layerNum, isAdd,
+                                        /*is2D*/false);
+    };
+    modSelfSymmetry3DLeadShadowDemand(design, net, axisCtx, /*isAdd*/true,
+                                      modShadowDemand);
+  }
+}
+
+void FlexGR::restoreSelfSymmetry3DLayerAssignMirror() {
+  auto stateIt = selfSymmetry3DStates.find(this);
+  if (stateIt == selfSymmetry3DStates.end()) {
+    return;
+  }
+  auto &state = stateIt->second;
+  if (!state.leadOnlyActive) {
+    return;
+  }
+
+  for (auto &netEntry: state.netStates) {
+    auto net = netEntry.first;
+    auto &savedNet = netEntry.second;
+    auto constraint = net ? net->getSelfSymmetryConstraintPtr() : nullptr;
+    if (constraint != nullptr) {
+      auto axisCtx = getSelfSymmetryNetAxisContext(design, net, *constraint);
+      if (axisCtx.valid) {
+        auto modShadowDemand = [&](const frPoint &bp,
+                                   const frPoint &ep,
+                                   frLayerNum layerNum,
+                                   bool isAdd) {
+          modSelfSymmetryMirrorShadowDemand(design, cmap.get(), cmap2D.get(),
+                                            net, bp, ep, layerNum, isAdd,
+                                            /*is2D*/false);
+        };
+        modSelfSymmetry3DLeadShadowDemand(design, net, axisCtx,
+                                          /*isAdd*/false, modShadowDemand);
+      }
+    }
+
+    auto restoredNodes = restoreSelfSymmetry3DNodes(net, savedNet);
+    restoreSelfSymmetry3DTopology(net, savedNet, restoredNodes);
+    auto modSourceDemand = [&](const frPoint &bp,
+                               const frPoint &ep,
+                               frLayerNum layerNum,
+                               bool isAdd) {
+      modSelfSymmetrySourceDemand(design, cmap.get(), cmap2D.get(), net, bp,
+                                  ep, layerNum, isAdd, /*is2D*/false);
+    };
+    restoreSelfSymmetry3DMirrorObjects(net, getRegionQuery(), savedNet,
+                                       restoredNodes, modSourceDemand);
+    restoreSelfSymmetry3DAnchors(net, savedNet);
   }
 
   state.leadOnlyActive = false;
@@ -1382,7 +1327,7 @@ void FlexGR::buildSelfSymmetryMirror2DTopology() {
     return;
   }
   for (auto &uNet: block->getNets()) {
-    if (isSelfSymmetryNet(uNet.get())) {
+    if (uNet->getSelfSymmetryConstraintPtr()) {
       buildSelfSymmetryMirror2DTopology_net(uNet.get());
     }
   }
@@ -1392,7 +1337,7 @@ FlexGR::SelfSymmetryMirror2DStats
 FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
   SelfSymmetryMirror2DStats stats;
   auto block = design ? design->getTopBlock() : nullptr;
-  auto constraint = getSelfSymmetryConstraintPtr(net);
+  auto constraint = net ? net->getSelfSymmetryConstraintPtr() : nullptr;
   if (block == nullptr || constraint == nullptr || net->getRoot() == nullptr) {
     return stats;
   }
@@ -1513,7 +1458,7 @@ FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
 
   frNode *rootGCellNode = findCurrentRootGCellNode();
   if (rootGCellNode == nullptr) {
-    if (net->getName() == "Symmtry5") {
+    if (SelfSymmetryDebug::isDebugNet(net)) {
       cout << "@@@ self-symmetry mirror repair 2d @@@\n";
       cout << "net: " << net->getName() << "\n";
       cout << "mirror_hanan_pins_covered: 0/0\n";
@@ -1530,24 +1475,15 @@ FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
   frPoint rootGCellLoc;
   rootGCellNode->getLoc(rootGCellLoc);
   frPoint rootGCellIdx = getGCellIdxFromLoc(rootGCellLoc);
-  frPoint axisProbe;
-  if (constraint->isAxisHorizontal) {
-    axisProbe.set(rootGCellLoc.x(), constraint->axis);
-  } else {
-    axisProbe.set(constraint->axis, rootGCellLoc.y());
+  auto axisCtx = SelfSymmetryAxisContext::fromReferencePoint(design,
+                                                             *constraint,
+                                                             rootGCellLoc);
+  if (!axisCtx.valid) {
+    return stats;
   }
-  frPoint axisGCellLocation;
-  block->getGCellIdx(axisProbe, axisGCellLocation);
-  frCoord axisGCellIdx = constraint->isAxisHorizontal ?
-                         axisGCellLocation.y() :
-                         axisGCellLocation.x();
+  frCoord axisGCellIdx = axisCtx.axisGCellIdx;
 
-  int rootSide = getSelfSymmetryGCellSide(rootGCellIdx,
-                                          constraint->isAxisHorizontal,
-                                          axisGCellIdx);
-  if (rootSide == 0) {
-    rootSide = -1;
-  }
+  int rootSide = normalizeSelfSymmetryRootSide(axisCtx.sideOfGCell(rootGCellIdx));
 
   map<pair<int, int>, vector<frNode*> > mirrorGCell2PinNodes;
   vector<frPoint> mirrorTerminalGCellIdxs;
@@ -1560,9 +1496,7 @@ FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
     frPoint pinLoc;
     node->getLoc(pinLoc);
     frPoint pinGCellIdx = getGCellIdxFromLoc(pinLoc);
-    int pinSide = getSelfSymmetryGCellSide(pinGCellIdx,
-                                           constraint->isAxisHorizontal,
-                                           axisGCellIdx);
+    int pinSide = axisCtx.sideOfGCell(pinGCellIdx);
     if (pinSide == 0 || pinSide == rootSide) {
       continue;
     }
@@ -1625,18 +1559,11 @@ FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
 
   set<pair<frPoint, frPoint> > mirrorGuideEdges;
   for (auto edge: rootSideTreeEdges) {
-    bool isAxisEdge =
-        getSelfSymmetryAxisCoord(edge.first, constraint->isAxisHorizontal) == axisGCellIdx &&
-        getSelfSymmetryAxisCoord(edge.second, constraint->isAxisHorizontal) == axisGCellIdx;
-    if (isAxisEdge) {
+    if (axisCtx.isAxisEdge(edge.first, edge.second)) {
       continue;
     }
-    auto mirrorBegin = mirrorGCellIdx(edge.first,
-                                      constraint->isAxisHorizontal,
-                                      axisGCellIdx);
-    auto mirrorEnd = mirrorGCellIdx(edge.second,
-                                    constraint->isAxisHorizontal,
-                                    axisGCellIdx);
+    auto mirrorBegin = axisCtx.mirrorGCell(edge.first);
+    auto mirrorEnd = axisCtx.mirrorGCell(edge.second);
     if (mirrorBegin != mirrorEnd) {
       mirrorGuideEdges.insert(normalizeSelfSymmetryEdge(mirrorBegin, mirrorEnd));
     }
@@ -1672,7 +1599,7 @@ FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
 
   set<pair<int, int> > axisSourceKeys;
   for (auto vertex: mirrorTreeVertices) {
-    if (getSelfSymmetryAxisCoord(vertex, constraint->isAxisHorizontal) != axisGCellIdx) {
+    if (axisCtx.axisCoord(vertex) != axisGCellIdx) {
       continue;
     }
     auto key = getSelfSymmetryGCellKey(vertex);
@@ -1745,10 +1672,7 @@ FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
     return false;
   };
   for (auto edge: mirrorTreeEdges) {
-    bool isAxisEdge =
-        getSelfSymmetryAxisCoord(edge.first, constraint->isAxisHorizontal) == axisGCellIdx &&
-        getSelfSymmetryAxisCoord(edge.second, constraint->isAxisHorizontal) == axisGCellIdx;
-    if (isAxisEdge) {
+    if (axisCtx.isAxisEdge(edge.first, edge.second)) {
       continue;
     }
     if (isGuideCovered(edge)) {
@@ -1781,7 +1705,7 @@ FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
   refreshFirstNonRPinNode();
   refreshTopologyCaches();
 
-  if (net->getName() == "Symmtry5") {
+  if (SelfSymmetryDebug::isDebugNet(net)) {
     cout << "@@@ self-symmetry mirror repair 2d @@@\n";
     cout << "net: " << net->getName() << "\n";
     cout << "mirror_hanan_pins_covered: "

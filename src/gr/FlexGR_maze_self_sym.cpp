@@ -27,9 +27,9 @@
  */
 
 #include "gr/FlexGR.h"
+#include "gr/FlexGR_self_sym_utils.h"
 #include <algorithm>
 #include <iostream>
-#include <limits>
 #include <map>
 #include <set>
 
@@ -41,25 +41,55 @@ namespace {
     return net && net->getSelfSymmetryConstraintPtr();
   }
 
-  int getAxisCoord(const frPoint &gcellIdx, bool isAxisHorizontal) {
-    return isAxisHorizontal ? gcellIdx.y() : gcellIdx.x();
+  bool isSelfSymmetryCardinalDir(frDirEnum dir) {
+    return dir == frDirEnum::E || dir == frDirEnum::N ||
+           dir == frDirEnum::S || dir == frDirEnum::W;
   }
 
-  int getGCellSide(const frPoint &gcellIdx, bool isAxisHorizontal, frCoord axisGCellIdx) {
-    auto coord = getAxisCoord(gcellIdx, isAxisHorizontal);
-    if (coord < axisGCellIdx) {
-      return -1;
+  unsigned long long computeGuidedMirrorCongestionCost(
+      FlexGRGridGraph &gridGraph,
+      frMIdx x,
+      frMIdx y,
+      frMIdx z,
+      frDirEnum dir,
+      long long edgeLen,
+      double congThresh) {
+    unsigned mirrorRawDemand = gridGraph.getRawDemand(x, y, z, dir);
+    unsigned mirrorRawSupply = gridGraph.getRawSupply(x, y, z, dir);
+    bool mirrorOverflowCost = mirrorRawDemand >= mirrorRawSupply * congThresh;
+    unsigned long long mirrorCost =
+        (unsigned long long)(gridGraph.getCongCost(mirrorRawDemand,
+                                                   mirrorRawSupply * congThresh) *
+                             edgeLen);
+    auto histCost = gridGraph.getHistoryCost(x, y, z);
+    if (histCost) {
+      mirrorCost +=
+          (unsigned long long)(4 * gridGraph.getCongCost(
+                                   mirrorRawDemand,
+                                   mirrorRawSupply * congThresh) *
+                               histCost * edgeLen);
     }
-    if (coord > axisGCellIdx) {
-      return 1;
+    if (gridGraph.hasBlock(x, y, z, dir)) {
+      mirrorCost += (unsigned long long)BLOCKCOST * edgeLen * 100;
     }
-    return 0;
+    if (mirrorOverflowCost) {
+      mirrorCost += (unsigned long long)128 * edgeLen;
+    }
+    return mirrorCost;
   }
 
-  unsigned saturateSelfSymmetry3DCost(unsigned long long cost) {
-    return cost > numeric_limits<unsigned>::max() ?
-           numeric_limits<unsigned>::max() :
-           (unsigned)cost;
+  SelfSymmetryAxisContext getWorkerSelfSymmetryAxisContext(
+      frDesign *design,
+      const frBox &routeBox,
+      const frSelfSymmetryConstraint &constraint) {
+    frPoint axisProbe;
+    if (constraint.isAxisHorizontal) {
+      axisProbe.set(routeBox.left(), constraint.axis);
+    } else {
+      axisProbe.set(constraint.axis, routeBox.bottom());
+    }
+    return SelfSymmetryAxisContext::fromAxisProbe(design, constraint,
+                                                  axisProbe);
   }
 }
 
@@ -77,19 +107,17 @@ bool FlexGRWorker::isSelfSymmetry2DAxisOnRouteBoxBoundary(frNet* net) const {
     return false;
   }
   auto constraint = net->getSelfSymmetryConstraint();
-  frPoint axisProbe;
-  if (constraint.isAxisHorizontal) {
-    axisProbe.set(routeBox.left(), constraint.axis);
-  } else {
-    axisProbe.set(constraint.axis, routeBox.bottom());
+  auto axisCtx = getWorkerSelfSymmetryAxisContext(design, routeBox,
+                                                  constraint);
+  if (!axisCtx.valid) {
+    return false;
   }
-  frPoint axisGCellLocation;
-  design->getTopBlock()->getGCellIdx(axisProbe, axisGCellLocation);
-  frCoord axisGCellIdx = constraint.isAxisHorizontal ? axisGCellLocation.y() : axisGCellLocation.x();
   if (constraint.isAxisHorizontal) {
-    return axisGCellIdx == routeGCellIdxLL.y() || axisGCellIdx == routeGCellIdxUR.y();
+    return axisCtx.axisGCellIdx == routeGCellIdxLL.y() ||
+           axisCtx.axisGCellIdx == routeGCellIdxUR.y();
   }
-  return axisGCellIdx == routeGCellIdxLL.x() || axisGCellIdx == routeGCellIdxUR.x();
+  return axisCtx.axisGCellIdx == routeGCellIdxLL.x() ||
+         axisCtx.axisGCellIdx == routeGCellIdxUR.x();
 }
 
 bool FlexGRWorker::isSelfSymmetry2DAxisInRouteBox(frNet* net) const {
@@ -97,19 +125,17 @@ bool FlexGRWorker::isSelfSymmetry2DAxisInRouteBox(frNet* net) const {
     return false;
   }
   auto constraint = net->getSelfSymmetryConstraint();
-  frPoint axisProbe;
-  if (constraint.isAxisHorizontal) {
-    axisProbe.set(routeBox.left(), constraint.axis);
-  } else {
-    axisProbe.set(constraint.axis, routeBox.bottom());
+  auto axisCtx = getWorkerSelfSymmetryAxisContext(design, routeBox,
+                                                  constraint);
+  if (!axisCtx.valid) {
+    return false;
   }
-  frPoint axisGCellLocation;
-  design->getTopBlock()->getGCellIdx(axisProbe, axisGCellLocation);
-  frCoord axisGCellIdx = constraint.isAxisHorizontal ? axisGCellLocation.y() : axisGCellLocation.x();
   if (constraint.isAxisHorizontal) {
-    return axisGCellIdx >= routeGCellIdxLL.y() && axisGCellIdx <= routeGCellIdxUR.y();
+    return axisCtx.axisGCellIdx >= routeGCellIdxLL.y() &&
+           axisCtx.axisGCellIdx <= routeGCellIdxUR.y();
   }
-  return axisGCellIdx >= routeGCellIdxLL.x() && axisGCellIdx <= routeGCellIdxUR.x();
+  return axisCtx.axisGCellIdx >= routeGCellIdxLL.x() &&
+         axisCtx.axisGCellIdx <= routeGCellIdxUR.x();
 }
 
 bool FlexGRWorker::isSelfSymmetry2DFrozenAxisBoundaryPathSeg(grPathSeg* pathSeg) const {
@@ -122,24 +148,20 @@ bool FlexGRWorker::isSelfSymmetry2DFrozenAxisBoundaryPathSeg(grPathSeg* pathSeg)
   }
 
   auto constraint = net->getSelfSymmetryConstraint();
-  frPoint axisProbe;
-  if (constraint.isAxisHorizontal) {
-    axisProbe.set(routeBox.left(), constraint.axis);
-  } else {
-    axisProbe.set(constraint.axis, routeBox.bottom());
+  auto axisCtx = getWorkerSelfSymmetryAxisContext(design, routeBox,
+                                                  constraint);
+  if (!axisCtx.valid) {
+    return false;
   }
-  frPoint axisGCellLocation;
-  design->getTopBlock()->getGCellIdx(axisProbe, axisGCellLocation);
-  frCoord axisGCellIdx = constraint.isAxisHorizontal ? axisGCellLocation.y() : axisGCellLocation.x();
 
   frPoint bp, ep, bpIdx, epIdx;
   pathSeg->getPoints(bp, ep);
   design->getTopBlock()->getGCellIdx(bp, bpIdx);
   design->getTopBlock()->getGCellIdx(ep, epIdx);
-  auto beginAxisCoord = getAxisCoord(bpIdx, constraint.isAxisHorizontal);
-  auto endAxisCoord = getAxisCoord(epIdx, constraint.isAxisHorizontal);
-  if (std::min(beginAxisCoord, endAxisCoord) > axisGCellIdx ||
-      std::max(beginAxisCoord, endAxisCoord) < axisGCellIdx) {
+  auto beginAxisCoord = axisCtx.axisCoord(bpIdx);
+  auto endAxisCoord = axisCtx.axisCoord(epIdx);
+  if (std::min(beginAxisCoord, endAxisCoord) > axisCtx.axisGCellIdx ||
+      std::max(beginAxisCoord, endAxisCoord) < axisCtx.axisGCellIdx) {
     return false;
   }
 
@@ -152,14 +174,11 @@ bool FlexGRWorker::isSelfSymmetry2DFrozenAxisBoundaryPathSeg(grPathSeg* pathSeg)
     frPoint rootLoc, rootGCellIdx;
     rootNode->getLoc(rootLoc);
     design->getTopBlock()->getGCellIdx(rootLoc, rootGCellIdx);
-    rootSide = getGCellSide(rootGCellIdx, constraint.isAxisHorizontal, axisGCellIdx);
-    if (rootSide == 0) {
-      rootSide = -1;
-    }
+    rootSide = normalizeSelfSymmetryRootSide(axisCtx.sideOfGCell(rootGCellIdx));
   }
 
-  int beginSide = getGCellSide(bpIdx, constraint.isAxisHorizontal, axisGCellIdx);
-  int endSide = getGCellSide(epIdx, constraint.isAxisHorizontal, axisGCellIdx);
+  int beginSide = axisCtx.sideOfGCell(bpIdx);
+  int endSide = axisCtx.sideOfGCell(epIdx);
   return (beginSide == 0 || beginSide == rootSide) &&
          (endSide == 0 || endSide == rootSide);
 }
@@ -190,92 +209,46 @@ bool FlexGRWorker::isSelfSymmetry2DEdgeOnAxis(frNet* net, const FlexMazeIdx &beg
     return false;
   }
   auto constraint = net->getSelfSymmetryConstraint();
-  frPoint axisProbe;
-  if (constraint.isAxisHorizontal) {
-    axisProbe.set(routeBox.left(), constraint.axis);
-  } else {
-    axisProbe.set(constraint.axis, routeBox.bottom());
+  auto axisCtx = getWorkerSelfSymmetryAxisContext(design, routeBox,
+                                                  constraint);
+  if (!axisCtx.valid) {
+    return false;
   }
-  frPoint axisGCellLocation;
-  design->getTopBlock()->getGCellIdx(axisProbe, axisGCellLocation);
-  frCoord axisGCellIdx = constraint.isAxisHorizontal ? axisGCellLocation.y() : axisGCellLocation.x();
   frPoint beginGCellIdx(begin.x() + routeGCellIdxLL.x(), begin.y() + routeGCellIdxLL.y());
   frPoint endGCellIdx(end.x() + routeGCellIdxLL.x(), end.y() + routeGCellIdxLL.y());
-  return getAxisCoord(beginGCellIdx, constraint.isAxisHorizontal) == axisGCellIdx &&
-         getAxisCoord(endGCellIdx, constraint.isAxisHorizontal) == axisGCellIdx;
+  return axisCtx.isAxisEdge(beginGCellIdx, endGCellIdx);
 }
 
 bool FlexGRWorker::getSelfSymmetry2DMirrorEdge(frNet* net, frMIdx x, frMIdx y, frMIdx z,
                                                frDirEnum dir, frMIdx &mirrorX,
                                                frMIdx &mirrorY, frMIdx &mirrorZ,
                                                frDirEnum &mirrorDir) const {
-  if (!isSelfSymmetry2DNet(net) ||
-      (dir != frDirEnum::E && dir != frDirEnum::N &&
-       dir != frDirEnum::S && dir != frDirEnum::W)) {
+  if (!isSelfSymmetry2DNet(net) || !isSelfSymmetryCardinalDir(dir)) {
     return false;
   }
   auto constraint = net->getSelfSymmetryConstraint();
-  frPoint axisProbe;
-  if (constraint.isAxisHorizontal) {
-    axisProbe.set(routeBox.left(), constraint.axis);
-  } else {
-    axisProbe.set(constraint.axis, routeBox.bottom());
+  auto axisCtx = getWorkerSelfSymmetryAxisContext(design, routeBox,
+                                                  constraint);
+  if (!axisCtx.valid) {
+    return false;
   }
-  frPoint axisGCellLocation;
-  design->getTopBlock()->getGCellIdx(axisProbe, axisGCellLocation);
-  frCoord axisGCellIdx = constraint.isAxisHorizontal ? axisGCellLocation.y() : axisGCellLocation.x();
-
   frMIdx x2 = x;
   frMIdx y2 = y;
   frMIdx z2 = z;
-  frDirEnum dir2 = dir;
-  switch (dir) {
-    case frDirEnum::E:
-      ++x2;
-      break;
-    case frDirEnum::W:
-      --x2;
-      break;
-    case frDirEnum::N:
-      ++y2;
-      break;
-    case frDirEnum::S:
-      --y2;
-      break;
-    default:
-      return false;
-  }
+  gridGraph.getNextGrid(x2, y2, z2, dir);
   frPoint beginGCellIdx(x + routeGCellIdxLL.x(), y + routeGCellIdxLL.y());
   frPoint endGCellIdx(x2 + routeGCellIdxLL.x(), y2 + routeGCellIdxLL.y());
-  if (getAxisCoord(beginGCellIdx, constraint.isAxisHorizontal) == axisGCellIdx &&
-      getAxisCoord(endGCellIdx, constraint.isAxisHorizontal) == axisGCellIdx) {
+  auto mirrorEdge = makeSelfSymmetryMirrorEdge(axisCtx, beginGCellIdx,
+                                               endGCellIdx, routeGCellIdxLL,
+                                               routeGCellIdxUR, z);
+  if (mirrorEdge.axisOnly || !mirrorEdge.valid) {
     return false;
   }
 
-  frPoint mirrorBegin = beginGCellIdx;
-  frPoint mirrorEnd = endGCellIdx;
-  if (constraint.isAxisHorizontal) {
-    mirrorBegin.set(beginGCellIdx.x(), axisGCellIdx + (axisGCellIdx - beginGCellIdx.y()));
-    mirrorEnd.set(endGCellIdx.x(), axisGCellIdx + (axisGCellIdx - endGCellIdx.y()));
-  } else {
-    mirrorBegin.set(axisGCellIdx + (axisGCellIdx - beginGCellIdx.x()), beginGCellIdx.y());
-    mirrorEnd.set(axisGCellIdx + (axisGCellIdx - endGCellIdx.x()), endGCellIdx.y());
-  }
-  if (mirrorBegin.x() < routeGCellIdxLL.x() || mirrorBegin.x() > routeGCellIdxUR.x() ||
-      mirrorEnd.x() < routeGCellIdxLL.x() || mirrorEnd.x() > routeGCellIdxUR.x() ||
-      mirrorBegin.y() < routeGCellIdxLL.y() || mirrorBegin.y() > routeGCellIdxUR.y() ||
-      mirrorEnd.y() < routeGCellIdxLL.y() || mirrorEnd.y() > routeGCellIdxUR.y()) {
-    return false;
-  }
-
-  mirrorX = mirrorBegin.x() - routeGCellIdxLL.x();
-  mirrorY = mirrorBegin.y() - routeGCellIdxLL.y();
-  mirrorZ = z;
-  if (mirrorBegin.x() != mirrorEnd.x()) {
-    mirrorDir = mirrorBegin.x() < mirrorEnd.x() ? frDirEnum::E : frDirEnum::W;
-  } else {
-    mirrorDir = mirrorBegin.y() < mirrorEnd.y() ? frDirEnum::N : frDirEnum::S;
-  }
+  mirrorX = mirrorEdge.mirrorX;
+  mirrorY = mirrorEdge.mirrorY;
+  mirrorZ = mirrorEdge.mirrorZ;
+  mirrorDir = mirrorEdge.mirrorDir;
   return true;
 }
 
@@ -320,31 +293,14 @@ int FlexGRWorker::modSelfSymmetry2DPathSegMirrorDemand(grPathSeg* pathSeg, bool 
   pathSeg->getPoints(bp, ep);
   design->getTopBlock()->getGCellIdx(bp, bpIdx);
   design->getTopBlock()->getGCellIdx(ep, epIdx);
-  frPoint axisProbe;
-  if (constraint.isAxisHorizontal) {
-    axisProbe.set(routeBox.left(), constraint.axis);
-  } else {
-    axisProbe.set(constraint.axis, routeBox.bottom());
-  }
-  frPoint axisGCellLocation;
-  design->getTopBlock()->getGCellIdx(axisProbe, axisGCellLocation);
-  frCoord axisGCellIdx = constraint.isAxisHorizontal ? axisGCellLocation.y() : axisGCellLocation.x();
-  if (getAxisCoord(bpIdx, constraint.isAxisHorizontal) == axisGCellIdx &&
-      getAxisCoord(epIdx, constraint.isAxisHorizontal) == axisGCellIdx) {
+  auto axisCtx = getWorkerSelfSymmetryAxisContext(design, routeBox,
+                                                  constraint);
+  if (!axisCtx.valid || axisCtx.isAxisEdge(bpIdx, epIdx)) {
     return 0;
   }
 
-  auto mirrorGCellIdx = [&](const frPoint &gcellIdx) {
-    frPoint mirrored(gcellIdx);
-    if (constraint.isAxisHorizontal) {
-      mirrored.set(gcellIdx.x(), axisGCellIdx + (axisGCellIdx - gcellIdx.y()));
-    } else {
-      mirrored.set(axisGCellIdx + (axisGCellIdx - gcellIdx.x()), gcellIdx.y());
-    }
-    return mirrored;
-  };
-  frPoint mirrorBpIdx = mirrorGCellIdx(bpIdx);
-  frPoint mirrorEpIdx = mirrorGCellIdx(epIdx);
+  frPoint mirrorBpIdx = axisCtx.mirrorGCell(bpIdx);
+  frPoint mirrorEpIdx = axisCtx.mirrorGCell(epIdx);
   if (mirrorBpIdx == mirrorEpIdx) {
     return 0;
   }
@@ -433,31 +389,14 @@ int FlexGRWorker::modSelfSymmetry3DPathSegMirrorDemand(grPathSeg* pathSeg,
   gridGraph.getMazeIdx(bp, lNum, bi);
   gridGraph.getMazeIdx(ep, lNum, ei);
 
-  frPoint axisProbe;
-  if (constraint.isAxisHorizontal) {
-    axisProbe.set(routeBox.left(), constraint.axis);
-  } else {
-    axisProbe.set(constraint.axis, routeBox.bottom());
-  }
-  frPoint axisGCellLocation;
-  design->getTopBlock()->getGCellIdx(axisProbe, axisGCellLocation);
-  frCoord axisGCellIdx = constraint.isAxisHorizontal ? axisGCellLocation.y() : axisGCellLocation.x();
-  if (getAxisCoord(bpIdx, constraint.isAxisHorizontal) == axisGCellIdx &&
-      getAxisCoord(epIdx, constraint.isAxisHorizontal) == axisGCellIdx) {
+  auto axisCtx = getWorkerSelfSymmetryAxisContext(design, routeBox,
+                                                  constraint);
+  if (!axisCtx.valid || axisCtx.isAxisEdge(bpIdx, epIdx)) {
     return 0;
   }
 
-  auto mirrorGCellIdx = [&](const frPoint &gcellIdx) {
-    frPoint mirrored(gcellIdx);
-    if (constraint.isAxisHorizontal) {
-      mirrored.set(gcellIdx.x(), axisGCellIdx + (axisGCellIdx - gcellIdx.y()));
-    } else {
-      mirrored.set(axisGCellIdx + (axisGCellIdx - gcellIdx.x()), gcellIdx.y());
-    }
-    return mirrored;
-  };
-  frPoint mirrorBpIdx = mirrorGCellIdx(bpIdx);
-  frPoint mirrorEpIdx = mirrorGCellIdx(epIdx);
+  frPoint mirrorBpIdx = axisCtx.mirrorGCell(bpIdx);
+  frPoint mirrorEpIdx = axisCtx.mirrorGCell(epIdx);
   if (mirrorBpIdx == mirrorEpIdx) {
     return 0;
   }
@@ -505,129 +444,57 @@ frCost FlexGRWorker::getSelfSymmetry3DGuidedMirrorCost(frNet* net,
                                                        frDirEnum dir) {
   if (!net || !net->getSelfSymmetryConstraintPtr() ||
       !gr->isSelfSymmetry3DGuidedActive(net) ||
-      (dir != frDirEnum::E && dir != frDirEnum::N &&
-       dir != frDirEnum::S && dir != frDirEnum::W)) {
+      !isSelfSymmetryCardinalDir(dir)) {
     return 0;
   }
 
   auto constraint = net->getSelfSymmetryConstraint();
-  frPoint axisProbe;
-  if (constraint.isAxisHorizontal) {
-    axisProbe.set(routeBox.left(), constraint.axis);
-  } else {
-    axisProbe.set(constraint.axis, routeBox.bottom());
-  }
-  frPoint axisGCellLocation;
-  design->getTopBlock()->getGCellIdx(axisProbe, axisGCellLocation);
-  frCoord axisGCellIdx = constraint.isAxisHorizontal ? axisGCellLocation.y() : axisGCellLocation.x();
-
-  frMIdx x2 = x;
-  frMIdx y2 = y;
-  switch (dir) {
-    case frDirEnum::E:
-      ++x2;
-      break;
-    case frDirEnum::W:
-      --x2;
-      break;
-    case frDirEnum::N:
-      ++y2;
-      break;
-    case frDirEnum::S:
-      --y2;
-      break;
-    default:
-      return 0;
-  }
-
-  frPoint beginGCellIdx(x + routeGCellIdxLL.x(), y + routeGCellIdxLL.y());
-  frPoint endGCellIdx(x2 + routeGCellIdxLL.x(), y2 + routeGCellIdxLL.y());
-  if (getAxisCoord(beginGCellIdx, constraint.isAxisHorizontal) == axisGCellIdx &&
-      getAxisCoord(endGCellIdx, constraint.isAxisHorizontal) == axisGCellIdx) {
+  auto axisCtx = getWorkerSelfSymmetryAxisContext(design, routeBox,
+                                                  constraint);
+  if (!axisCtx.valid) {
     return 0;
   }
-
+  frMIdx x2 = x;
+  frMIdx y2 = y;
+  frMIdx z2 = z;
+  gridGraph.getNextGrid(x2, y2, z2, dir);
+  frPoint beginGCellIdx(x + routeGCellIdxLL.x(), y + routeGCellIdxLL.y());
+  frPoint endGCellIdx(x2 + routeGCellIdxLL.x(), y2 + routeGCellIdxLL.y());
   auto edgeLen = max<frCoord>(1, gridGraph.getEdgeLength(x, y, z, dir));
-  unsigned long long invalidPenalty =
-      (unsigned long long)edgeLen *
-      ((unsigned long long)BLOCKCOST * 100 + (unsigned long long)MARKERCOST * 8);
-  auto getInvalidPenalty = [&]() {
-    return saturateSelfSymmetry3DCost(invalidPenalty);
-  };
-
-  frPoint mirrorBegin = beginGCellIdx;
-  frPoint mirrorEnd = endGCellIdx;
-  if (constraint.isAxisHorizontal) {
-    mirrorBegin.set(beginGCellIdx.x(), axisGCellIdx + (axisGCellIdx - beginGCellIdx.y()));
-    mirrorEnd.set(endGCellIdx.x(), axisGCellIdx + (axisGCellIdx - endGCellIdx.y()));
-  } else {
-    mirrorBegin.set(axisGCellIdx + (axisGCellIdx - beginGCellIdx.x()), beginGCellIdx.y());
-    mirrorEnd.set(axisGCellIdx + (axisGCellIdx - endGCellIdx.x()), endGCellIdx.y());
+  auto mirrorEdge = makeSelfSymmetryMirrorEdge(axisCtx, beginGCellIdx,
+                                               endGCellIdx, routeGCellIdxLL,
+                                               routeGCellIdxUR, z, edgeLen);
+  if (mirrorEdge.axisOnly) {
+    return 0;
   }
+  auto getInvalidPenalty = [&]() {
+    return saturateSelfSymmetryCost(mirrorEdge.invalidPenalty);
+  };
 
   frMIdx zDimX = 0;
   frMIdx zDimY = 0;
   frMIdx zDim = 0;
   gridGraph.getDim(zDimX, zDimY, zDim);
-  if (z < 0 || z >= zDim ||
-      mirrorBegin.x() < routeGCellIdxLL.x() || mirrorBegin.x() > routeGCellIdxUR.x() ||
-      mirrorEnd.x() < routeGCellIdxLL.x() || mirrorEnd.x() > routeGCellIdxUR.x() ||
-      mirrorBegin.y() < routeGCellIdxLL.y() || mirrorBegin.y() > routeGCellIdxUR.y() ||
-      mirrorEnd.y() < routeGCellIdxLL.y() || mirrorEnd.y() > routeGCellIdxUR.y()) {
+  if (z < 0 || z >= zDim || !mirrorEdge.valid) {
     return getInvalidPenalty();
   }
 
-  frMIdx mirrorX = mirrorBegin.x() - routeGCellIdxLL.x();
-  frMIdx mirrorY = mirrorBegin.y() - routeGCellIdxLL.y();
-  frDirEnum mirrorDir = frDirEnum::UNKNOWN;
-  if (mirrorBegin.x() != mirrorEnd.x()) {
-    mirrorDir = mirrorBegin.x() < mirrorEnd.x() ? frDirEnum::E : frDirEnum::W;
-  } else if (mirrorBegin.y() != mirrorEnd.y()) {
-    mirrorDir = mirrorBegin.y() < mirrorEnd.y() ? frDirEnum::N : frDirEnum::S;
-  } else {
-    return getInvalidPenalty();
-  }
-
-  frMIdx tmpMirrorX = mirrorX;
-  frMIdx tmpMirrorY = mirrorY;
-  frMIdx tmpMirrorZ = z;
-  frDirEnum tmpMirrorDir = mirrorDir;
-  if (tmpMirrorDir == frDirEnum::W) {
-    --tmpMirrorX;
-    tmpMirrorDir = frDirEnum::E;
-  } else if (tmpMirrorDir == frDirEnum::S) {
-    --tmpMirrorY;
-    tmpMirrorDir = frDirEnum::N;
-  }
+  frMIdx tmpMirrorX = mirrorEdge.mirrorX;
+  frMIdx tmpMirrorY = mirrorEdge.mirrorY;
+  frMIdx tmpMirrorZ = mirrorEdge.mirrorZ;
+  frDirEnum tmpMirrorDir = mirrorEdge.mirrorDir;
+  gridGraph.correct(tmpMirrorX, tmpMirrorY, tmpMirrorZ, tmpMirrorDir);
   if (tmpMirrorX < 0 || tmpMirrorY < 0 ||
       tmpMirrorX >= zDimX || tmpMirrorY >= zDimY) {
     return getInvalidPenalty();
   }
 
-  unsigned mirrorRawDemand = gridGraph.getRawDemand(tmpMirrorX, tmpMirrorY,
-                                                    tmpMirrorZ, tmpMirrorDir);
-  unsigned mirrorRawSupply = gridGraph.getRawSupply(tmpMirrorX, tmpMirrorY,
-                                                    tmpMirrorZ, tmpMirrorDir);
-  bool mirrorOverflowCost = mirrorRawDemand >= mirrorRawSupply * getCongThresh();
   unsigned long long mirrorCost =
-      (unsigned long long)(gridGraph.getCongCost(mirrorRawDemand,
-                                                 mirrorRawSupply * getCongThresh()) *
-                           edgeLen);
-  auto histCost = gridGraph.getHistoryCost(tmpMirrorX, tmpMirrorY, tmpMirrorZ);
-  if (histCost) {
-    mirrorCost +=
-        (unsigned long long)(4 * gridGraph.getCongCost(mirrorRawDemand,
-                                                       mirrorRawSupply * getCongThresh()) *
-                             histCost * edgeLen);
-  }
-  if (gridGraph.hasBlock(tmpMirrorX, tmpMirrorY, tmpMirrorZ, tmpMirrorDir)) {
-    mirrorCost += (unsigned long long)BLOCKCOST * edgeLen * 100;
-  }
-  if (mirrorOverflowCost) {
-    mirrorCost += (unsigned long long)128 * edgeLen;
-  }
+      computeGuidedMirrorCongestionCost(gridGraph, tmpMirrorX, tmpMirrorY,
+                                        tmpMirrorZ, tmpMirrorDir, edgeLen,
+                                        getCongThresh());
 
-  return saturateSelfSymmetry3DCost(mirrorCost);
+  return saturateSelfSymmetryCost(mirrorCost);
 }
 
 bool FlexGRWorker::hasSelfSymmetry2DAxisContact(grNet* net) const {
@@ -635,19 +502,15 @@ bool FlexGRWorker::hasSelfSymmetry2DAxisContact(grNet* net) const {
     return false;
   }
   auto constraint = net->getFrNet()->getSelfSymmetryConstraint();
-  frPoint axisProbe;
-  if (constraint.isAxisHorizontal) {
-    axisProbe.set(routeBox.left(), constraint.axis);
-  } else {
-    axisProbe.set(constraint.axis, routeBox.bottom());
+  auto axisCtx = getWorkerSelfSymmetryAxisContext(design, routeBox,
+                                                  constraint);
+  if (!axisCtx.valid) {
+    return false;
   }
-  frPoint axisGCellLocation;
-  design->getTopBlock()->getGCellIdx(axisProbe, axisGCellLocation);
-  frCoord axisGCellIdx = constraint.isAxisHorizontal ? axisGCellLocation.y() : axisGCellLocation.x();
   for (auto &node: net->getNodes()) {
     frPoint gcellIdx;
     design->getTopBlock()->getGCellIdx(node->getLoc(), gcellIdx);
-    if (getAxisCoord(gcellIdx, constraint.isAxisHorizontal) == axisGCellIdx &&
+    if (axisCtx.axisCoord(gcellIdx) == axisCtx.axisGCellIdx &&
         (node->hasParent() || node->hasChildren())) {
       return true;
     }
@@ -687,15 +550,11 @@ void FlexGRWorker::routeNet_addSelfSymmetry2DAxisEndpoint(
   }
 
   auto constraint = net->getFrNet()->getSelfSymmetryConstraint();
-  frPoint axisProbe;
-  if (constraint.isAxisHorizontal) {
-    axisProbe.set(routeBox.left(), constraint.axis);
-  } else {
-    axisProbe.set(constraint.axis, routeBox.bottom());
+  auto axisCtx = getWorkerSelfSymmetryAxisContext(design, routeBox,
+                                                  constraint);
+  if (!axisCtx.valid) {
+    return;
   }
-  frPoint axisGCellLocation;
-  design->getTopBlock()->getGCellIdx(axisProbe, axisGCellLocation);
-  frCoord axisGCellIdx = constraint.isAxisHorizontal ? axisGCellLocation.y() : axisGCellLocation.x();
 
   frPoint rootGCellIdx = routeGCellIdxLL;
   if (!net->getPinGCellNodes().empty()) {
@@ -704,9 +563,9 @@ void FlexGRWorker::routeNet_addSelfSymmetry2DAxisEndpoint(
   frPoint dstGCellIdx = rootGCellIdx;
   if (constraint.isAxisHorizontal) {
     dstGCellIdx.set(std::max(routeGCellIdxLL.x(), std::min(routeGCellIdxUR.x(), rootGCellIdx.x())),
-                    axisGCellIdx);
+                    axisCtx.axisGCellIdx);
   } else {
-    dstGCellIdx.set(axisGCellIdx,
+    dstGCellIdx.set(axisCtx.axisGCellIdx,
                     std::max(routeGCellIdxLL.y(), std::min(routeGCellIdxUR.y(), rootGCellIdx.y())));
   }
   FlexMazeIdx mi(dstGCellIdx.x() - routeGCellIdxLL.x(),
@@ -733,7 +592,8 @@ void FlexGRWorker::routeNet_addSelfSymmetry2DAxisEndpoint(
 
 void FlexGRWorker::printSelfSymmetry2DDebug(grNet* net, bool mustTouchAxis,
                                             bool axisContactAfter) const {
-  if (!net || !net->getFrNet() || net->getFrNet()->getName() != "Symmtry5" ||
+  if (!net || !net->getFrNet() ||
+      !SelfSymmetryDebug::isDebugNet(net->getFrNet()) ||
       !isSelfSymmetry2DNet(net->getFrNet()) || !is2DRouting) {
     return;
   }
