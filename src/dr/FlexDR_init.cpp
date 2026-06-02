@@ -2675,6 +2675,7 @@ void FlexDRWorker::initTrackCoords(map<frCoord, map<frLayerNum, frTrackPattern*>
   for (auto &net: nets) {
     initTrackCoords_route(net.get(), xMap, yMap);
     initTrackCoords_pin(net.get(), xMap, yMap);
+    initTrackCoords_selfSymmetryAxis(net->getFrNet(), xMap, yMap);
   }
 }
 

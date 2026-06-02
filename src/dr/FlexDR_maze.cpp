@@ -3804,6 +3804,11 @@ void FlexDRWorker::routeNet_prepAreaMap(drNet* net, map<FlexMazeIdx, frCoord> &a
 bool FlexDRWorker::routeNet(drNet* net) {
   //bool enableOutput = true;
   bool enableOutput = false;
+  if (net && net->getFrNet() &&
+      net->getFrNet()->getSelfSymmetryConstraintPtr() != nullptr &&
+      getFixMode() == 9) {
+    return routeNet_selfSymmetry(net);
+  }
   if (net->getPins().size() <= 1) {
     return true;
   }

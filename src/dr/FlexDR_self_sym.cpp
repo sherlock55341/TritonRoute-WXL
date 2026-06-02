@@ -31,6 +31,7 @@
 #include "db/obj/frTerm.h"
 
 #include <algorithm>
+#include <limits>
 #include <sstream>
 #include <tuple>
 
@@ -113,6 +114,25 @@ namespace {
                                      const SelfSymmetryDRSegmentRecord &record) {
     return isSelfSymmetryDRPointOnAxis(constraint, record.begin) &&
            isSelfSymmetryDRPointOnAxis(constraint, record.end);
+  }
+
+  bool selfSymmetryDRSegmentTouchesAxis(
+      const frSelfSymmetryConstraint &constraint,
+      const SelfSymmetryDRSegmentRecord &record) {
+    if (constraint.isAxisHorizontal) {
+      if (record.begin.y() == constraint.axis || record.end.y() == constraint.axis) {
+        return true;
+      }
+      return record.begin.x() == record.end.x() &&
+             min(record.begin.y(), record.end.y()) <= constraint.axis &&
+             max(record.begin.y(), record.end.y()) >= constraint.axis;
+    }
+    if (record.begin.x() == constraint.axis || record.end.x() == constraint.axis) {
+      return true;
+    }
+    return record.begin.y() == record.end.y() &&
+           min(record.begin.x(), record.end.x()) <= constraint.axis &&
+           max(record.begin.x(), record.end.x()) >= constraint.axis;
   }
 
   SelfSymmetryDRSegmentRecord getSelfSymmetryDRMirrorSegment(
@@ -321,6 +341,849 @@ namespace {
     }
     return duplicates;
   }
+
+  bool hasSelfSymmetryDRAxisContact(
+      const frSelfSymmetryConstraint &constraint,
+      const multiset<SelfSymmetryDRSegmentRecord> &segments,
+      const multiset<SelfSymmetryDRViaRecord> &vias) {
+    for (auto &segment: segments) {
+      if (selfSymmetryDRSegmentTouchesAxis(constraint, segment)) {
+        return true;
+      }
+    }
+    for (auto &via: vias) {
+      if (isSelfSymmetryDRPointOnAxis(constraint, via.origin)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  long long selfSymmetryDRAbsDiff(frCoord lhs, frCoord rhs) {
+    return lhs >= rhs ? (long long)(lhs - rhs) : (long long)(rhs - lhs);
+  }
+
+  int selfSymmetryDRSideOfCoord(frCoord coord, frCoord axis) {
+    if (coord < axis) {
+      return -1;
+    }
+    if (coord > axis) {
+      return 1;
+    }
+    return 0;
+  }
+
+  int normalizeSelfSymmetryDRRootSide(int side) {
+    return side == 0 ? -1 : side;
+  }
+
+  bool isSelfSymmetryDRTrackForAxis(frTrackPattern *trackPattern,
+                                    bool isAxisHorizontal) {
+    if (trackPattern == nullptr) {
+      return false;
+    }
+    return isAxisHorizontal ? !trackPattern->isHorizontal()
+                            : trackPattern->isHorizontal();
+  }
+
+  bool findNearestSelfSymmetryDRTrack(frDesign *design,
+                                      bool isAxisHorizontal,
+                                      frCoord axis,
+                                      const frBox *preferredBox,
+                                      frCoord &trackCoord,
+                                      frLayerNum *layerNum = nullptr,
+                                      frTrackPattern **trackPattern = nullptr) {
+    auto block = design ? design->getTopBlock() : nullptr;
+    if (block == nullptr) {
+      return false;
+    }
+
+    bool found = false;
+    long long bestDist = numeric_limits<long long>::max();
+    frCoord bestCoord = axis;
+    frLayerNum bestLayerNum = 0;
+    frTrackPattern *bestTrackPattern = nullptr;
+    for (auto &layer: design->getTech()->getLayers()) {
+      if (layer->getType() != frLayerTypeEnum::ROUTING) {
+        continue;
+      }
+      auto currLayerNum = layer->getLayerNum();
+      for (auto &uTrackPattern: block->getTrackPatterns(currLayerNum)) {
+        auto tp = uTrackPattern.get();
+        if (!isSelfSymmetryDRTrackForAxis(tp, isAxisHorizontal) ||
+            tp->getNumTracks() == 0 || tp->getTrackSpacing() == 0) {
+          continue;
+        }
+
+        int minTrackNum = 0;
+        int maxTrackNum = (int)tp->getNumTracks() - 1;
+        if (preferredBox != nullptr) {
+          auto low = isAxisHorizontal ? preferredBox->bottom()
+                                      : preferredBox->left();
+          auto high = isAxisHorizontal ? preferredBox->top()
+                                       : preferredBox->right();
+          minTrackNum = (low - tp->getStartCoord()) / (int)tp->getTrackSpacing();
+          if (minTrackNum < 0) {
+            minTrackNum = 0;
+          }
+          if (minTrackNum * (int)tp->getTrackSpacing() + tp->getStartCoord() < low) {
+            ++minTrackNum;
+          }
+          maxTrackNum = (high - tp->getStartCoord()) / (int)tp->getTrackSpacing();
+          if (maxTrackNum >= (int)tp->getNumTracks()) {
+            maxTrackNum = (int)tp->getNumTracks() - 1;
+          }
+          if (maxTrackNum * (int)tp->getTrackSpacing() + tp->getStartCoord() > high) {
+            --maxTrackNum;
+          }
+          if (minTrackNum > maxTrackNum) {
+            continue;
+          }
+        }
+
+        int nearestTrackNum = (axis - tp->getStartCoord()) /
+                              (int)tp->getTrackSpacing();
+        nearestTrackNum = max(minTrackNum, min(maxTrackNum, nearestTrackNum));
+        for (int delta = -1; delta <= 1; ++delta) {
+          int trackNum = nearestTrackNum + delta;
+          if (trackNum < minTrackNum || trackNum > maxTrackNum) {
+            continue;
+          }
+          auto currCoord = trackNum * (int)tp->getTrackSpacing() +
+                           tp->getStartCoord();
+          auto currDist = selfSymmetryDRAbsDiff(currCoord, axis);
+          if (!found || currDist < bestDist ||
+              (currDist == bestDist && currCoord < bestCoord)) {
+            found = true;
+            bestDist = currDist;
+            bestCoord = currCoord;
+            bestLayerNum = currLayerNum;
+            bestTrackPattern = tp;
+          }
+        }
+      }
+    }
+
+    if (!found) {
+      return false;
+    }
+    trackCoord = bestCoord;
+    if (layerNum != nullptr) {
+      *layerNum = bestLayerNum;
+    }
+    if (trackPattern != nullptr) {
+      *trackPattern = bestTrackPattern;
+    }
+    return true;
+  }
+
+  frSelfSymmetryConstraint makeEffectiveSelfSymmetryDRConstraint(
+      const frSelfSymmetryConstraint &constraint,
+      frCoord effectiveAxis) {
+    auto effectiveConstraint = constraint;
+    effectiveConstraint.axis = effectiveAxis;
+    return effectiveConstraint;
+  }
+
+  tuple<frMIdx, frMIdx, frMIdx, int> selfSymmetryDREdgeKey(
+      frMIdx x,
+      frMIdx y,
+      frMIdx z,
+      frDirEnum dir) {
+    switch (dir) {
+      case frDirEnum::W:
+        --x;
+        dir = frDirEnum::E;
+        break;
+      case frDirEnum::S:
+        --y;
+        dir = frDirEnum::N;
+        break;
+      case frDirEnum::D:
+        --z;
+        dir = frDirEnum::U;
+        break;
+      default:
+        ;
+    }
+    return make_tuple(x, y, z, (int)dir);
+  }
+
+  void selfSymmetryDRGetNextGrid(frMIdx &x, frMIdx &y, frMIdx &z,
+                                 frDirEnum dir) {
+    switch (dir) {
+      case frDirEnum::E:
+        ++x;
+        break;
+      case frDirEnum::S:
+        --y;
+        break;
+      case frDirEnum::W:
+        --x;
+        break;
+      case frDirEnum::N:
+        ++y;
+        break;
+      case frDirEnum::U:
+        ++z;
+        break;
+      case frDirEnum::D:
+        --z;
+        break;
+      default:
+        ;
+    }
+  }
+
+  bool selfSymmetryDRPointOnEffectiveAxis(
+      const FlexDRWorker::SelfSymmetryDRAxisContext &ctx,
+      const frPoint &point) {
+    return ctx.isAxisHorizontal ? point.y() == ctx.effectiveAxis
+                                : point.x() == ctx.effectiveAxis;
+  }
+
+  int selfSymmetryDRSideOfPoint(
+      const FlexDRWorker::SelfSymmetryDRAxisContext &ctx,
+      const frPoint &point) {
+    return ctx.isAxisHorizontal ?
+           selfSymmetryDRSideOfCoord(point.y(), ctx.effectiveAxis) :
+           selfSymmetryDRSideOfCoord(point.x(), ctx.effectiveAxis);
+  }
+
+  frPoint selfSymmetryDRMirrorPoint(
+      const FlexDRWorker::SelfSymmetryDRAxisContext &ctx,
+      const frPoint &point) {
+    frPoint mirrorPoint(point);
+    if (ctx.isAxisHorizontal) {
+      mirrorPoint.set(point.x(),
+                      ctx.effectiveAxis + (ctx.effectiveAxis - point.y()));
+    } else {
+      mirrorPoint.set(ctx.effectiveAxis + (ctx.effectiveAxis - point.x()),
+                      point.y());
+    }
+    return mirrorPoint;
+  }
+
+}
+
+FlexDRWorker::SelfSymmetryDRRouteContext&
+FlexDRWorker::initSelfSymmetryDRRoutingContext(frNet* net) {
+  auto &ctx = selfSymmetryDRRouteContexts[net];
+  ctx = SelfSymmetryDRRouteContext();
+  selfSymmetryDRActiveNet = net;
+  return ctx;
+}
+
+void FlexDRWorker::deactivateSelfSymmetryDRRoutingContext() {
+  selfSymmetryDRActiveNet = nullptr;
+}
+
+void FlexDRWorker::initSelfSymmetryDRAxisContext(
+    frNet* net,
+    SelfSymmetryDRRouteContext &routeCtx) {
+  routeCtx.axis = SelfSymmetryDRAxisContext();
+  if (net == nullptr || net->getSelfSymmetryConstraintPtr() == nullptr) {
+    return;
+  }
+  auto constraint = net->getSelfSymmetryConstraint();
+  auto &ctx = routeCtx.axis;
+  ctx.valid = true;
+  ctx.isAxisHorizontal = constraint.isAxisHorizontal;
+  ctx.originalAxis = constraint.axis;
+  ctx.effectiveAxis = constraint.axis;
+
+  frCoord snappedAxis = constraint.axis;
+  bool foundPreferredTrack = false;
+  bool axisInExtBox = constraint.isAxisHorizontal ?
+                      constraint.axis >= extBox.bottom() &&
+                      constraint.axis <= extBox.top() :
+                      constraint.axis >= extBox.left() &&
+                      constraint.axis <= extBox.right();
+  if (axisInExtBox) {
+    foundPreferredTrack = findNearestSelfSymmetryDRTrack(design,
+                                                         constraint.isAxisHorizontal,
+                                                         constraint.axis,
+                                                         &extBox,
+                                                         snappedAxis);
+  }
+  bool foundTrack = foundPreferredTrack ||
+                    findNearestSelfSymmetryDRTrack(design,
+                                                   constraint.isAxisHorizontal,
+                                                   constraint.axis,
+                                                   nullptr,
+                                                   snappedAxis);
+  if (foundTrack) {
+    ctx.effectiveAxis = snappedAxis;
+  } else {
+    ctx.axisSnapFailed = true;
+  }
+  ctx.axisSnapDelta = ctx.effectiveAxis - ctx.originalAxis;
+  ctx.axisInRouteBox = constraint.isAxisHorizontal ?
+                       ctx.effectiveAxis >= routeBox.bottom() &&
+                       ctx.effectiveAxis <= routeBox.top() :
+                       ctx.effectiveAxis >= routeBox.left() &&
+                       ctx.effectiveAxis <= routeBox.right();
+
+  if (constraint.isAxisHorizontal) {
+    if (gridGraph.hasMazeYIdx(ctx.effectiveAxis)) {
+      ctx.axisMazeIdx = gridGraph.getMazeYIdx(ctx.effectiveAxis);
+    }
+  } else {
+    if (gridGraph.hasMazeXIdx(ctx.effectiveAxis)) {
+      ctx.axisMazeIdx = gridGraph.getMazeXIdx(ctx.effectiveAxis);
+    }
+  }
+
+  frNode *rootNode = net->getRootGCellNode();
+  if (rootNode == nullptr) {
+    rootNode = net->getRoot();
+  }
+  if (rootNode != nullptr) {
+    frPoint rootLoc;
+    rootNode->getLoc(rootLoc);
+    ctx.rootSide =
+        normalizeSelfSymmetryDRRootSide(selfSymmetryDRSideOfPoint(ctx, rootLoc));
+  } else {
+    ctx.rootSide = -1;
+  }
+}
+
+void FlexDRWorker::initTrackCoords_selfSymmetryAxis(
+    frNet* net,
+    map<frCoord, map<frLayerNum, frTrackPattern*> > &xMap,
+    map<frCoord, map<frLayerNum, frTrackPattern*> > &yMap) {
+  if (net == nullptr || net->getSelfSymmetryConstraintPtr() == nullptr) {
+    return;
+  }
+  auto constraint = net->getSelfSymmetryConstraint();
+  frCoord snappedAxis = constraint.axis;
+  frLayerNum layerNum = 0;
+  frTrackPattern *trackPattern = nullptr;
+  if (!findNearestSelfSymmetryDRTrack(design, constraint.isAxisHorizontal,
+                                      constraint.axis, &extBox, snappedAxis,
+                                      &layerNum, &trackPattern)) {
+    return;
+  }
+  if (constraint.isAxisHorizontal) {
+    yMap[snappedAxis][layerNum] = trackPattern;
+  } else {
+    xMap[snappedAxis][layerNum] = trackPattern;
+  }
+}
+
+bool FlexDRWorker::hasSelfSymmetryDRAxisContact(
+    const SelfSymmetryDRRouteContext &ctx,
+    const vector<FlexMazeIdx> &connComps) const {
+  auto &axis = ctx.axis;
+  if (!axis.valid || axis.axisMazeIdx < 0) {
+    return false;
+  }
+  for (auto &mi: connComps) {
+    if (axis.isAxisHorizontal) {
+      if (mi.y() == axis.axisMazeIdx) {
+        return true;
+      }
+    } else if (mi.x() == axis.axisMazeIdx) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void FlexDRWorker::collectSelfSymmetryDRAxisCandidates(
+    const SelfSymmetryDRRouteContext &ctx,
+    vector<FlexMazeIdx> &candidates) const {
+  candidates.clear();
+  auto &axis = ctx.axis;
+  if (!axis.valid || axis.axisMazeIdx < 0) {
+    return;
+  }
+  frMIdx xDim, yDim, zDim;
+  gridGraph.getDim(xDim, yDim, zDim);
+  if (axis.isAxisHorizontal) {
+    auto y = axis.axisMazeIdx;
+    if (y < 0 || y >= yDim) {
+      return;
+    }
+    for (frMIdx x = 0; x < xDim; ++x) {
+      for (frMIdx z = 0; z < zDim; ++z) {
+        candidates.push_back(FlexMazeIdx(x, y, z));
+      }
+    }
+  } else {
+    auto x = axis.axisMazeIdx;
+    if (x < 0 || x >= xDim) {
+      return;
+    }
+    for (frMIdx y = 0; y < yDim; ++y) {
+      for (frMIdx z = 0; z < zDim; ++z) {
+        candidates.push_back(FlexMazeIdx(x, y, z));
+      }
+    }
+  }
+}
+
+int FlexDRWorker::collectSelfSymmetryDRAxisSources(
+    const vector<FlexMazeIdx> &connComps,
+    const SelfSymmetryDRRouteContext &ctx,
+    vector<FlexMazeIdx> &axisSources) const {
+  axisSources.clear();
+  set<FlexMazeIdx> uniqueSources;
+  auto &axis = ctx.axis;
+  if (!axis.valid || axis.axisMazeIdx < 0) {
+    return 0;
+  }
+  for (auto &mi: connComps) {
+    bool onAxis = axis.isAxisHorizontal ?
+                  mi.y() == axis.axisMazeIdx :
+                  mi.x() == axis.axisMazeIdx;
+    if (onAxis && uniqueSources.insert(mi).second) {
+      axisSources.push_back(mi);
+    }
+  }
+  return axisSources.size();
+}
+
+void FlexDRWorker::buildSelfSymmetryDRMirrorGuides(
+    drNet* net,
+    SelfSymmetryDRRouteContext &ctx) {
+  ctx.mirrorRewardEdges.clear();
+  ctx.mirrorGuidesGenerated = 0;
+  if (net == nullptr || !ctx.axis.valid) {
+    return;
+  }
+
+  auto addMirrorRewardEdge = [&](const FlexMazeIdx &begin,
+                                 const FlexMazeIdx &end) {
+    if (begin == end) {
+      return;
+    }
+    auto lNum = gridGraph.getLayerNum(begin.z());
+    frPoint beginPoint, endPoint;
+    gridGraph.getPoint(beginPoint, begin.x(), begin.y());
+    gridGraph.getPoint(endPoint, end.x(), end.y());
+    if (selfSymmetryDRPointOnEffectiveAxis(ctx.axis, beginPoint) &&
+        selfSymmetryDRPointOnEffectiveAxis(ctx.axis, endPoint)) {
+      return;
+    }
+    auto mirrorBeginPoint = selfSymmetryDRMirrorPoint(ctx.axis,
+                                                      beginPoint);
+    auto mirrorEndPoint = selfSymmetryDRMirrorPoint(ctx.axis,
+                                                    endPoint);
+    if (!gridGraph.hasMazeIdx(mirrorBeginPoint, lNum) ||
+        !gridGraph.hasMazeIdx(mirrorEndPoint, lNum)) {
+      ++ctx.mirrorGuideMisses;
+      return;
+    }
+    FlexMazeIdx mirrorBegin, mirrorEnd;
+    gridGraph.getMazeIdx(mirrorBegin, mirrorBeginPoint, lNum);
+    gridGraph.getMazeIdx(mirrorEnd, mirrorEndPoint, lNum);
+    frDirEnum dir = frDirEnum::UNKNOWN;
+    if (mirrorBegin.x() != mirrorEnd.x() &&
+        mirrorBegin.y() == mirrorEnd.y() &&
+        mirrorBegin.z() == mirrorEnd.z()) {
+      dir = mirrorBegin.x() < mirrorEnd.x() ? frDirEnum::E : frDirEnum::W;
+    } else if (mirrorBegin.y() != mirrorEnd.y() &&
+               mirrorBegin.x() == mirrorEnd.x() &&
+               mirrorBegin.z() == mirrorEnd.z()) {
+      dir = mirrorBegin.y() < mirrorEnd.y() ? frDirEnum::N : frDirEnum::S;
+    } else {
+      ++ctx.mirrorGuideMisses;
+      return;
+    }
+    auto key = selfSymmetryDREdgeKey(mirrorBegin.x(), mirrorBegin.y(),
+                                     mirrorBegin.z(), dir);
+    if (ctx.mirrorRewardEdges.insert(key).second) {
+      ++ctx.mirrorGuidesGenerated;
+    }
+  };
+
+  for (auto &uConnFig: net->getRouteConnFigs()) {
+    if (uConnFig->typeId() == drcPathSeg) {
+      FlexMazeIdx begin, end;
+      static_cast<drPathSeg*>(uConnFig.get())->getMazeIdx(begin, end);
+      if (begin.z() != end.z()) {
+        continue;
+      }
+      if (begin.x() != end.x()) {
+        auto y = begin.y();
+        auto z = begin.z();
+        for (auto x = min(begin.x(), end.x()); x < max(begin.x(), end.x()); ++x) {
+          addMirrorRewardEdge(FlexMazeIdx(x, y, z), FlexMazeIdx(x + 1, y, z));
+        }
+      } else if (begin.y() != end.y()) {
+        auto x = begin.x();
+        auto z = begin.z();
+        for (auto y = min(begin.y(), end.y()); y < max(begin.y(), end.y()); ++y) {
+          addMirrorRewardEdge(FlexMazeIdx(x, y, z), FlexMazeIdx(x, y + 1, z));
+        }
+      }
+    } else if (uConnFig->typeId() == drcVia) {
+      auto via = static_cast<drVia*>(uConnFig.get());
+      frPoint origin;
+      via->getOrigin(origin);
+      if (selfSymmetryDRPointOnEffectiveAxis(ctx.axis, origin)) {
+        continue;
+      }
+      auto mirrorOrigin = selfSymmetryDRMirrorPoint(ctx.axis,
+                                                    origin);
+      auto lNum = via->getViaDef()->getLayer1Num();
+      if (!gridGraph.hasMazeIdx(mirrorOrigin, lNum)) {
+        ++ctx.mirrorGuideMisses;
+        continue;
+      }
+      FlexMazeIdx mirrorIdx;
+      gridGraph.getMazeIdx(mirrorIdx, mirrorOrigin, lNum);
+      if (ctx.mirrorRewardEdges.insert(
+              selfSymmetryDREdgeKey(mirrorIdx.x(), mirrorIdx.y(),
+                                    mirrorIdx.z(), frDirEnum::U)).second) {
+        ++ctx.mirrorGuidesGenerated;
+      }
+    }
+  }
+}
+
+frCost FlexDRWorker::getSelfSymmetryDRCost(frMIdx x,
+                                           frMIdx y,
+                                           frMIdx z,
+                                           frDirEnum dir,
+                                           bool hasGuide) {
+  if (selfSymmetryDRActiveNet == nullptr) {
+    return 0;
+  }
+  auto contextIt = selfSymmetryDRRouteContexts.find(selfSymmetryDRActiveNet);
+  if (contextIt == selfSymmetryDRRouteContexts.end()) {
+    return 0;
+  }
+  auto &ctx = contextIt->second;
+  auto &axis = ctx.axis;
+  if (!axis.valid || ctx.routeMode == SelfSymmetryDRRouteMode::None) {
+    return 0;
+  }
+
+  auto edgeLen = gridGraph.getEdgeLength(x, y, z, dir);
+  if (edgeLen <= 0) {
+    edgeLen = 1;
+  }
+
+  if (ctx.routeMode == SelfSymmetryDRRouteMode::Mirror) {
+    auto key = selfSymmetryDREdgeKey(x, y, z, dir);
+    if (ctx.mirrorRewardEdges.find(key) != ctx.mirrorRewardEdges.end()) {
+      ++ctx.mirrorGuideHits;
+      return 0;
+    }
+    auto missMultiplier = max(1u, min((unsigned)(4 * GUIDECOST),
+                                      workerDRCCost > 0 ? workerDRCCost - 1 : 1));
+    ++ctx.mirrorGuideMisses;
+    return (hasGuide ? GUIDECOST : missMultiplier) * edgeLen;
+  }
+
+  if (dir == frDirEnum::U || dir == frDirEnum::D) {
+    return 0;
+  }
+
+  frMIdx nextX = x;
+  frMIdx nextY = y;
+  frMIdx nextZ = z;
+  selfSymmetryDRGetNextGrid(nextX, nextY, nextZ, dir);
+  frPoint beginPoint, endPoint;
+  gridGraph.getPoint(beginPoint, x, y);
+  gridGraph.getPoint(endPoint, nextX, nextY);
+  auto beginSide = selfSymmetryDRSideOfPoint(axis, beginPoint);
+  auto endSide = selfSymmetryDRSideOfPoint(axis, endPoint);
+  auto beginDist = axis.isAxisHorizontal ?
+                   selfSymmetryDRAbsDiff(beginPoint.y(),
+                                         axis.effectiveAxis) :
+                   selfSymmetryDRAbsDiff(beginPoint.x(),
+                                         axis.effectiveAxis);
+  auto endDist = axis.isAxisHorizontal ?
+                 selfSymmetryDRAbsDiff(endPoint.y(),
+                                       axis.effectiveAxis) :
+                 selfSymmetryDRAbsDiff(endPoint.x(),
+                                       axis.effectiveAxis);
+
+  unsigned multiplier = 0;
+  bool mirrorSide = (beginSide != 0 && beginSide != axis.rootSide) ||
+                    (endSide != 0 && endSide != axis.rootSide);
+  if (beginDist == 0 && endDist == 0) {
+    multiplier = 0;
+  } else if (mirrorSide || endDist > beginDist) {
+    multiplier = workerDRCCost > 0 ? workerDRCCost - 1 : 1;
+  } else if (endDist < beginDist) {
+    multiplier = ctx.routeMode == SelfSymmetryDRRouteMode::AxisLink ? 0 : 1;
+  } else {
+    multiplier = ctx.routeMode == SelfSymmetryDRRouteMode::AxisLink ? 1 : 3;
+  }
+
+  auto cost = (frCost)(multiplier * edgeLen);
+  ++ctx.axisAttractEdges;
+  ctx.axisAttractCostTotal += cost;
+  return cost;
+}
+
+void FlexDRWorker::printSelfSymmetryDRRouteDebug(
+    drNet* net,
+    const SelfSymmetryDRRouteContext &ctx) const {
+  if (net == nullptr || net->getFrNet() == nullptr ||
+      net->getFrNet()->getSelfSymmetryConstraintPtr() == nullptr) {
+    return;
+  }
+  auto &axis = ctx.axis;
+  stringstream ss;
+  ss << "@@@ self-symmetry dr m3 route @@@\n";
+  ss << "net: " << net->getFrNet()->getName() << "\n";
+  ss << "original_axis: " << axis.originalAxis << "\n";
+  ss << "effective_axis: " << axis.effectiveAxis << "\n";
+  ss << "axis_snap_delta: " << axis.axisSnapDelta << "\n";
+  ss << "axis_snap_failed: "
+     << (axis.axisSnapFailed ? 1 : 0) << "\n";
+  ss << "root_side: " << axis.rootSide << "\n";
+  ss << "axis_in_route_box: "
+     << (axis.axisInRouteBox ? 1 : 0) << "\n";
+  ss << "axis_attract_edges: " << ctx.axisAttractEdges << "\n";
+  ss << "axis_attract_cost_total: "
+     << ctx.axisAttractCostTotal << "\n";
+  ss << "lead_axis_contact_before_link: "
+     << (ctx.leadAxisContactBeforeLink ? 1 : 0) << "\n";
+  ss << "lead_axis_link_searches: "
+     << ctx.leadAxisLinkSearches << "\n";
+  ss << "lead_axis_contact_after_link: "
+     << (ctx.leadAxisContactAfterLink ? 1 : 0) << "\n";
+  ss << "mirror_guides_generated: "
+     << ctx.mirrorGuidesGenerated << "\n";
+  ss << "mirror_guide_hits: " << ctx.mirrorGuideHits << "\n";
+  ss << "mirror_guide_misses: " << ctx.mirrorGuideMisses << "\n";
+  ss << "mirror_axis_source_count: "
+     << ctx.mirrorAxisSourceCount << "\n";
+  ss << "@@@ end self-symmetry dr m3 route @@@\n";
+#pragma omp critical(self_symmetry_dr_m3_log)
+  {
+    cout << ss.str() << flush;
+  }
+}
+
+bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
+  if (net == nullptr || net->getFrNet() == nullptr ||
+      net->getFrNet()->getSelfSymmetryConstraintPtr() == nullptr) {
+    return true;
+  }
+  if (net->getPins().size() <= 1) {
+    return true;
+  }
+
+  auto &ctx = initSelfSymmetryDRRoutingContext(net->getFrNet());
+  initSelfSymmetryDRAxisContext(net->getFrNet(), ctx);
+  ctx.routeMode = SelfSymmetryDRRouteMode::Lead;
+
+  vector<drPin*> leadPins;
+  vector<drPin*> mirrorPins;
+  auto rootNode = net->getFrNet()->getRoot();
+  auto rootPin = rootNode ? rootNode->getPin() : nullptr;
+  for (auto &uPin: net->getPins()) {
+    auto pin = uPin.get();
+    frPoint point;
+    bool hasPoint = false;
+    for (auto &ap: pin->getAccessPatterns()) {
+      ap->getPoint(point);
+      hasPoint = true;
+      break;
+    }
+    if (!hasPoint) {
+      continue;
+    }
+    int side = selfSymmetryDRSideOfPoint(ctx.axis, point);
+    bool isRootPin = rootPin != nullptr && pin->getFrTerm() == rootPin;
+    if (isRootPin || side == 0 || side == ctx.axis.rootSide) {
+      leadPins.push_back(pin);
+    } else {
+      mirrorPins.push_back(pin);
+    }
+  }
+  if (leadPins.empty() && !net->getPins().empty()) {
+    leadPins.push_back(net->getPins().front().get());
+  }
+
+  auto routeSelectedPins = [&](const vector<drPin*> &selectedPins,
+                               const vector<FlexMazeIdx> *forcedSources,
+                               vector<FlexMazeIdx> &connComps,
+                               FlexMazeIdx &ccMazeIdx1,
+                               FlexMazeIdx &ccMazeIdx2,
+                               frPoint &centerPt) {
+    if (selectedPins.empty()) {
+      return true;
+    }
+
+    set<drPin*, frBlockObjectComp> unConnPins;
+    map<FlexMazeIdx, set<drPin*, frBlockObjectComp> > mazeIdx2unConnPins;
+    set<FlexMazeIdx> apMazeIdx;
+    set<FlexMazeIdx> realPinAPMazeIdx;
+    for (auto pin: selectedPins) {
+      unConnPins.insert(pin);
+      for (auto &ap: pin->getAccessPatterns()) {
+        FlexMazeIdx mi;
+        ap->getMazeIdx(mi);
+        mazeIdx2unConnPins[mi].insert(pin);
+        apMazeIdx.insert(mi);
+        gridGraph.setDst(mi);
+        if (pin->hasFrTerm()) {
+          realPinAPMazeIdx.insert(mi);
+        }
+      }
+    }
+
+    map<FlexMazeIdx, frCoord> areaMap;
+    if (ENABLE_BOUNDARY_MAR_FIX) {
+      routeNet_prepAreaMap(net, areaMap);
+    }
+
+    if (forcedSources == nullptr) {
+      routeNet_setSrc(unConnPins, mazeIdx2unConnPins, connComps,
+                      ccMazeIdx1, ccMazeIdx2, centerPt);
+    } else {
+      connComps = *forcedSources;
+      frMIdx xDim, yDim, zDim;
+      gridGraph.getDim(xDim, yDim, zDim);
+      ccMazeIdx1.set(xDim - 1, yDim - 1, zDim - 1);
+      ccMazeIdx2.set(0, 0, 0);
+      centerPt.set(0, 0);
+      int sourceCnt = 0;
+      frPoint sourcePoint;
+      for (auto &mi: connComps) {
+        gridGraph.setSrc(mi);
+        ccMazeIdx1.set(min(ccMazeIdx1.x(), mi.x()),
+                       min(ccMazeIdx1.y(), mi.y()),
+                       min(ccMazeIdx1.z(), mi.z()));
+        ccMazeIdx2.set(max(ccMazeIdx2.x(), mi.x()),
+                       max(ccMazeIdx2.y(), mi.y()),
+                       max(ccMazeIdx2.z(), mi.z()));
+        gridGraph.getPoint(sourcePoint, mi.x(), mi.y());
+        centerPt.set(centerPt.x() + sourcePoint.x(),
+                     centerPt.y() + sourcePoint.y());
+        ++sourceCnt;
+      }
+      if (sourceCnt > 0) {
+        centerPt.set(centerPt.x() / sourceCnt, centerPt.y() / sourceCnt);
+      }
+    }
+
+    vector<FlexMazeIdx> path;
+    bool isFirstConn = true;
+    while (!unConnPins.empty()) {
+      mazePinInit();
+      auto nextPin = routeNet_getNextDst(ccMazeIdx1, ccMazeIdx2,
+                                         mazeIdx2unConnPins);
+      path.clear();
+      if (nextPin != nullptr &&
+          gridGraph.search(connComps, nextPin, path, ccMazeIdx1,
+                           ccMazeIdx2, centerPt)) {
+        routeNet_postAstarUpdate(path, connComps, unConnPins,
+                                 mazeIdx2unConnPins, isFirstConn);
+        routeNet_postAstarWritePath(net, path, realPinAPMazeIdx);
+        routeNet_postAstarPatchMinAreaVio(net, path, areaMap);
+        isFirstConn = false;
+      } else {
+        for (auto &mi: apMazeIdx) {
+          gridGraph.resetDst(mi);
+        }
+        return false;
+      }
+    }
+    for (auto &mi: apMazeIdx) {
+      gridGraph.resetDst(mi);
+    }
+    return true;
+  };
+
+  vector<FlexMazeIdx> leadConnComps;
+  FlexMazeIdx leadCCMazeIdx1, leadCCMazeIdx2;
+  frPoint leadCenterPt;
+  cout << "self-symmetry dr lead terminal search: "
+       << net->getFrNet()->getName() << "\n";
+  if (!routeSelectedPins(leadPins, nullptr, leadConnComps, leadCCMazeIdx1,
+                         leadCCMazeIdx2, leadCenterPt)) {
+    printSelfSymmetryDRRouteDebug(net, ctx);
+    deactivateSelfSymmetryDRRoutingContext();
+    return false;
+  }
+
+  ctx.leadAxisContactBeforeLink =
+      hasSelfSymmetryDRAxisContact(ctx, leadConnComps);
+  if (!ctx.leadAxisContactBeforeLink) {
+    vector<FlexMazeIdx> axisCandidates;
+    collectSelfSymmetryDRAxisCandidates(ctx, axisCandidates);
+    if (!axisCandidates.empty()) {
+      cout << "self-symmetry dr lead axis-link search: "
+           << net->getFrNet()->getName() << "\n";
+      ++ctx.leadAxisLinkSearches;
+      ctx.routeMode = SelfSymmetryDRRouteMode::AxisLink;
+      drPin axisPin;
+      set<FlexMazeIdx> axisDst;
+      for (auto &mi: axisCandidates) {
+        auto uAP = make_unique<drAccessPattern>();
+        frPoint axisPoint;
+        gridGraph.getPoint(axisPoint, mi.x(), mi.y());
+        uAP->setPoint(axisPoint);
+        uAP->setBeginLayerNum(gridGraph.getLayerNum(mi.z()));
+        uAP->setMazeIdx(mi);
+        axisPin.addAccessPattern(uAP);
+        gridGraph.setDst(mi);
+        axisDst.insert(mi);
+      }
+      vector<FlexMazeIdx> path;
+      mazePinInit();
+      if (gridGraph.search(leadConnComps, &axisPin, path, leadCCMazeIdx1,
+                           leadCCMazeIdx2, leadCenterPt)) {
+        set<drPin*, frBlockObjectComp> emptyPins;
+        map<FlexMazeIdx, set<drPin*, frBlockObjectComp> > emptyPinMap;
+        routeNet_postAstarUpdate(path, leadConnComps, emptyPins,
+                                 emptyPinMap, false);
+        set<FlexMazeIdx> emptyAPs;
+        routeNet_postAstarWritePath(net, path, emptyAPs);
+        map<FlexMazeIdx, frCoord> emptyAreaMap;
+        routeNet_postAstarPatchMinAreaVio(net, path, emptyAreaMap);
+      } else {
+        cout << "Error: self-symmetry DR failed to link lead tree to axis for "
+             << net->getFrNet()->getName() << "\n";
+      }
+      for (auto &mi: axisDst) {
+        gridGraph.resetDst(mi);
+      }
+    } else {
+      cout << "Error: self-symmetry DR has no axis candidates for "
+           << net->getFrNet()->getName() << "\n";
+    }
+  }
+  ctx.leadAxisContactAfterLink =
+      hasSelfSymmetryDRAxisContact(ctx, leadConnComps);
+
+  buildSelfSymmetryDRMirrorGuides(net, ctx);
+
+  vector<FlexMazeIdx> axisSources;
+  ctx.mirrorAxisSourceCount =
+      collectSelfSymmetryDRAxisSources(leadConnComps, ctx, axisSources);
+  if (!mirrorPins.empty() && !axisSources.empty()) {
+    cout << "self-symmetry dr mirror pass: "
+         << net->getFrNet()->getName() << "\n";
+    ctx.routeMode = SelfSymmetryDRRouteMode::Mirror;
+    vector<FlexMazeIdx> mirrorConnComps;
+    FlexMazeIdx mirrorCCMazeIdx1, mirrorCCMazeIdx2;
+    frPoint mirrorCenterPt;
+    if (!routeSelectedPins(mirrorPins, &axisSources, mirrorConnComps,
+                           mirrorCCMazeIdx1, mirrorCCMazeIdx2,
+                           mirrorCenterPt)) {
+      printSelfSymmetryDRRouteDebug(net, ctx);
+      deactivateSelfSymmetryDRRoutingContext();
+      return false;
+    }
+  } else if (!mirrorPins.empty()) {
+    cout << "Error: self-symmetry DR mirror pass has no axis source for "
+         << net->getFrNet()->getName() << "\n";
+  }
+
+  routeNet_postRouteAddPathCost(net);
+  printSelfSymmetryDRRouteDebug(net, ctx);
+  deactivateSelfSymmetryDRRoutingContext();
+  return true;
 }
 
 void FlexDR::reportSelfSymmetryDRGuideRoutes() const {
@@ -414,7 +1277,16 @@ void FlexDR::reportSelfSymmetryDRChecker() const {
 
   cout << "@@@ self-symmetry dr checker @@@" << endl;
   for (auto net: nets) {
-    auto constraint = net->getSelfSymmetryConstraint();
+    auto originalConstraint = net->getSelfSymmetryConstraint();
+    auto constraint = originalConstraint;
+    frCoord effectiveAxis = originalConstraint.axis;
+    bool axisSnapFailed = !findNearestSelfSymmetryDRTrack(
+        design, originalConstraint.isAxisHorizontal, originalConstraint.axis,
+        nullptr, effectiveAxis);
+    if (!axisSnapFailed) {
+      constraint = makeEffectiveSelfSymmetryDRConstraint(originalConstraint,
+                                                         effectiveAxis);
+    }
     multiset<SelfSymmetryDRSegmentRecord> segments;
     multiset<SelfSymmetryDRViaRecord> vias;
     collectSelfSymmetryDRCheckerRecords(net, segments, vias);
@@ -425,6 +1297,13 @@ void FlexDR::reportSelfSymmetryDRChecker() const {
                               snapshotIt->second != currFingerprint;
 
     cout << "net: " << net->getName() << "\n";
+    cout << "original_axis: " << originalConstraint.axis << "\n";
+    cout << "effective_axis: " << constraint.axis << "\n";
+    cout << "axis_snap_delta: " << constraint.axis - originalConstraint.axis << "\n";
+    cout << "axis_snap_failed: " << (axisSnapFailed ? 1 : 0) << "\n";
+    cout << "missing_axis_contact: "
+         << (hasSelfSymmetryDRAxisContact(constraint, segments, vias) ? 0 : 1)
+         << "\n";
     cout << "segments_missing_mirror: "
          << countSelfSymmetryDRSegmentsMissingMirror(constraint, segments) << "\n";
     cout << "vias_missing_mirror: "

@@ -33,6 +33,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 #include "frDesign.h"
 #include "db/drObj/drNet.h"
@@ -286,6 +287,37 @@ namespace fr {
                  apSVia(), fixedObjs(), planarHistoryMarkers(), viaHistoryMarkers(), 
                  historyMarkers(std::vector<std::set<FlexMazeIdx> >(3)),
                  nets(), owner2nets(), owner2pins(), gridGraph(drIn->getDesign(), this), markers(), rq(this), gcWorker(nullptr) /*, drcWorker(drIn->getDesign())*/ {}
+    struct SelfSymmetryDRAxisContext {
+      bool valid = false;
+      bool axisSnapFailed = false;
+      bool isAxisHorizontal = false;
+      bool axisInRouteBox = false;
+      frCoord originalAxis = 0;
+      frCoord effectiveAxis = 0;
+      frCoord axisSnapDelta = 0;
+      int rootSide = -1;
+      frMIdx axisMazeIdx = -1;
+    };
+    enum class SelfSymmetryDRRouteMode {
+      None = 0,
+      Lead = 1,
+      AxisLink = 2,
+      Mirror = 3
+    };
+    struct SelfSymmetryDRRouteContext {
+      SelfSymmetryDRAxisContext axis;
+      SelfSymmetryDRRouteMode routeMode = SelfSymmetryDRRouteMode::None;
+      unsigned long long axisAttractEdges = 0;
+      unsigned long long axisAttractCostTotal = 0;
+      bool leadAxisContactBeforeLink = false;
+      bool leadAxisContactAfterLink = false;
+      int leadAxisLinkSearches = 0;
+      int mirrorAxisSourceCount = 0;
+      int mirrorGuidesGenerated = 0;
+      int mirrorGuideHits = 0;
+      int mirrorGuideMisses = 0;
+      std::set<std::tuple<frMIdx, frMIdx, frMIdx, int> > mirrorRewardEdges;
+    };
     // setters
     void setRouteBox(const frBox &boxIn) {
       routeBox.set(boxIn);
@@ -510,6 +542,8 @@ namespace fr {
     int getOrdinaryNetsInTargetPhase() const {
       return ordinaryNetsInTargetPhase;
     }
+    frCost getSelfSymmetryDRCost(frMIdx x, frMIdx y, frMIdx z,
+                                 frDirEnum dir, bool hasGuide);
 
     // others
     int main();
@@ -549,6 +583,8 @@ namespace fr {
     std::set<FlexMazeIdx>                   planarHistoryMarkers;
     std::set<FlexMazeIdx>                   viaHistoryMarkers;
     std::vector<std::set<FlexMazeIdx> >     historyMarkers;
+    frNet* selfSymmetryDRActiveNet = nullptr;
+    std::map<frNet*, SelfSymmetryDRRouteContext, frBlockObjectComp> selfSymmetryDRRouteContexts;
     //std::vector<FlexDRMinAreaVio>           minAreaVios;
 
     // local storage
@@ -789,6 +825,28 @@ namespace fr {
     void        routeNet_postAstarAddPatchMetal_addPWire(drNet* net, const FlexMazeIdx &bpIdx, bool isPatchHorz, bool isPatchLeft, frCoord patchLength, frCoord patchWidth);
     void        routeNet_postRouteAddPathCost(drNet* net);
     void        routeNet_postRouteAddPatchMetalCost(drNet* net);
+    bool routeNet_selfSymmetry(drNet* net);
+    SelfSymmetryDRRouteContext& initSelfSymmetryDRRoutingContext(frNet* net);
+    void deactivateSelfSymmetryDRRoutingContext();
+    void initSelfSymmetryDRAxisContext(frNet* net,
+                                       SelfSymmetryDRRouteContext &ctx);
+    bool hasSelfSymmetryDRAxisContact(
+        const SelfSymmetryDRRouteContext &ctx,
+        const std::vector<FlexMazeIdx> &connComps) const;
+    void collectSelfSymmetryDRAxisCandidates(
+        const SelfSymmetryDRRouteContext &ctx,
+        std::vector<FlexMazeIdx> &candidates) const;
+    int collectSelfSymmetryDRAxisSources(const std::vector<FlexMazeIdx> &connComps,
+                                         const SelfSymmetryDRRouteContext &ctx,
+                                         std::vector<FlexMazeIdx> &axisSources) const;
+    void buildSelfSymmetryDRMirrorGuides(drNet* net,
+                                         SelfSymmetryDRRouteContext &ctx);
+    void printSelfSymmetryDRRouteDebug(
+        drNet* net,
+        const SelfSymmetryDRRouteContext &ctx) const;
+    void initTrackCoords_selfSymmetryAxis(frNet* net,
+                                          std::map<frCoord, std::map<frLayerNum, frTrackPattern*> > &xMap,
+                                          std::map<frCoord, std::map<frLayerNum, frTrackPattern*> > &yMap);
 
     // drc
     void route_drc();

@@ -659,6 +659,10 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
                   + (shapeCost  ? SHAPECOST        * getEdgeLength(gridX, gridY, gridZ, dir) : 0)
                   + (blockCost  ? BLOCKCOST        * pathWidth * 20                          : 0)
                   + (!guideCost ? GUIDECOST        * getEdgeLength(gridX, gridY, gridZ, dir) : 0);
+  if (drWorker) {
+    nextPathCost += drWorker->getSelfSymmetryDRCost(gridX, gridY, gridZ,
+                                                    dir, guideCost);
+  }
   if (enableOutput) {
     cout <<"edge grid/shape/drc/marker/blk/length = " 
          <<hasGridCost(gridX, gridY, gridZ, dir)   <<"/"
@@ -888,4 +892,3 @@ bool FlexGridGraph::search(vector<FlexMazeIdx> &connComps, drPin* nextPin, vecto
   }
   return false;
 }
-
