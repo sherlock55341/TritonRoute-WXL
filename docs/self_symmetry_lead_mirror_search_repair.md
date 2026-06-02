@@ -15,6 +15,34 @@ mirror materialization 使用最终 lead route 的镜像 guide，在 Hanan grid 
 严格自对称 > mirror 侧局部自由度 > 全局共同最优
 ```
 
+## 当前进度快照
+
+截至 2026-06-01，当前代码状态是：
+
+- GR 侧已有 root/lead/axis source tree、2D lead repair + mirror shadow cost、
+  2D mirror materialization、layer assignment mirror cost、3D lead-only staging 和
+  3D guided repair。
+- 本地 smoke `build/selfsym-status-read/selfsym_status.log` 已跑完整流程，日志显示
+  `root-side reaches axis: 1`、`mirror_hanan_pins_covered: 3/3`、
+  `mirror_repair_pins_covered: 3/3`、`layerassign_mirror_cost_queries: 774`，
+  并进入 detail routing，最终 `number of violations = 0`。
+- 自对称 net 的初始 topology 已经是 Hanan grid 上的 rectilinear tree。普通
+  `patternRoute_LShape()` 只处理非共线 Steiner-Steiner 边，因此当前 self-symmetry
+  flow 通常没有 pattern-route 阶段的两种 L-shape 方案可选。选择主要发生在
+  self-symmetry topology/Hanan search、2D/3D A* search repair 和 mirror
+  materialization 阶段。
+- 当前只是让 guide/TA/DR 消费 GR 生成的自对称结果。DR 本身还没有
+  self-symmetry-aware 的 reroute、mirror-pair 约束、对称 via/track 绑定或最终
+  detailed-route symmetry check。因此“完整流程能跑过 DR”和“DR 严格保持自对称”
+  不是同一个结论；后者仍未完成。
+- TA 结果不是被丢弃：`FlexTAWorker::saveToGuides()` 会把 TA pathSeg 写回
+  `frGuide::routes`，DR 的 `initGCell2BoundaryPin()` 会读取这些 routes 生成 boundary
+  pin，后续 follow-guide search repair 也可以把原始 guide 作为 guide cost 使用。
+  但当前 DR 没有把这些 routes 解释成 lead/mirror 绑定关系。
+- mirror shadow demand 的 worker-local 路径已实现，但跨 worker/window 的
+  outside shadow 写回和最终一致性检查还不完整。本地 smoke 中
+  `outside_shadow_delta: 0`，未覆盖这个风险。
+
 ## 背景
 
 当前 GR search repair 会按普通 worker window 局部重布线。
@@ -29,11 +57,36 @@ mirror materialization 使用最终 lead route 的镜像 guide，在 Hanan grid 
 
 本记录讨论的是 search repair 期间应该如何表示和修改这类 net。
 
+## Pattern Route 进度修正
+
+早期计划曾把 self-symmetry 的初始 route 选择放到 `patternRoute_LShape()`：
+
+```text
+total_cost = lead_source_cost + mirror_shadow_cost
+```
+
+复查代码后，这不是当前实现的有效主路径。`initGR_patternRoute_init()` 只收集
+`x/y` 都不同的非共线 Steiner-Steiner 边，而 `genSelfSymmetryRootSideTopology()`
+生成的是 Hanan graph 上的水平/竖直 source tree。也就是说，self-symmetry net 在
+普通情况下不会进入 `patternRoute_LShape()`，自然也没有两种 L-shape 可以在那里比较。
+
+因此，后续如果需要改进初始 self-symmetry route 的选择，应优先改：
+
+- `genSelfSymmetryRootSideTopology()` / `genSelfSymmetryOppositeSideTopology()` 的
+  Hanan graph cost。
+- 2D/3D search repair 的 mirror-aware A* cost。
+- mirror materialization 的 guide cost 和 pin-cover 策略。
+
+`patternRoute_LShape()` 可以保留普通 net 行为；对 self-symmetry 更适合作为防御性
+检查点，而不是主要优化入口。
+
 ## 术语
 
 ```text
 lead route
-  真实存在、允许被 topology / pattern route / search repair 修改的半边 route。
+  真实存在、允许被 self-symmetry topology / search repair / layer assignment
+  以及后续 3D staging 修改的半边 route。当前普通 pattern route 不是
+  self-symmetry 的主要选择点。
 
 axis anchor
   lead route 必须连接到的对称轴锚点。它是真实拓扑的一部分，不是 mirror shadow。
@@ -51,7 +104,8 @@ source of truth
 
 对 self-symmetry net 引入 lead / axis / mirror-shadow 分工：
 
-- ordinary worker repair 期间，lead 侧是唯一允许被 topology、pattern route、search repair 修改的一侧。
+- ordinary worker repair 期间，lead 侧是唯一允许被 self-symmetry topology 和
+  search repair 修改的一侧；当前普通 pattern route 不是 self-symmetry 的主要选择点。
 - lead 侧拓扑必须连接到 symmetry axis；不能只是布一半孤立子网。
 - axis 上的拓扑和 demand 是真实共享部分，只记录一次，不能被 mirror 重复计数。
 - root-side repair 完成前，mirror 侧不参与独立 topology 生成，不参与独立 pattern route，不参与独立 maze search。
@@ -334,6 +388,49 @@ final mirror topology = Hanan(axis source, mirror pins, mirror guide)
 - axis 上共享的对象仍只保留一份，不复制 axis-only edge。
 - 输出 guide / DEF 时，mirror-side route 已经是 `frNode` tree 的一部分。
 
+## TA / DR Handoff
+
+当前 GR 之后的交接链路是：
+
+```text
+GR guide topology
+-> TA assigns tracks
+-> FlexTAWorker::saveToGuides() writes TA pathSegs into frGuide::routes
+-> DR reads guides/routes for boundary pins and guide cost
+```
+
+几个容易混淆的点：
+
+- `src/ta/FlexTA_end.cpp` 中 `saveToGuides()` 会用 TA 产生的 `taPathSeg` 创建
+  `frPathSeg`，并通过 `guide->setRoutes(tmp)` 写回 `frGuide::routes`。
+- `src/dr/FlexDR.cpp` 中 `initFromTA()` 可以把 `guide->routes` 复制成
+  `frNet::shapes`，但当前 `FlexDR::init()` 注释掉了这个调用。
+- 即使 `initFromTA()` 没有启用，`initGCell2BoundaryPin()` 仍然遍历
+  `guide->getRoutes()`，用 TA routes 在 DR worker 边界上生成 boundary pin。
+- `src/dr/FlexDR_init.cpp` 的 worker 初始化在 `followGuide=true` 时会从 region
+  query 中取 `origGuides` 写入 `drNet::origGuides`，`initMazeCost_guide_helper()`
+  再把这些 guide 加到 maze grid，`FlexGridGraph::getNextPathCost()` 对不在 guide
+  上的 edge 收 `GUIDECOST`。
+
+因此 TA route 的确进入了 DR 数据路径，但只是作为 boundary pin / guide-cost 输入。
+它还没有变成 DR 侧的 self-symmetry contract：DR 不知道哪条 detailed segment 是 lead，
+哪条应该与它镜像配对，也没有对 via、track、patch wire 做对称绑定。
+
+## DR 当前边界
+
+截至 2026-06-01，DR 仍是普通 detailed routing：
+
+- 没有在普通 DR 前单独 route self-symmetry net。
+- 没有把 self-symmetry net 完成后冻结成普通 net 不可 ripup 的 fixed obstacle。
+- 没有 self-symmetry lead pass / mirror-guide generation / mirror pass。
+- 没有 symmetric track/via selection。
+- 没有 post-DR detailed-route symmetry checker。
+- marker 涉及 self-symmetry net 和 ordinary net 时，当前没有策略保证只 reroute
+  ordinary net。
+
+DR 后续设计和验收拆分记录在 `docs/self_symmetry_detailed_routing.md`。目标不是为了
+严格镜像牺牲合法性；优先级应是 DRC/legal first，然后尽可能保持 detailed route 对称。
+
 ## 已接受的代价
 
 - mirror 侧没有独立局部最优能力。
@@ -347,8 +444,12 @@ final mirror topology = Hanan(axis source, mirror pins, mirror guide)
 
 - 明确区分真实 lead/axis route object 与 mirror shadow demand。
 - self-symmetry topology 生成必须保留 lead-to-axis anchor。
-- pattern route 只选择 lead 侧 L-shape，但 cost 包含 mirror shadow。
+- pattern route 当前不是 self-symmetry 的主要选择点；若 self-symmetry 非共线边进入
+  `patternRoute_LShape()`，应先加 debug/assert 明确原因。
 - lead A* cost 能查询候选 edge 镜像后的 congestion/blockage。
-- writeback 阶段更新真实 lead/axis objects，同时按 lead route 增删 mirror shadow demand。
+- writeback 阶段更新真实 lead/axis objects，同时按 lead route 增删 mirror shadow demand；
+  仍需补齐跨 worker/window 的 outside shadow 全局写回。
 - mirror materialization 阶段需要维持 `mirror_hanan_pins_covered: N/N` 和
   `mirror_repair_pins_covered: N/N`，并避免让后续普通 2D worker 再打开 mirror-side route。
+- DR 当前只是消费 guide/TA 结果；若目标是最终 detailed route 严格自对称，需要在 DR
+  增加 mirror-aware reroute/约束或最终 symmetry check。

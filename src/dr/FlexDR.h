@@ -29,7 +29,11 @@
 #ifndef _FR_FLEXDR_H_
 #define _FR_FLEXDR_H_
 
+#include <map>
 #include <memory>
+#include <set>
+#include <string>
+#include <vector>
 #include "frDesign.h"
 #include "db/drObj/drNet.h"
 #include "db/drObj/drMarker.h"
@@ -96,11 +100,19 @@ namespace fr {
     std::vector<std::vector<frCoord> > via2turnMinLen;
 
     std::vector<int>                   numViols;
+    std::map<frNet*, std::vector<std::string>, frBlockObjectComp> selfSymmetryDRRouteSnapshots;
 
     // others
     void init();
     void initFromTA();
     void initGCell2BoundaryPin();
+    void reportSelfSymmetryDRGuideRoutes() const;
+    void reportSelfSymmetryDRBoundaryPins() const;
+    void snapshotSelfSymmetryDRRoutes();
+    void reportSelfSymmetryDRChecker() const;
+    void reportSelfSymmetryDRPhaseRouteCount(const std::set<frNet*, frBlockObjectComp> &targetNets) const;
+    void collectSelfSymmetryDRTargetNets(std::set<frNet*, frBlockObjectComp> &targetNets) const;
+    void runSelfSymmetryDRPhase();
     void getBatchInfo(int &batchStepX, int &batchStepY);
 
     void init_halfViaEncArea();
@@ -119,7 +131,8 @@ namespace fr {
     void init_via2turnMinLen();
 
     void removeGCell2BoundaryPin();
-    void checkConnectivity(int iter = -1);
+    void checkConnectivity(int iter = -1,
+                           const std::set<frNet*, frBlockObjectComp> *targetNets = nullptr);
     void checkConnectivity_initDRObjs(frNet* net, std::vector<frConnFig*> &netDRObjs);
     void checkConnectivity_pin2epMap(frNet* net, std::vector<frConnFig*> &netDRObjs,
                                      std::map<frBlockObject*, std::set<std::pair<frPoint, frLayerNum> >, frBlockObjectComp> &pin2epMap);
@@ -186,7 +199,11 @@ namespace fr {
     void searchRepair(int iter, int size, int offset, int mazeEndIter = 1, frUInt4 workerDRCCost = DRCCOST, frUInt4 workerMarkerCost = MARKERCOST, 
                       frUInt4 workerMarkerBloatWidth = 0, frUInt4 workerMarkerBloatDepth = 0,
                       bool enableDRC = false, int ripupMode = 1, bool followGuide = true, 
-                      int fixMode = 0, bool TEST = false);
+                      int fixMode = 0, bool TEST = false,
+                      const std::set<frNet*, frBlockObjectComp> *targetNets = nullptr,
+                      bool removeBoundaryPinsOnInit = true,
+                      const std::string &stageName = std::string(),
+                      int *ordinaryNetsInPhase = nullptr);
     void end();
 
     // utility
@@ -264,6 +281,7 @@ namespace fr {
                  followGuide(false), needRecheck(false), skipRouting(false), ripupMode(1), fixMode(0), workerDRCCost(DRCCOST), 
                  workerMarkerCost(MARKERCOST), workerMarkerBloatWidth(0), 
                  workerMarkerBloatDepth(0), boundaryPin(), 
+                 targetNets(nullptr), ordinaryNetsInTargetPhase(0),
                  pinCnt(0), initNumMarkers(0),
                  apSVia(), fixedObjs(), planarHistoryMarkers(), viaHistoryMarkers(), 
                  historyMarkers(std::vector<std::set<FlexMazeIdx> >(3)),
@@ -317,6 +335,9 @@ namespace fr {
       workerMarkerCost = markerCostIn;
       workerMarkerBloatWidth = markerBloatWidthIn;
       workerMarkerBloatDepth = markerBloatDepthIn;
+    }
+    void setTargetNets(const std::set<frNet*, frBlockObjectComp> *in) {
+      targetNets = in;
     }
     //void addMarker(std::unique_ptr<frMarker> &in) {
     //  auto rptr = in.get();
@@ -486,6 +507,9 @@ namespace fr {
     FlexGCWorker* getGCWorker() {
       return gcWorker;
     }
+    int getOrdinaryNetsInTargetPhase() const {
+      return ordinaryNetsInTargetPhase;
+    }
 
     // others
     int main();
@@ -514,6 +538,8 @@ namespace fr {
     frUInt4   workerDRCCost, workerMarkerCost, workerMarkerBloatWidth, workerMarkerBloatDepth;
     // used in init route as gr boundary pin
     std::map<frNet*, std::set<std::pair<frPoint, frLayerNum> >, frBlockObjectComp> boundaryPin;
+    const std::set<frNet*, frBlockObjectComp> *targetNets;
+    int       ordinaryNetsInTargetPhase;
     // determine whether to merge colinear pts in end(), must consider local on-boundary pins in routing (get changed in routing)
     //std::map<frNet*, std::set<std::pair<frPoint, frLayerNum> >, frBlockObjectComp> mergeBoundaryPt;
     int       pinCnt;
@@ -542,6 +568,12 @@ namespace fr {
     //DRCWorker                               drcWorker;
 
     // init
+    bool hasTargetNetFilter() const {
+      return targetNets != nullptr;
+    }
+    bool isTargetNet(frNet *net) const {
+      return targetNets == nullptr || targetNets->find(net) != targetNets->end();
+    }
     void init();
     void initNets();
     void initNetObjs(std::set<frNet*, frBlockObjectComp> &nets, 

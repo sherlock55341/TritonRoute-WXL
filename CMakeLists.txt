@@ -59,6 +59,7 @@ set (FLEXROUTE_SRC
   ${FLEXROUTE_HOME}/src/dr/FlexDR_conn.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexDR_init.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexDR.cpp
+  ${FLEXROUTE_HOME}/src/dr/FlexDR_self_sym.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexDR_maze.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexGridGraph_maze.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexGridGraph.cpp

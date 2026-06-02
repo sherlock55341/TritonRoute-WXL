@@ -28,6 +28,7 @@
 
 #include "dr/FlexDR.h"
 #include <algorithm>
+#include <sstream>
 
 using namespace std;
 using namespace fr;
@@ -40,6 +41,9 @@ void FlexDRWorker::initNetObjs_pathSeg(frPathSeg* pathSeg,
   bool enableOutput = false;
   auto gridBBox = getRouteBox();
   auto net = pathSeg->getNet();
+  if (!isTargetNet(net)) {
+    return;
+  }
   nets.insert(net);
   // split seg
   frPoint begin, end;
@@ -234,6 +238,9 @@ void FlexDRWorker::initNetObjs_via(frVia* via,
   bool enableOutput = false;
   auto gridBBox = getRouteBox();
   auto net = via->getNet();
+  if (!isTargetNet(net)) {
+    return;
+  }
   nets.insert(net);
   frPoint viaPoint;
   via->getOrigin(viaPoint);
@@ -265,6 +272,9 @@ void FlexDRWorker::initNetObjs_patchWire(frPatchWire* pwire,
   bool enableOutput = false;
   auto gridBBox = getRouteBox();
   auto net = pwire->getNet();
+  if (!isTargetNet(net)) {
+    return;
+  }
   nets.insert(net);
   frPoint origin;
   pwire->getOrigin(origin);
@@ -334,6 +344,9 @@ void FlexDRWorker::initNetObjs(set<frNet*, frBlockObjectComp> &nets,
     for (auto &guide: guides) {
       if (guide->hasNet()) {
         auto net = guide->getNet();
+        if (!isTargetNet(net)) {
+          continue;
+        }
         if (nets.find(net) == nets.end()) {
           nets.insert(net);
           netRouteObjs[net].clear();
@@ -391,11 +404,17 @@ void FlexDRWorker::initNets_initDR(set<frNet*, frBlockObjectComp> &nets,
   for (auto obj: result) {
     if (obj->typeId() == frcInstTerm) {
       auto net = static_cast<frInstTerm*>(obj)->getNet();
+      if (!isTargetNet(net)) {
+        continue;
+      }
       nets.insert(net);
       //netTerms[net].push_back(obj);
       netTerms[net].insert(obj);
     } else if (obj->typeId() == frcTerm) {
       auto net = static_cast<frTerm*>(obj)->getNet();
+      if (!isTargetNet(net)) {
+        continue;
+      }
       nets.insert(net);
       //netTerms[net].push_back(obj);
       netTerms[net].insert(obj);
@@ -816,6 +835,9 @@ void FlexDRWorker::initNets_searchRepair(set<frNet*, frBlockObjectComp> &nets,
                                          map<frNet*, vector<unique_ptr<drConnFig> >, frBlockObjectComp> &netExtObjs,
                                          map<frNet*, vector<frRect>, frBlockObjectComp> &netOrigGuides) {
   for (auto net: nets) {
+    if (!isTargetNet(net)) {
+      continue;
+    }
     // build big graph;
     // node number : routeObj, pins
     map<frBlockObject*, set<pair<frPoint, frLayerNum> >, frBlockObjectComp> pin2epMap;
@@ -2215,6 +2237,23 @@ void FlexDRWorker::initNet(frNet* net,
   }
   dNet->setOrigGuides(origGuides);
   dNet->setId(nets.size());
+  if (net->getSelfSymmetryConstraintPtr() != nullptr) {
+    stringstream ss;
+    ss << "@@@ self-symmetry drnet init @@@\n";
+    ss << "net: " << net->getName() << "\n";
+    ss << "dr_iter/is_init_dr/route_objs/ext_objs/orig_guides/terms/dr_pins: "
+       << getDRIter() << "/" << (isInitDR() ? 1 : 0) << "/"
+       << routeObjs.size() << "/" << extObjs.size() << "/"
+       << origGuides.size() << "/" << terms.size() << "/"
+       << dNet->getPins().size() << "\n";
+    ss << "route_box: "
+       << routeBox.left() << "/" << routeBox.bottom() << "/"
+       << routeBox.right() << "/" << routeBox.top() << "\n";
+#pragma omp critical(self_symmetry_drnet_init_log)
+    {
+      cout << ss.str() << flush;
+    }
+  }
   initNet_addNet(dNet);
   //nets.push_back(std::move(dNet));
 }
@@ -2431,6 +2470,7 @@ void FlexDRWorker::initNets_boundaryArea() {
 }
 
 void FlexDRWorker::initNets() {
+  ordinaryNetsInTargetPhase = 0;
   set<frNet*, frBlockObjectComp>                                      nets;
   map<frNet*, vector<unique_ptr<drConnFig> >, frBlockObjectComp>      netRouteObjs;
   map<frNet*, vector<unique_ptr<drConnFig> >, frBlockObjectComp>      netExtObjs;
@@ -2443,6 +2483,15 @@ void FlexDRWorker::initNets() {
   } else {
     // find inteTerm/terms using netRouteObjs;
     initNets_searchRepair(nets, netRouteObjs, netExtObjs, netOrigGuides);
+  }
+  if (hasTargetNetFilter()) {
+    set<frNet*, frBlockObjectComp> ordinaryNets;
+    for (auto &net: getNets()) {
+      if (!isTargetNet(net->getFrNet())) {
+        ordinaryNets.insert(net->getFrNet());
+      }
+    }
+    ordinaryNetsInTargetPhase = ordinaryNets.size();
   }
   initNets_regionQuery();
   initNets_numPinsIn();

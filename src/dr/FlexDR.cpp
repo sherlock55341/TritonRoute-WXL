@@ -1410,7 +1410,9 @@ void FlexDR::init() {
     cout <<endl <<"start routing data preparation" <<endl;
   }
   //initFromTA(); // this does not help much for conservative boundary patch metal in initDR
+  reportSelfSymmetryDRGuideRoutes();
   initGCell2BoundaryPin();
+  reportSelfSymmetryDRBoundaryPins();
   //if (VERBOSE > 0) {
   //  cout <<endl <<"init dr objs ..." <<endl;
   //}
@@ -1421,6 +1423,7 @@ void FlexDR::init() {
   init_via2viaMinLen();
   init_via2viaMinLenNew();
   init_via2turnMinLen();
+  snapshotSelfSymmetryDRRoutes();
 
   if (VERBOSE > 0) {
     t.print();
@@ -1451,6 +1454,37 @@ map<frNet*, set<pair<frPoint, frLayerNum> >, frBlockObjectComp> FlexDR::initDR_m
     }
   }
   return bp;
+}
+
+void FlexDR::collectSelfSymmetryDRTargetNets(set<frNet*, frBlockObjectComp> &targetNets) const {
+  targetNets.clear();
+  if (getDesign() == nullptr || getDesign()->getTopBlock() == nullptr) {
+    return;
+  }
+  for (auto &net: getDesign()->getTopBlock()->getNets()) {
+    if (net && net->getSelfSymmetryConstraintPtr() != nullptr) {
+      targetNets.insert(net.get());
+    }
+  }
+}
+
+void FlexDR::runSelfSymmetryDRPhase() {
+  set<frNet*, frBlockObjectComp> selfSymmetryNets;
+  collectSelfSymmetryDRTargetNets(selfSymmetryNets);
+  if (selfSymmetryNets.empty()) {
+    return;
+  }
+
+  cout << endl << "@@@ self-symmetry dr phase @@@" << endl;
+  cout << "self_symmetry_nets: " << selfSymmetryNets.size() << "\n";
+  int ordinaryNetsInPhase = 0;
+  searchRepair(0, 7, 0, 3, DRCCOST, 0, 0, 0, true, 2, true, 9, false,
+               &selfSymmetryNets, false, "self-symmetry dr phase",
+               &ordinaryNetsInPhase);
+  cout << "ordinary_nets_in_phase: " << ordinaryNetsInPhase << "\n";
+  reportSelfSymmetryDRPhaseRouteCount(selfSymmetryNets);
+  reportSelfSymmetryDRChecker();
+  snapshotSelfSymmetryDRRoutes();
 }
 
 void FlexDR::initDR(int size, bool enableDRC) {
@@ -1787,7 +1821,11 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
                           frUInt4 workerDRCCost, frUInt4 workerMarkerCost, 
                           frUInt4 workerMarkerBloatWidth, frUInt4 workerMarkerBloatDepth,
                           bool enableDRC, int ripupMode, bool followGuide, 
-                          int fixMode, bool TEST) {
+                          int fixMode, bool TEST,
+                          const set<frNet*, frBlockObjectComp> *targetNets,
+                          bool removeBoundaryPinsOnInit,
+                          const string &stageName,
+                          int *ordinaryNetsInPhase) {
   if (iter > END_ITERATION) {
     return;
   }
@@ -1799,18 +1837,22 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
   //bool TEST = false;
   //bool TEST = true;
   if (VERBOSE > 0) {
-    cout <<endl <<"start " <<iter;
-    string suffix;
-    if (iter == 1 || (iter > 20 && iter % 10 == 1)) {
-      suffix = "st";
-    } else if (iter == 2 || (iter > 20 && iter % 10 == 2)) {
-      suffix = "nd";
-    } else if (iter == 3 || (iter > 20 && iter % 10 == 3)) {
-      suffix = "rd";
+    if (stageName.empty()) {
+      cout <<endl <<"start " <<iter;
+      string suffix;
+      if (iter == 1 || (iter > 20 && iter % 10 == 1)) {
+        suffix = "st";
+      } else if (iter == 2 || (iter > 20 && iter % 10 == 2)) {
+        suffix = "nd";
+      } else if (iter == 3 || (iter > 20 && iter % 10 == 3)) {
+        suffix = "rd";
+      } else {
+        suffix = "th";
+      }
+      cout <<suffix <<" optimization iteration ..." <<endl;
     } else {
-      suffix = "th";
+      cout <<endl <<"start " <<stageName <<" ..." <<endl;
     }
-    cout <<suffix <<" optimization iteration ..." <<endl;
   }
   frBox dieBox;
   getDesign()->getTopBlock()->getBoundaryBBox(dieBox);
@@ -1865,9 +1907,13 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     worker.setRipupMode(ripupMode);
     worker.setFollowGuide(followGuide);
     worker.setFixMode(fixMode);
+    worker.setTargetNets(targetNets);
     //worker.setNetOrderingMode(netOrderingMode);
     worker.setCost(workerDRCCost, workerMarkerCost, workerMarkerBloatWidth, workerMarkerBloatDepth);
     worker.main_mt();
+    if (ordinaryNetsInPhase != nullptr) {
+      *ordinaryNetsInPhase += worker.getOrdinaryNetsInTargetPhase();
+    }
     numQuickMarkers += worker.getNumQuickMarkers();
     cout <<"done"  <<endl <<flush;
   /*} else if (MAX_THREADS == 1) {
@@ -1911,6 +1957,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
         worker.setEnableDRC(enableDRC);
         worker.setRipupMode(ripupMode);
         worker.setFollowGuide(followGuide);
+        worker.setTargetNets(targetNets);
         //worker.setNetOrderingMode(netOrderingMode);
         worker.setFixMode(fixMode);
         worker.setCost(workerDRCCost, workerMarkerCost, workerMarkerBloatWidth, workerMarkerBloatDepth);
@@ -1994,6 +2041,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
         worker->setEnableDRC(enableDRC);
         worker->setRipupMode(ripupMode);
         worker->setFollowGuide(followGuide);
+        worker->setTargetNets(targetNets);
         //worker->setNetOrderingMode(netOrderingMode);
         worker->setFixMode(fixMode);
         worker->setCost(workerDRCCost, workerMarkerCost, workerMarkerBloatWidth, workerMarkerBloatDepth);
@@ -2025,6 +2073,9 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
           workersInBatch[i]->main_mt();
           #pragma omp critical 
           {
+            if (ordinaryNetsInPhase != nullptr) {
+              *ordinaryNetsInPhase += workersInBatch[i]->getOrdinaryNetsInTargetPhase();
+            }
             cnt++;
             if (VERBOSE > 0) {
               if (cnt * 1.0 / tot >= prev_perc / 100.0 + 0.1 && prev_perc < 90) {
@@ -2054,7 +2105,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     }
   }
   //cout <<"  number of violations = " <<numMarkers <<endl;
-  if (!iter) {
+  if (!iter && removeBoundaryPinsOnInit) {
     removeGCell2BoundaryPin();
   }
   if (VERBOSE > 0) {
@@ -2074,7 +2125,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
       }
     }
   }
-  checkConnectivity(iter);
+  checkConnectivity(iter, targetNets);
   numViols.push_back(getDesign()->getTopBlock()->getNumMarkers());
   if (VERBOSE > 0) {
     if (enableDRC) {
@@ -2342,6 +2393,8 @@ int FlexDR::main() {
 
   // need three different offsets to resolve boundary corner issues
 
+  runSelfSymmetryDRPhase();
+
   int iterNum = 0;
   searchRepair(iterNum++/*  0 */,  7,  0, 3, DRCCOST, 0/*MAARKERCOST*/,  0, 0, true, 2, true, 9); // true search and repair
   searchRepair(iterNum++/*  1 */,  7, -2, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 2, true, 9); // true search and repair
@@ -2494,6 +2547,7 @@ int FlexDR::main() {
   // searchRepair(9,  7, -4, 8, DRCCOST*4, MARKERCOST,  60, 4, true, 0, false, 3); // true search and repair
   
 
+  reportSelfSymmetryDRChecker();
   if (DRC_RPT_FILE != string("")) {
     reportDRC();
   }
@@ -2515,4 +2569,3 @@ int FlexDR::main() {
   }
   return 0;
 }
-
