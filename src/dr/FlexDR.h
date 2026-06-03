@@ -45,6 +45,20 @@
 
 namespace fr {
 
+  struct SelfSymmetryDRDiagnosticSharedState {
+    frNet *net = nullptr;
+    bool isAxisHorizontal = false;
+    frCoord snappedAxis = 0;
+    int rootSide = -1;
+    bool axisContactSeen = false;
+    bool axisLinkDone = false;
+    bool axisLinkPointValid = false;
+    frPoint axisLinkPoint;
+    frLayerNum axisLinkLayerNum = 0;
+    int axisLinkSearchCount = 0;
+    bool failed = false;
+  };
+
   class FlexDR {
   public:
     // constructors
@@ -113,6 +127,11 @@ namespace fr {
     void reportSelfSymmetryDRChecker() const;
     void reportSelfSymmetryDRPhaseRouteCount(const std::set<frNet*, frBlockObjectComp> &targetNets) const;
     void collectSelfSymmetryDRTargetNets(std::set<frNet*, frBlockObjectComp> &targetNets) const;
+    frNet* getSelfSymmetryDRDiagnosticNet() const;
+    bool hasSelfSymmetryDRDiagnosticNet() const;
+    bool initSelfSymmetryDRDiagnosticState(
+        frNet *net,
+        SelfSymmetryDRDiagnosticSharedState &state) const;
     void runSelfSymmetryDRPhase();
     void getBatchInfo(int &batchStepX, int &batchStepY);
 
@@ -204,7 +223,9 @@ namespace fr {
                       const std::set<frNet*, frBlockObjectComp> *targetNets = nullptr,
                       bool removeBoundaryPinsOnInit = true,
                       const std::string &stageName = std::string(),
-                      int *ordinaryNetsInPhase = nullptr);
+                      int *ordinaryNetsInPhase = nullptr,
+                      bool skipConnectivityCheck = false,
+                      SelfSymmetryDRDiagnosticSharedState *selfSymmetryDRDiagnosticState = nullptr);
     void end();
 
     // utility
@@ -279,7 +300,11 @@ namespace fr {
     FlexDRWorker(FlexDR* drIn): 
                  design(drIn->getDesign()), dr(drIn), routeBox(), extBox(), drcBox(), drIter(0), mazeEndIter(1), 
                  TEST(false), DRCTEST(false), QUICKDRCTEST(false), enableDRC(true), 
-                 followGuide(false), needRecheck(false), skipRouting(false), ripupMode(1), fixMode(0), workerDRCCost(DRCCOST), 
+                 followGuide(false), needRecheck(false), skipRouting(false),
+                 selfSymmetryDRDiagnosticLeadOnly(false),
+                 selfSymmetryDRDiagnosticAxisHorizontal(false),
+                 selfSymmetryDRDiagnosticState(nullptr),
+                 ripupMode(1), fixMode(0), workerDRCCost(DRCCOST),
                  workerMarkerCost(MARKERCOST), workerMarkerBloatWidth(0), 
                  workerMarkerBloatDepth(0), boundaryPin(), 
                  targetNets(nullptr), ordinaryNetsInTargetPhase(0),
@@ -370,6 +395,16 @@ namespace fr {
     }
     void setTargetNets(const std::set<frNet*, frBlockObjectComp> *in) {
       targetNets = in;
+    }
+    void setSelfSymmetryDRDiagnosticState(
+        SelfSymmetryDRDiagnosticSharedState *state) {
+      selfSymmetryDRDiagnosticState = state;
+      if (state != nullptr) {
+        selfSymmetryDRDiagnosticLeadOnly = true;
+        selfSymmetryDRDiagnosticAxisHorizontal = state->isAxisHorizontal;
+        selfSymmetryDRDiagnosticAxis = state->snappedAxis;
+        selfSymmetryDRDiagnosticRootSide = state->rootSide;
+      }
     }
     //void addMarker(std::unique_ptr<frMarker> &in) {
     //  auto rptr = in.get();
@@ -566,6 +601,11 @@ namespace fr {
     bool      followGuide:1;
     bool      needRecheck:1;
     bool      skipRouting:1;
+    bool      selfSymmetryDRDiagnosticLeadOnly:1;
+    bool      selfSymmetryDRDiagnosticAxisHorizontal:1;
+    SelfSymmetryDRDiagnosticSharedState *selfSymmetryDRDiagnosticState;
+    frCoord   selfSymmetryDRDiagnosticAxis = 0;
+    int       selfSymmetryDRDiagnosticRootSide = -1;
     int       ripupMode;
     int       fixMode;
     //drNetOrderingEnum netOrderingMode;
@@ -609,6 +649,22 @@ namespace fr {
     }
     bool isTargetNet(frNet *net) const {
       return targetNets == nullptr || targetNets->find(net) != targetNets->end();
+    }
+    bool isSelfSymmetryDRDiagnosticLeadOnly() const {
+      return selfSymmetryDRDiagnosticLeadOnly;
+    }
+    bool isSelfSymmetryDRDiagnosticNet(frNet *net) const {
+      return selfSymmetryDRDiagnosticState != nullptr &&
+             selfSymmetryDRDiagnosticState->net == net;
+    }
+    bool isSelfSymmetryDRDiagnosticLeadPoint(const frPoint &point) const {
+      if (!selfSymmetryDRDiagnosticLeadOnly) {
+        return true;
+      }
+      auto coord = selfSymmetryDRDiagnosticAxisHorizontal ? point.y() : point.x();
+      return selfSymmetryDRDiagnosticRootSide < 0 ?
+             coord <= selfSymmetryDRDiagnosticAxis :
+             coord >= selfSymmetryDRDiagnosticAxis;
     }
     void init();
     void initNets();
