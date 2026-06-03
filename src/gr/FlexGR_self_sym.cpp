@@ -164,11 +164,9 @@ namespace {
       ctx.rootSide = -1;
     } else if (block != nullptr) {
       frPoint rootLoc;
-      frPoint rootGCellIdx;
       rootNode->getLoc(rootLoc);
-      block->getGCellIdx(rootLoc, rootGCellIdx);
       ctx.rootSide =
-          normalizeSelfSymmetryRootSide(ctx.sideOfGCell(rootGCellIdx));
+          normalizeSelfSymmetryRootSide(ctx.sideOfPoint(rootLoc));
     }
     return ctx;
   }
@@ -1497,7 +1495,14 @@ FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
   }
   frCoord axisGCellIdx = axisCtx.axisGCellIdx;
 
-  int rootSide = normalizeSelfSymmetryRootSide(axisCtx.sideOfGCell(rootGCellIdx));
+  frNode *rootNode = net->getRoot();
+  frPoint rootLoc;
+  if (rootNode != nullptr) {
+    rootNode->getLoc(rootLoc);
+  } else {
+    rootGCellNode->getLoc(rootLoc);
+  }
+  int rootSide = normalizeSelfSymmetryRootSide(axisCtx.sideOfPoint(rootLoc));
 
   map<pair<int, int>, vector<frNode*> > mirrorGCell2PinNodes;
   vector<frPoint> mirrorTerminalGCellIdxs;
@@ -1510,7 +1515,7 @@ FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
     frPoint pinLoc;
     node->getLoc(pinLoc);
     frPoint pinGCellIdx = getGCellIdxFromLoc(pinLoc);
-    int pinSide = axisCtx.sideOfGCell(pinGCellIdx);
+    int pinSide = axisCtx.sideOfPoint(pinLoc);
     if (pinSide == 0 || pinSide == rootSide) {
       continue;
     }

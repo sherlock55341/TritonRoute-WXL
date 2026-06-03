@@ -76,6 +76,116 @@ namespace fr {
            (unsigned)cost;
   }
 
+  inline long long getSelfSymmetryAbsDiff(frCoord lhs, frCoord rhs) {
+    return lhs >= rhs ? (long long)(lhs - rhs) : (long long)(rhs - lhs);
+  }
+
+  inline bool isSelfSymmetryRoutingTrackForAxis(frTrackPattern *trackPattern,
+                                                bool isAxisHorizontal) {
+    if (trackPattern == nullptr) {
+      return false;
+    }
+    return isAxisHorizontal ? !trackPattern->isHorizontal() :
+                              trackPattern->isHorizontal();
+  }
+
+  inline bool findNearestSelfSymmetryRoutingTrack(
+      frDesign *design,
+      bool isAxisHorizontal,
+      frCoord axis,
+      const frBox *preferredBox,
+      frCoord &trackCoord,
+      frLayerNum *layerNum = nullptr,
+      frTrackPattern **trackPattern = nullptr) {
+    auto block = design ? design->getTopBlock() : nullptr;
+    if (block == nullptr) {
+      return false;
+    }
+
+    bool found = false;
+    long long bestDist = std::numeric_limits<long long>::max();
+    frCoord bestCoord = axis;
+    frLayerNum bestLayerNum = 0;
+    frTrackPattern *bestTrackPattern = nullptr;
+    for (auto &layer: design->getTech()->getLayers()) {
+      if (layer->getType() != frLayerTypeEnum::ROUTING) {
+        continue;
+      }
+      auto currLayerNum = layer->getLayerNum();
+      for (auto &uTrackPattern: block->getTrackPatterns(currLayerNum)) {
+        auto tp = uTrackPattern.get();
+        if (!isSelfSymmetryRoutingTrackForAxis(tp, isAxisHorizontal) ||
+            tp->getNumTracks() == 0 || tp->getTrackSpacing() == 0) {
+          continue;
+        }
+
+        int minTrackNum = 0;
+        int maxTrackNum = (int)tp->getNumTracks() - 1;
+        if (preferredBox != nullptr) {
+          auto low = isAxisHorizontal ? preferredBox->bottom() :
+                                        preferredBox->left();
+          auto high = isAxisHorizontal ? preferredBox->top() :
+                                         preferredBox->right();
+          minTrackNum = (low - tp->getStartCoord()) /
+                        (int)tp->getTrackSpacing();
+          if (minTrackNum < 0) {
+            minTrackNum = 0;
+          }
+          if (minTrackNum * (int)tp->getTrackSpacing() +
+                  tp->getStartCoord() < low) {
+            ++minTrackNum;
+          }
+          maxTrackNum = (high - tp->getStartCoord()) /
+                        (int)tp->getTrackSpacing();
+          if (maxTrackNum >= (int)tp->getNumTracks()) {
+            maxTrackNum = (int)tp->getNumTracks() - 1;
+          }
+          if (maxTrackNum * (int)tp->getTrackSpacing() +
+                  tp->getStartCoord() > high) {
+            --maxTrackNum;
+          }
+          if (minTrackNum > maxTrackNum) {
+            continue;
+          }
+        }
+
+        int nearestTrackNum = (axis - tp->getStartCoord()) /
+                              (int)tp->getTrackSpacing();
+        nearestTrackNum = std::max(minTrackNum,
+                                   std::min(maxTrackNum, nearestTrackNum));
+        for (int delta = -1; delta <= 1; ++delta) {
+          int trackNum = nearestTrackNum + delta;
+          if (trackNum < minTrackNum || trackNum > maxTrackNum) {
+            continue;
+          }
+          auto currCoord = trackNum * (int)tp->getTrackSpacing() +
+                           tp->getStartCoord();
+          auto currDist = getSelfSymmetryAbsDiff(currCoord, axis);
+          if (!found || currDist < bestDist ||
+              (currDist == bestDist && currCoord < bestCoord)) {
+            found = true;
+            bestDist = currDist;
+            bestCoord = currCoord;
+            bestLayerNum = currLayerNum;
+            bestTrackPattern = tp;
+          }
+        }
+      }
+    }
+
+    if (!found) {
+      return false;
+    }
+    trackCoord = bestCoord;
+    if (layerNum != nullptr) {
+      *layerNum = bestLayerNum;
+    }
+    if (trackPattern != nullptr) {
+      *trackPattern = bestTrackPattern;
+    }
+    return true;
+  }
+
   inline bool selfSymmetrySegmentCovers(const frPoint &segmentBegin,
                                         const frPoint &segmentEnd,
                                         const frPoint &candidateBegin,
@@ -108,8 +218,11 @@ namespace fr {
 
   struct SelfSymmetryAxisContext {
     bool valid = false;
+    bool axisSnapFailed = false;
     bool isAxisHorizontal = false;
+    frCoord originalAxis = 0;
     frCoord axis = 0;
+    frCoord axisSnapDelta = 0;
     frCoord axisGCellIdx = 0;
     int rootSide = 0;
 
@@ -119,6 +232,8 @@ namespace fr {
       SelfSymmetryAxisContext ctx;
       ctx.valid = true;
       ctx.isAxisHorizontal = isAxisHorizontalIn;
+      ctx.originalAxis = axisGCellIdxIn;
+      ctx.axis = axisGCellIdxIn;
       ctx.axisGCellIdx = axisGCellIdxIn;
       ctx.rootSide = rootSideIn;
       return ctx;
@@ -133,11 +248,27 @@ namespace fr {
       if (block == nullptr) {
         return ctx;
       }
+      frCoord effectiveAxis = constraint.axis;
+      if (!findNearestSelfSymmetryRoutingTrack(design,
+                                               constraint.isAxisHorizontal,
+                                               constraint.axis,
+                                               nullptr,
+                                               effectiveAxis)) {
+        ctx.axisSnapFailed = true;
+      }
+      frPoint effectiveAxisProbe(axisProbe);
+      if (constraint.isAxisHorizontal) {
+        effectiveAxisProbe.set(axisProbe.x(), effectiveAxis);
+      } else {
+        effectiveAxisProbe.set(effectiveAxis, axisProbe.y());
+      }
       frPoint axisGCellLocation;
-      block->getGCellIdx(axisProbe, axisGCellLocation);
+      block->getGCellIdx(effectiveAxisProbe, axisGCellLocation);
       ctx.valid = true;
       ctx.isAxisHorizontal = constraint.isAxisHorizontal;
-      ctx.axis = constraint.axis;
+      ctx.originalAxis = constraint.axis;
+      ctx.axis = effectiveAxis;
+      ctx.axisSnapDelta = ctx.axis - ctx.originalAxis;
       ctx.axisGCellIdx = constraint.isAxisHorizontal ?
                          axisGCellLocation.y() :
                          axisGCellLocation.x();

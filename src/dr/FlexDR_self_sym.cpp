@@ -29,6 +29,7 @@
 #include "dr/FlexDR.h"
 #include "db/obj/frInstTerm.h"
 #include "db/obj/frTerm.h"
+#include "gr/FlexGR_self_sym_utils.h"
 
 #include <algorithm>
 #include <limits>
@@ -377,15 +378,6 @@ namespace {
     return side == 0 ? -1 : side;
   }
 
-  bool isSelfSymmetryDRTrackForAxis(frTrackPattern *trackPattern,
-                                    bool isAxisHorizontal) {
-    if (trackPattern == nullptr) {
-      return false;
-    }
-    return isAxisHorizontal ? !trackPattern->isHorizontal()
-                            : trackPattern->isHorizontal();
-  }
-
   bool findNearestSelfSymmetryDRTrack(frDesign *design,
                                       bool isAxisHorizontal,
                                       frCoord axis,
@@ -393,88 +385,13 @@ namespace {
                                       frCoord &trackCoord,
                                       frLayerNum *layerNum = nullptr,
                                       frTrackPattern **trackPattern = nullptr) {
-    auto block = design ? design->getTopBlock() : nullptr;
-    if (block == nullptr) {
-      return false;
-    }
-
-    bool found = false;
-    long long bestDist = numeric_limits<long long>::max();
-    frCoord bestCoord = axis;
-    frLayerNum bestLayerNum = 0;
-    frTrackPattern *bestTrackPattern = nullptr;
-    for (auto &layer: design->getTech()->getLayers()) {
-      if (layer->getType() != frLayerTypeEnum::ROUTING) {
-        continue;
-      }
-      auto currLayerNum = layer->getLayerNum();
-      for (auto &uTrackPattern: block->getTrackPatterns(currLayerNum)) {
-        auto tp = uTrackPattern.get();
-        if (!isSelfSymmetryDRTrackForAxis(tp, isAxisHorizontal) ||
-            tp->getNumTracks() == 0 || tp->getTrackSpacing() == 0) {
-          continue;
-        }
-
-        int minTrackNum = 0;
-        int maxTrackNum = (int)tp->getNumTracks() - 1;
-        if (preferredBox != nullptr) {
-          auto low = isAxisHorizontal ? preferredBox->bottom()
-                                      : preferredBox->left();
-          auto high = isAxisHorizontal ? preferredBox->top()
-                                       : preferredBox->right();
-          minTrackNum = (low - tp->getStartCoord()) / (int)tp->getTrackSpacing();
-          if (minTrackNum < 0) {
-            minTrackNum = 0;
-          }
-          if (minTrackNum * (int)tp->getTrackSpacing() + tp->getStartCoord() < low) {
-            ++minTrackNum;
-          }
-          maxTrackNum = (high - tp->getStartCoord()) / (int)tp->getTrackSpacing();
-          if (maxTrackNum >= (int)tp->getNumTracks()) {
-            maxTrackNum = (int)tp->getNumTracks() - 1;
-          }
-          if (maxTrackNum * (int)tp->getTrackSpacing() + tp->getStartCoord() > high) {
-            --maxTrackNum;
-          }
-          if (minTrackNum > maxTrackNum) {
-            continue;
-          }
-        }
-
-        int nearestTrackNum = (axis - tp->getStartCoord()) /
-                              (int)tp->getTrackSpacing();
-        nearestTrackNum = max(minTrackNum, min(maxTrackNum, nearestTrackNum));
-        for (int delta = -1; delta <= 1; ++delta) {
-          int trackNum = nearestTrackNum + delta;
-          if (trackNum < minTrackNum || trackNum > maxTrackNum) {
-            continue;
-          }
-          auto currCoord = trackNum * (int)tp->getTrackSpacing() +
-                           tp->getStartCoord();
-          auto currDist = selfSymmetryDRAbsDiff(currCoord, axis);
-          if (!found || currDist < bestDist ||
-              (currDist == bestDist && currCoord < bestCoord)) {
-            found = true;
-            bestDist = currDist;
-            bestCoord = currCoord;
-            bestLayerNum = currLayerNum;
-            bestTrackPattern = tp;
-          }
-        }
-      }
-    }
-
-    if (!found) {
-      return false;
-    }
-    trackCoord = bestCoord;
-    if (layerNum != nullptr) {
-      *layerNum = bestLayerNum;
-    }
-    if (trackPattern != nullptr) {
-      *trackPattern = bestTrackPattern;
-    }
-    return true;
+    return findNearestSelfSymmetryRoutingTrack(design,
+                                               isAxisHorizontal,
+                                               axis,
+                                               preferredBox,
+                                               trackCoord,
+                                               layerNum,
+                                               trackPattern);
   }
 
   frSelfSymmetryConstraint makeEffectiveSelfSymmetryDRConstraint(
@@ -533,6 +450,19 @@ namespace {
       default:
         ;
     }
+  }
+
+  frCost selfSymmetryDRCeilCost(frCoord edgeLen,
+                                unsigned numerator,
+                                unsigned denominator) {
+    if (denominator == 0 || edgeLen <= 0) {
+      return 0;
+    }
+    auto scaled =
+        (static_cast<unsigned long long>(edgeLen) * numerator + denominator - 1) /
+        denominator;
+    return static_cast<frCost>(
+        min<unsigned long long>(scaled, numeric_limits<frCost>::max()));
   }
 
   bool selfSymmetryDRPointOnEffectiveAxis(
@@ -889,8 +819,6 @@ frCost FlexDRWorker::getSelfSymmetryDRCost(frMIdx x,
   frPoint beginPoint, endPoint;
   gridGraph.getPoint(beginPoint, x, y);
   gridGraph.getPoint(endPoint, nextX, nextY);
-  auto beginSide = selfSymmetryDRSideOfPoint(axis, beginPoint);
-  auto endSide = selfSymmetryDRSideOfPoint(axis, endPoint);
   auto beginDist = axis.isAxisHorizontal ?
                    selfSymmetryDRAbsDiff(beginPoint.y(),
                                          axis.effectiveAxis) :
@@ -902,20 +830,17 @@ frCost FlexDRWorker::getSelfSymmetryDRCost(frMIdx x,
                  selfSymmetryDRAbsDiff(endPoint.x(),
                                        axis.effectiveAxis);
 
-  unsigned multiplier = 0;
-  bool mirrorSide = (beginSide != 0 && beginSide != axis.rootSide) ||
-                    (endSide != 0 && endSide != axis.rootSide);
+  frCost cost = 0;
   if (beginDist == 0 && endDist == 0) {
-    multiplier = 0;
-  } else if (mirrorSide || endDist > beginDist) {
-    multiplier = workerDRCCost > 0 ? workerDRCCost - 1 : 1;
+    cost = selfSymmetryDRCeilCost(edgeLen, 1, 10);
+  } else if (endDist > beginDist) {
+    cost = selfSymmetryDRCeilCost(edgeLen, 2, 1);
   } else if (endDist < beginDist) {
-    multiplier = ctx.routeMode == SelfSymmetryDRRouteMode::AxisLink ? 0 : 1;
+    cost = selfSymmetryDRCeilCost(edgeLen, 3, 4);
   } else {
-    multiplier = ctx.routeMode == SelfSymmetryDRRouteMode::AxisLink ? 1 : 3;
+    cost = static_cast<frCost>(edgeLen);
   }
 
-  auto cost = (frCost)(multiplier * edgeLen);
   ++ctx.axisAttractEdges;
   ctx.axisAttractCostTotal += cost;
   return cost;

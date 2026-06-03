@@ -171,10 +171,9 @@ bool FlexGRWorker::isSelfSymmetry2DFrozenAxisBoundaryPathSeg(grPathSeg* pathSeg)
   }
   int rootSide = -1;
   if (rootNode) {
-    frPoint rootLoc, rootGCellIdx;
+    frPoint rootLoc;
     rootNode->getLoc(rootLoc);
-    design->getTopBlock()->getGCellIdx(rootLoc, rootGCellIdx);
-    rootSide = normalizeSelfSymmetryRootSide(axisCtx.sideOfGCell(rootGCellIdx));
+    rootSide = normalizeSelfSymmetryRootSide(axisCtx.sideOfPoint(rootLoc));
   }
 
   int beginSide = axisCtx.sideOfGCell(bpIdx);

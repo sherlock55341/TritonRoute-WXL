@@ -758,8 +758,8 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
         frPoint location;
         node->getLoc(location);
         frPoint gcellLocation = getGCellIdxFromLoc(location);
-        int gcellSide = axisCtx.sideOfGCell(gcellLocation);
-        bool isSourcePin = (node == rootNode || gcellSide == 0 || gcellSide == rootSide);
+        int pinSide = axisCtx.sideOfPoint(location);
+        bool isSourcePin = (node == rootNode || pinSide == 0 || pinSide == rootSide);
         if (isSourcePin) {
             sourceGCell2PinNodes[pointKey(gcellLocation)].push_back(node);
             sourcePinNodes.insert(node);
