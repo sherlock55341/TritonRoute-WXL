@@ -1493,7 +1493,7 @@ void FlexDR::runSelfSymmetryDRPhase() {
     cout << "root_side: " << diagnosticState.rootSide << "\n";
     searchRepair(0, 7, 0, 3, DRCCOST, 0, 0, 0, true, 2, true, 9, false,
                  &selfSymmetryNets, false, "self-symmetry dr phase",
-                 &ordinaryNetsInPhase, true, &diagnosticState);
+                 &ordinaryNetsInPhase, false, &diagnosticState);
     if (diagnosticState.failed ||
         (!diagnosticState.axisContactSeen && !diagnosticState.axisLinkDone)) {
       cout << "Error: self-symmetry DR diagnostic failed for "

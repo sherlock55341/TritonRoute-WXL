@@ -50,6 +50,7 @@ namespace fr {
     bool isAxisHorizontal = false;
     frCoord snappedAxis = 0;
     int rootSide = -1;
+    bool leadOnly = false;
     bool axisContactSeen = false;
     bool axisLinkDone = false;
     bool axisLinkPointValid = false;
@@ -400,7 +401,7 @@ namespace fr {
         SelfSymmetryDRDiagnosticSharedState *state) {
       selfSymmetryDRDiagnosticState = state;
       if (state != nullptr) {
-        selfSymmetryDRDiagnosticLeadOnly = true;
+        selfSymmetryDRDiagnosticLeadOnly = state->leadOnly;
         selfSymmetryDRDiagnosticAxisHorizontal = state->isAxisHorizontal;
         selfSymmetryDRDiagnosticAxis = state->snappedAxis;
         selfSymmetryDRDiagnosticRootSide = state->rootSide;

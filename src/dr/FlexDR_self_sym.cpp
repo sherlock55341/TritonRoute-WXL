@@ -595,7 +595,7 @@ namespace {
   }
 
   bool skipSelfSymmetryDRMirrorPass(frNet *net) {
-    return SelfSymmetryDebug::isDebugNet(net);
+    return net == nullptr;
   }
 
   int getSelfSymmetryDRRootSide(frNet *net,
@@ -1180,7 +1180,7 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
     }
 
     vector<FlexMazeIdx> path;
-    bool isFirstConn = true;
+    bool isFirstConn = forcedSources == nullptr;
     while (!unConnPins.empty()) {
       mazePinInit();
       auto nextPin = routeNet_getNextDst(ccMazeIdx1, ccMazeIdx2,
