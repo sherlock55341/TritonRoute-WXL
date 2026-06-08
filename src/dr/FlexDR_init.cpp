@@ -1946,8 +1946,6 @@ void FlexDRWorker::initNet_term_new(drNet* dNet, vector<frBlockObject*> &terms) 
     }
     int pinIdx = 0;
     int pinAccessIdx = (inst) ? inst->getPinAccessIdx() : -1;
-    bool hasLegalAccessPoint = false;
-    bool hasLeadSideAccessPoint = false;
     for (auto &pin: trueTerm->getPins()) {
       frAccessPoint* prefAp = nullptr;
       if (inst) {
@@ -1969,16 +1967,6 @@ void FlexDRWorker::initNet_term_new(drNet* dNet, vector<frBlockObject*> &terms) 
         auto bNum = ap->getLayerNum();
         auto bLayer = getDesign()->getTech()->getLayer(bNum);
         bp.transform(shiftXform);
-        hasLegalAccessPoint = true;
-        if (isSelfSymmetryDRDiagnosticLeadPoint(bp)) {
-          hasLeadSideAccessPoint = true;
-        } else if (isSelfSymmetryDRDiagnosticLeadOnly()) {
-          if (enableOutput) {
-            cout <<" (" <<bp.x() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<", "
-                        <<bp.y() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<") skipped mirror side";
-          }
-          continue;
-        }
 
         auto dAp  = make_unique<drAccessPattern>();
         dAp->setPoint(bp);
@@ -2050,13 +2038,6 @@ void FlexDRWorker::initNet_term_new(drNet* dNet, vector<frBlockObject*> &terms) 
     }
 
     if (dPin->getAccessPatterns().empty()) {
-      if (isSelfSymmetryDRDiagnosticLeadOnly() &&
-          hasLegalAccessPoint && !hasLeadSideAccessPoint) {
-        if (enableOutput) {
-          cout <<" skipped mirror-side pin in self-symmetry diagnostic\n";
-        }
-        continue;
-      }
       if (enableOutput) {
         cout <<"Warning: pin " <<name <<" does not have pre-calculated ap, gen temp ap ";
         //for (auto &[bp, bNum]: pts) {

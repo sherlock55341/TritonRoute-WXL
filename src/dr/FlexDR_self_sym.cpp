@@ -643,9 +643,10 @@ void FlexDRWorker::initSelfSymmetryDRAxisContext(
   ctx.originalAxis = constraint.axis;
   ctx.effectiveAxis = constraint.axis;
 
-  if (isSelfSymmetryDRDiagnosticNet(net)) {
-    ctx.effectiveAxis = selfSymmetryDRDiagnosticState->snappedAxis;
-    ctx.rootSide = selfSymmetryDRDiagnosticState->rootSide;
+  auto sharedState = getSelfSymmetryDRSharedState(net);
+  if (sharedState != nullptr) {
+    ctx.effectiveAxis = sharedState->snappedAxis;
+    ctx.rootSide = sharedState->rootSide;
   } else {
     frCoord snappedAxis = constraint.axis;
     bool foundPreferredTrack = false;
@@ -690,7 +691,7 @@ void FlexDRWorker::initSelfSymmetryDRAxisContext(
     }
   }
 
-  if (!isSelfSymmetryDRDiagnosticNet(net)) {
+  if (sharedState == nullptr) {
     frNode *rootNode = net->getRootGCellNode();
     if (rootNode == nullptr) {
       rootNode = net->getRoot();
@@ -726,8 +727,9 @@ void FlexDRWorker::initTrackCoords_selfSymmetryAxis(
   frCoord snappedAxis = constraint.axis;
   frLayerNum layerNum = 0;
   frTrackPattern *trackPattern = nullptr;
-  if (isSelfSymmetryDRDiagnosticNet(net)) {
-    snappedAxis = selfSymmetryDRDiagnosticState->snappedAxis;
+  auto sharedState = getSelfSymmetryDRSharedState(net);
+  if (sharedState != nullptr) {
+    snappedAxis = sharedState->snappedAxis;
     bool axisInExtBox = constraint.isAxisHorizontal ?
                         snappedAxis >= extBox.bottom() &&
                         snappedAxis <= extBox.top() :
@@ -1058,8 +1060,7 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
   auto &ctx = initSelfSymmetryDRRoutingContext(net->getFrNet());
   initSelfSymmetryDRAxisContext(net->getFrNet(), ctx);
   ctx.routeMode = SelfSymmetryDRRouteMode::Lead;
-  auto diagnosticState = isSelfSymmetryDRDiagnosticNet(net->getFrNet()) ?
-                         selfSymmetryDRDiagnosticState : nullptr;
+  auto sharedState = getSelfSymmetryDRSharedState(net->getFrNet());
 
   vector<drPin*> leadPins;
   vector<drPin*> mirrorPins;
@@ -1089,11 +1090,11 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
     leadPins.push_back(net->getPins().front().get());
   }
 
-  drPin diagnosticAxisBoundaryPin;
-  if (diagnosticState != nullptr &&
-      diagnosticState->axisLinkDone &&
-      diagnosticState->axisLinkPointValid) {
-    frPoint axisPoint = diagnosticState->axisLinkPoint;
+  drPin axisBoundaryPin;
+  if (sharedState != nullptr &&
+      sharedState->axisLinkDone &&
+      sharedState->axisLinkPointValid) {
+    frPoint axisPoint = sharedState->axisLinkPoint;
     if (ctx.axis.isAxisHorizontal) {
       if (axisPoint.x() <= routeBox.left()) {
         axisPoint.set(routeBox.left(), ctx.axis.effectiveAxis);
@@ -1112,16 +1113,16 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
       }
     }
     if (routeBox.contains(axisPoint) &&
-        gridGraph.hasMazeIdx(axisPoint, diagnosticState->axisLinkLayerNum)) {
+        gridGraph.hasMazeIdx(axisPoint, sharedState->axisLinkLayerNum)) {
       FlexMazeIdx axisMazeIdx;
       gridGraph.getMazeIdx(axisMazeIdx, axisPoint,
-                           diagnosticState->axisLinkLayerNum);
+                           sharedState->axisLinkLayerNum);
       auto axisAP = make_unique<drAccessPattern>();
       axisAP->setPoint(axisPoint);
-      axisAP->setBeginLayerNum(diagnosticState->axisLinkLayerNum);
+      axisAP->setBeginLayerNum(sharedState->axisLinkLayerNum);
       axisAP->setMazeIdx(axisMazeIdx);
-      diagnosticAxisBoundaryPin.addAccessPattern(axisAP);
-      leadPins.push_back(&diagnosticAxisBoundaryPin);
+      axisBoundaryPin.addAccessPattern(axisAP);
+      leadPins.push_back(&axisBoundaryPin);
     }
   }
 
@@ -1234,8 +1235,8 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
   cout << "self-symmetry dr lead axis contact before link: "
        << net->getFrNet()->getName() << " "
        << (ctx.leadAxisContactBeforeLink ? 1 : 0) << "\n";
-  if (diagnosticState != nullptr && ctx.leadAxisContactBeforeLink) {
-    diagnosticState->axisContactSeen = true;
+  if (sharedState != nullptr && ctx.leadAxisContactBeforeLink) {
+    sharedState->axisContactSeen = true;
   }
 
   bool axisLinkAttempted = false;
@@ -1243,32 +1244,30 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
   if (!ctx.leadAxisContactBeforeLink) {
     vector<FlexMazeIdx> axisCandidates;
     collectSelfSymmetryDRAxisCandidates(ctx, axisCandidates);
-    if (diagnosticState != nullptr) {
-      vector<FlexMazeIdx> boundaryAxisCandidates;
-      for (auto &mi: axisCandidates) {
-        frPoint point;
-        gridGraph.getPoint(point, mi.x(), mi.y());
-        if (point.x() == routeBox.left() ||
-            point.x() == routeBox.right() ||
-            point.y() == routeBox.bottom() ||
-            point.y() == routeBox.top()) {
-          boundaryAxisCandidates.push_back(mi);
-        }
-      }
-      if (!boundaryAxisCandidates.empty()) {
-        axisCandidates = std::move(boundaryAxisCandidates);
+    vector<FlexMazeIdx> boundaryAxisCandidates;
+    for (auto &mi: axisCandidates) {
+      frPoint point;
+      gridGraph.getPoint(point, mi.x(), mi.y());
+      if (point.x() == routeBox.left() ||
+          point.x() == routeBox.right() ||
+          point.y() == routeBox.bottom() ||
+          point.y() == routeBox.top()) {
+        boundaryAxisCandidates.push_back(mi);
       }
     }
-    bool maySearchAxisLink = diagnosticState == nullptr ||
-                             (!diagnosticState->axisContactSeen &&
-                              !diagnosticState->axisLinkDone);
+    if (!boundaryAxisCandidates.empty()) {
+      axisCandidates = std::move(boundaryAxisCandidates);
+    }
+    bool maySearchAxisLink = sharedState == nullptr ||
+                             (!sharedState->axisContactSeen &&
+                              !sharedState->axisLinkDone);
     if (maySearchAxisLink && !axisCandidates.empty()) {
       cout << "self-symmetry dr lead axis-link search: "
            << net->getFrNet()->getName() << "\n";
       axisLinkAttempted = true;
       ++ctx.leadAxisLinkSearches;
-      if (diagnosticState != nullptr) {
-        ++diagnosticState->axisLinkSearchCount;
+      if (sharedState != nullptr) {
+        ++sharedState->axisLinkSearchCount;
       }
       ctx.routeMode = SelfSymmetryDRRouteMode::AxisLink;
       drPin axisPin;
@@ -1288,7 +1287,7 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
       mazePinInit();
       if (gridGraph.search(leadConnComps, &axisPin, path, leadCCMazeIdx1,
                            leadCCMazeIdx2, leadCenterPt)) {
-        if (diagnosticState != nullptr) {
+        if (sharedState != nullptr) {
           for (auto it = path.rbegin(); it != path.rend(); ++it) {
             frPoint point;
             gridGraph.getPoint(point, it->x(), it->y());
@@ -1297,9 +1296,9 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
                  point.y() == routeBox.bottom() ||
                  point.y() == routeBox.top()) &&
                 selfSymmetryDRPointOnEffectiveAxis(ctx.axis, point)) {
-              diagnosticState->axisLinkPoint = point;
-              diagnosticState->axisLinkLayerNum = gridGraph.getLayerNum(it->z());
-              diagnosticState->axisLinkPointValid = true;
+              sharedState->axisLinkPoint = point;
+              sharedState->axisLinkLayerNum = gridGraph.getLayerNum(it->z());
+              sharedState->axisLinkPointValid = true;
               break;
             }
           }
@@ -1320,7 +1319,7 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
       for (auto &mi: axisDst) {
         gridGraph.resetDst(mi);
       }
-    } else if (diagnosticState != nullptr) {
+    } else if (sharedState != nullptr) {
       cout << "self-symmetry dr lead axis-link deferred: "
            << net->getFrNet()->getName() << "\n";
     } else {
@@ -1328,18 +1327,18 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
            << net->getFrNet()->getName() << "\n";
     }
     if (axisLinkAttempted && !axisLinkSucceeded) {
-      if (diagnosticState != nullptr) {
-        diagnosticState->failed = true;
+      if (sharedState != nullptr) {
+        sharedState->failed = true;
       }
       printSelfSymmetryDRRouteDebug(net, ctx);
       deactivateSelfSymmetryDRRoutingContext();
       return false;
     }
-    if (axisLinkSucceeded && diagnosticState != nullptr &&
-        !diagnosticState->axisLinkPointValid) {
+    if (axisLinkSucceeded && sharedState != nullptr &&
+        !sharedState->axisLinkPointValid) {
       cout << "Error: self-symmetry DR axis-link missed tile boundary for "
            << net->getFrNet()->getName() << "\n";
-      diagnosticState->failed = true;
+      sharedState->failed = true;
       printSelfSymmetryDRRouteDebug(net, ctx);
       deactivateSelfSymmetryDRRoutingContext();
       return false;
@@ -1347,11 +1346,11 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
   }
   ctx.leadAxisContactAfterLink =
       hasSelfSymmetryDRAxisContact(ctx, leadConnComps);
-  if (diagnosticState != nullptr && ctx.leadAxisContactAfterLink) {
-    diagnosticState->axisContactSeen = true;
+  if (sharedState != nullptr && ctx.leadAxisContactAfterLink) {
+    sharedState->axisContactSeen = true;
   }
-  if (diagnosticState != nullptr && axisLinkSucceeded) {
-    diagnosticState->axisLinkDone = true;
+  if (sharedState != nullptr && axisLinkSucceeded) {
+    sharedState->axisLinkDone = true;
   }
   cout << "self-symmetry dr lead axis contact after link: "
        << net->getFrNet()->getName() << " "
@@ -1360,14 +1359,14 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
   if (axisLinkAttempted && !ctx.leadAxisContactAfterLink) {
     cout << "Error: self-symmetry DR lead tree still misses axis after link for "
          << net->getFrNet()->getName() << "\n";
-    if (diagnosticState != nullptr) {
-      diagnosticState->failed = true;
+    if (sharedState != nullptr) {
+      sharedState->failed = true;
     }
     printSelfSymmetryDRRouteDebug(net, ctx);
     deactivateSelfSymmetryDRRoutingContext();
     return false;
   }
-  if (diagnosticState == nullptr && !ctx.leadAxisContactAfterLink) {
+  if (sharedState == nullptr && !ctx.leadAxisContactAfterLink) {
     cout << "Error: self-symmetry DR lead tree still misses axis after link for "
          << net->getFrNet()->getName() << "\n";
     printSelfSymmetryDRRouteDebug(net, ctx);
@@ -1411,22 +1410,9 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
   return true;
 }
 
-frNet* FlexDR::getSelfSymmetryDRDiagnosticNet() const {
-  for (auto net: collectSelfSymmetryDRNets(design)) {
-    if (SelfSymmetryDebug::isDebugNet(net)) {
-      return net;
-    }
-  }
-  return nullptr;
-}
-
-bool FlexDR::hasSelfSymmetryDRDiagnosticNet() const {
-  return getSelfSymmetryDRDiagnosticNet() != nullptr;
-}
-
-bool FlexDR::initSelfSymmetryDRDiagnosticState(
+bool FlexDR::initSelfSymmetryDRSharedState(
     frNet *net,
-    SelfSymmetryDRDiagnosticSharedState &state) const {
+    SelfSymmetryDRSharedState &state) const {
   if (design == nullptr || design->getTopBlock() == nullptr ||
       net == nullptr || net->getSelfSymmetryConstraintPtr() == nullptr) {
     return false;
@@ -1439,7 +1425,7 @@ bool FlexDR::initSelfSymmetryDRDiagnosticState(
                                       constraint.axis,
                                       nullptr,
                                       snappedAxis)) {
-    cout << "Error: self-symmetry DR failed to snap diagnostic axis for "
+    cout << "Error: self-symmetry DR failed to snap axis for "
          << net->getName() << "\n";
     return false;
   }
@@ -1452,12 +1438,12 @@ bool FlexDR::initSelfSymmetryDRDiagnosticState(
                    snappedAxis >= dieBox.left() &&
                    snappedAxis <= dieBox.right();
   if (!axisInDie) {
-    cout << "Error: self-symmetry DR snapped diagnostic axis is outside die for "
+    cout << "Error: self-symmetry DR snapped axis is outside die for "
          << net->getName() << "\n";
     return false;
   }
 
-  state = SelfSymmetryDRDiagnosticSharedState();
+  state = SelfSymmetryDRSharedState();
   state.net = net;
   state.isAxisHorizontal = constraint.isAxisHorizontal;
   state.snappedAxis = snappedAxis;

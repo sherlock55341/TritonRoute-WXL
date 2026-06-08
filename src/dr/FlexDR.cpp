@@ -1478,38 +1478,32 @@ bool FlexDR::runSelfSymmetryDRPhase() {
   cout << endl << "@@@ self-symmetry dr phase @@@" << endl;
   cout << "self_symmetry_nets: " << selfSymmetryNets.size() << "\n";
   int ordinaryNetsInPhase = 0;
-  auto diagnosticNet = getSelfSymmetryDRDiagnosticNet();
-  const bool useDiagnosticFlow =
-      diagnosticNet != nullptr && selfSymmetryNets.size() == 1 &&
-      selfSymmetryNets.find(diagnosticNet) != selfSymmetryNets.end();
-  if (useDiagnosticFlow) {
-    SelfSymmetryDRDiagnosticSharedState diagnosticState;
-    if (!initSelfSymmetryDRDiagnosticState(diagnosticNet, diagnosticState)) {
-      cout << "Error: self-symmetry DR diagnostic state init failed for "
-           << diagnosticNet->getName() << "\n";
+  SelfSymmetryDRSharedStateMap selfSymmetryDRSharedStates;
+  for (auto net: selfSymmetryNets) {
+    SelfSymmetryDRSharedState state;
+    if (!initSelfSymmetryDRSharedState(net, state)) {
+      cout << "Error: self-symmetry DR shared state init failed for "
+           << net->getName() << "\n";
       exit(1);
     }
-    selfSymmetryNets.clear();
-    selfSymmetryNets.insert(diagnosticNet);
-    cout << "self-symmetry dr diagnostic mode: tiled searchRepair\n";
-    cout << "snapped_axis: " << diagnosticState.snappedAxis << "\n";
-    cout << "root_side: " << diagnosticState.rootSide << "\n";
-    searchRepair(0, 7, 0, 3, DRCCOST, 0, 0, 0, true, 2, true, 9, false,
-                 &selfSymmetryNets, false, "self-symmetry dr phase",
-                 &ordinaryNetsInPhase, false, &diagnosticState);
-    if (diagnosticState.failed ||
-        (!diagnosticState.axisContactSeen && !diagnosticState.axisLinkDone)) {
-      cout << "Error: self-symmetry DR diagnostic failed for "
-           << diagnosticNet->getName() << "\n";
+    selfSymmetryDRSharedStates[net] = state;
+    cout << "snapped_axis: " << net->getName() << " "
+         << state.snappedAxis << "\n";
+    cout << "root_side: " << net->getName() << " "
+         << state.rootSide << "\n";
+  }
+  searchRepair(0, 7, 0, 3, DRCCOST, 0, 0, 0, true, 2, true, 9, false,
+               &selfSymmetryNets, false, "self-symmetry dr phase",
+               &ordinaryNetsInPhase, false, &selfSymmetryDRSharedStates);
+  for (auto &[net, state]: selfSymmetryDRSharedStates) {
+    if (state.failed || (!state.axisContactSeen && !state.axisLinkDone)) {
+      cout << "Error: self-symmetry DR failed for "
+           << net->getName() << "\n";
       exit(1);
     }
     cout << "self-symmetry dr lead axis-link searches: "
-         << diagnosticNet->getName() << " "
-         << diagnosticState.axisLinkSearchCount << "\n";
-  } else {
-    searchRepair(0, 7, 0, 3, DRCCOST, 0, 0, 0, true, 2, true, 9, false,
-                 &selfSymmetryNets, false, "self-symmetry dr phase",
-                 &ordinaryNetsInPhase);
+         << net->getName() << " "
+         << state.axisLinkSearchCount << "\n";
   }
   cout << "ordinary_nets_in_phase: " << ordinaryNetsInPhase << "\n";
   reportSelfSymmetryDRPhaseRouteCount(selfSymmetryNets);
@@ -1859,7 +1853,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
                           const string &stageName,
                           int *ordinaryNetsInPhase,
                           bool skipConnectivityCheck,
-                          SelfSymmetryDRDiagnosticSharedState *selfSymmetryDRDiagnosticState) {
+                          SelfSymmetryDRSharedStateMap *selfSymmetryDRSharedStates) {
   if (iter > END_ITERATION) {
     return;
   }
@@ -1964,7 +1958,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     worker.setFollowGuide(followGuide);
     worker.setFixMode(fixMode);
     worker.setTargetNets(targetNets);
-    worker.setSelfSymmetryDRDiagnosticState(selfSymmetryDRDiagnosticState);
+    worker.setSelfSymmetryDRSharedStates(selfSymmetryDRSharedStates);
     //worker.setNetOrderingMode(netOrderingMode);
     worker.setCost(workerDRCCost, workerMarkerCost, workerMarkerBloatWidth, workerMarkerBloatDepth);
     worker.main_mt();
@@ -2097,7 +2091,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
         worker->setRipupMode(ripupMode);
         worker->setFollowGuide(followGuide);
         worker->setTargetNets(targetNets);
-        worker->setSelfSymmetryDRDiagnosticState(selfSymmetryDRDiagnosticState);
+        worker->setSelfSymmetryDRSharedStates(selfSymmetryDRSharedStates);
         //worker->setNetOrderingMode(netOrderingMode);
         worker->setFixMode(fixMode);
         worker->setCost(workerDRCCost, workerMarkerCost, workerMarkerBloatWidth, workerMarkerBloatDepth);
@@ -2119,9 +2113,9 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     // if (iter >= 2) {
     //   omp_set_num_threads(1);
     // }
-    const bool runWorkersSerially = selfSymmetryDRDiagnosticState != nullptr;
+    const bool runWorkersSerially = selfSymmetryDRSharedStates != nullptr;
     if (runWorkersSerially) {
-      cout << "self-symmetry dr diagnostic mode: serial tiled workers\n";
+      cout << "self-symmetry dr phase: serial tiled workers\n";
     }
 
     // parallel execution
@@ -2174,7 +2168,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     }
   }
   if (skipConnectivityCheck) {
-    cout << "self-symmetry dr diagnostic mode: connectivity check skipped\n";
+    cout << "self-symmetry dr phase: connectivity check skipped\n";
   } else {
     checkConnectivity(iter, targetNets);
   }

@@ -3807,7 +3807,7 @@ bool FlexDRWorker::routeNet(drNet* net) {
   if (net && net->getFrNet() &&
       net->getFrNet()->getSelfSymmetryConstraintPtr() != nullptr &&
       getFixMode() == 9) {
-    if (!isSelfSymmetryDRDiagnosticNet(net->getFrNet()) &&
+    if (getSelfSymmetryDRSharedState(net->getFrNet()) == nullptr &&
         !hasSelfSymmetryDRAxisInRouteBox(net->getFrNet())) {
       return true;
     }
