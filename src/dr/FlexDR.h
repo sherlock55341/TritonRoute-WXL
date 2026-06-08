@@ -128,12 +128,13 @@ namespace fr {
     void reportSelfSymmetryDRChecker() const;
     void reportSelfSymmetryDRPhaseRouteCount(const std::set<frNet*, frBlockObjectComp> &targetNets) const;
     void collectSelfSymmetryDRTargetNets(std::set<frNet*, frBlockObjectComp> &targetNets) const;
+    void keepOnlySelfSymmetryDRTargetRoutes(const std::set<frNet*, frBlockObjectComp> &targetNets);
     frNet* getSelfSymmetryDRDiagnosticNet() const;
     bool hasSelfSymmetryDRDiagnosticNet() const;
     bool initSelfSymmetryDRDiagnosticState(
         frNet *net,
         SelfSymmetryDRDiagnosticSharedState &state) const;
-    void runSelfSymmetryDRPhase();
+    bool runSelfSymmetryDRPhase();
     void getBatchInfo(int &batchStepX, int &batchStepY);
 
     void init_halfViaEncArea();
@@ -658,6 +659,7 @@ namespace fr {
       return selfSymmetryDRDiagnosticState != nullptr &&
              selfSymmetryDRDiagnosticState->net == net;
     }
+    bool hasSelfSymmetryDRAxisInRouteBox(frNet *net);
     bool isSelfSymmetryDRDiagnosticLeadPoint(const frPoint &point) const {
       if (!selfSymmetryDRDiagnosticLeadOnly) {
         return true;

@@ -5352,14 +5352,30 @@ void io::Parser::readLefDef() {
 
   readDef();
 
-  auto symmtry5It = design->getTopBlock()->name2net.find("Symmtry5");
-  if (symmtry5It != design->getTopBlock()->name2net.end()) {
-    auto symmtry5Net = symmtry5It->second;
-    const frCoord symmtry5Axis = 72000;
-    frBox dieBox;
-    design->getTopBlock()->getBoundaryBBox(dieBox);
-    if (symmtry5Axis < dieBox.bottom() || symmtry5Axis > dieBox.top()) {
-      cout << "Error: Symmtry5 self-symmetry axis y=" << symmtry5Axis
+  struct SelfSymmetrySpec {
+    const char *netName;
+    bool isAxisHorizontal;
+    frCoord axis;
+  };
+  const vector<SelfSymmetrySpec> selfSymmetrySpecs = {
+      {"Symmtry2", false, 23200},
+      {"Symmtry5", true, 72000},
+  };
+  frBox dieBox;
+  design->getTopBlock()->getBoundaryBBox(dieBox);
+  for (const auto &spec: selfSymmetrySpecs) {
+    auto netIt = design->getTopBlock()->name2net.find(spec.netName);
+    if (netIt == design->getTopBlock()->name2net.end()) {
+      continue;
+    }
+    auto net = netIt->second;
+    auto axisName = spec.isAxisHorizontal ? "y" : "x";
+    bool axisInDie = spec.isAxisHorizontal ?
+                     spec.axis >= dieBox.bottom() && spec.axis <= dieBox.top() :
+                     spec.axis >= dieBox.left() && spec.axis <= dieBox.right();
+    if (!axisInDie) {
+      cout << "Error: " << spec.netName << " self-symmetry axis "
+           << axisName << "=" << spec.axis
            << " is outside die box " << dieBox << "\n";
       exit(1);
     }
@@ -5367,29 +5383,31 @@ void io::Parser::readLefDef() {
     int lowerCnt = 0;
     int onAxisCnt = 0;
     int upperCnt = 0;
-    for (auto instTerm: symmtry5Net->getInstTerms()) {
+    for (auto instTerm: net->getInstTerms()) {
       frPoint origin;
       instTerm->getInst()->getOrigin(origin);
-      if (origin.y() < symmtry5Axis) {
+      auto originCoord = spec.isAxisHorizontal ? origin.y() : origin.x();
+      if (originCoord < spec.axis) {
         lowerCnt++;
-      } else if (origin.y() > symmtry5Axis) {
+      } else if (originCoord > spec.axis) {
         upperCnt++;
       } else {
         onAxisCnt++;
       }
     }
     if (lowerCnt == 0 || upperCnt == 0) {
-      cout << "Error: Symmtry5 self-symmetry axis y=" << symmtry5Axis
+      cout << "Error: " << spec.netName << " self-symmetry axis "
+           << axisName << "=" << spec.axis
            << " does not split instances on both sides; lower=" << lowerCnt
            << ", onAxis=" << onAxisCnt << ", upper=" << upperCnt << "\n";
       exit(1);
     }
 
     frSelfSymmetryConstraint selfSymmetryConstraint;
-    selfSymmetryConstraint.isAxisHorizontal = true;
-    selfSymmetryConstraint.axis = symmtry5Axis;
-    symmtry5Net->setSelfSymmetryConstraint(selfSymmetryConstraint);
-    symmtry5Net->setConstraint(frNetRoutingConstraint::frcSelfSymmetry);
+    selfSymmetryConstraint.isAxisHorizontal = spec.isAxisHorizontal;
+    selfSymmetryConstraint.axis = spec.axis;
+    net->setSelfSymmetryConstraint(selfSymmetryConstraint);
+    net->setConstraint(frNetRoutingConstraint::frcSelfSymmetry);
   }
 
   if (VERBOSE > 0) {

@@ -1468,18 +1468,21 @@ void FlexDR::collectSelfSymmetryDRTargetNets(set<frNet*, frBlockObjectComp> &tar
   }
 }
 
-void FlexDR::runSelfSymmetryDRPhase() {
+bool FlexDR::runSelfSymmetryDRPhase() {
   set<frNet*, frBlockObjectComp> selfSymmetryNets;
   collectSelfSymmetryDRTargetNets(selfSymmetryNets);
   if (selfSymmetryNets.empty()) {
-    return;
+    return false;
   }
 
   cout << endl << "@@@ self-symmetry dr phase @@@" << endl;
   cout << "self_symmetry_nets: " << selfSymmetryNets.size() << "\n";
   int ordinaryNetsInPhase = 0;
   auto diagnosticNet = getSelfSymmetryDRDiagnosticNet();
-  if (diagnosticNet != nullptr) {
+  const bool useDiagnosticFlow =
+      diagnosticNet != nullptr && selfSymmetryNets.size() == 1 &&
+      selfSymmetryNets.find(diagnosticNet) != selfSymmetryNets.end();
+  if (useDiagnosticFlow) {
     SelfSymmetryDRDiagnosticSharedState diagnosticState;
     if (!initSelfSymmetryDRDiagnosticState(diagnosticNet, diagnosticState)) {
       cout << "Error: self-symmetry DR diagnostic state init failed for "
@@ -1512,6 +1515,8 @@ void FlexDR::runSelfSymmetryDRPhase() {
   reportSelfSymmetryDRPhaseRouteCount(selfSymmetryNets);
   reportSelfSymmetryDRChecker();
   snapshotSelfSymmetryDRRoutes();
+  keepOnlySelfSymmetryDRTargetRoutes(selfSymmetryNets);
+  return true;
 }
 
 void FlexDR::initDR(int size, bool enableDRC) {
@@ -2440,9 +2445,8 @@ int FlexDR::main() {
 
   // need three different offsets to resolve boundary corner issues
 
-  runSelfSymmetryDRPhase();
-  if (hasSelfSymmetryDRDiagnosticNet()) {
-    cout << "self-symmetry dr diagnostic mode: skipping ordinary detail routing\n";
+  if (runSelfSymmetryDRPhase()) {
+    cout << "self-symmetry dr phase: skipping ordinary detail routing\n";
     end();
     if (VERBOSE > 0) {
       t.print();

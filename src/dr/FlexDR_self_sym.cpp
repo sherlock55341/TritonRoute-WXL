@@ -706,6 +706,15 @@ void FlexDRWorker::initSelfSymmetryDRAxisContext(
   }
 }
 
+bool FlexDRWorker::hasSelfSymmetryDRAxisInRouteBox(frNet *net) {
+  if (net == nullptr || net->getSelfSymmetryConstraintPtr() == nullptr) {
+    return false;
+  }
+  SelfSymmetryDRRouteContext routeCtx;
+  initSelfSymmetryDRAxisContext(net, routeCtx);
+  return routeCtx.axis.valid && routeCtx.axis.axisInRouteBox;
+}
+
 void FlexDRWorker::initTrackCoords_selfSymmetryAxis(
     frNet* net,
     map<frCoord, map<frLayerNum, frTrackPattern*> > &xMap,
@@ -1530,6 +1539,39 @@ void FlexDR::reportSelfSymmetryDRPhaseRouteCount(const set<frNet*, frBlockObject
   }
   cout << "after_phase_shapes/vias/patch_wires: "
        << shapes << "/" << vias << "/" << patchWires << "\n";
+}
+
+void FlexDR::keepOnlySelfSymmetryDRTargetRoutes(
+    const set<frNet*, frBlockObjectComp> &targetNets) {
+  if (getDesign() == nullptr || getDesign()->getTopBlock() == nullptr) {
+    return;
+  }
+  auto regionQuery = getRegionQuery();
+  for (auto &uNet: getDesign()->getTopBlock()->getNets()) {
+    auto net = uNet.get();
+    if (targetNets.find(net) != targetNets.end()) {
+      continue;
+    }
+    for (auto &shape: net->getShapes()) {
+      if (regionQuery != nullptr) {
+        regionQuery->removeDRObj(shape.get());
+      }
+    }
+    for (auto &via: net->getVias()) {
+      if (regionQuery != nullptr) {
+        regionQuery->removeDRObj(via.get());
+      }
+    }
+    for (auto &patchWire: net->getPatchWires()) {
+      if (regionQuery != nullptr) {
+        regionQuery->removeDRObj(patchWire.get());
+      }
+    }
+    net->getShapes().clear();
+    net->getVias().clear();
+    net->getPatchWires().clear();
+    net->setModified(false);
+  }
 }
 
 void FlexDR::snapshotSelfSymmetryDRRoutes() {
