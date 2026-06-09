@@ -129,6 +129,7 @@ namespace fr {
     void reportSelfSymmetryDRChecker() const;
     void reportSelfSymmetryDRPhaseRouteCount(const std::set<frNet*, frBlockObjectComp> &targetNets) const;
     void collectSelfSymmetryDRTargetNets(std::set<frNet*, frBlockObjectComp> &targetNets) const;
+    void collectOrdinaryDRTargetNets(std::set<frNet*, frBlockObjectComp> &targetNets) const;
     void keepOnlySelfSymmetryDRTargetRoutes(const std::set<frNet*, frBlockObjectComp> &targetNets);
     bool initSelfSymmetryDRSharedState(
         frNet *net,

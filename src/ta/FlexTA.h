@@ -108,6 +108,7 @@ namespace fr {
     void initTA(int size);
     void searchRepair(int iter, int size, int offset);
     int  initTA_helper(int iter, int size, int offset, bool isH, int &numPanels);
+    void snapSelfSymmetryAxisGuides();
   };
 
 

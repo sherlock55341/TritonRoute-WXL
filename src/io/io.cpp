@@ -5358,6 +5358,10 @@ void io::Parser::readLefDef() {
     frCoord axis;
   };
   const vector<SelfSymmetrySpec> selfSymmetrySpecs = {
+      {"Symmtry1", false, 17400},
+      {"Symmtry2", false, 23400},
+      {"Symmtry3", true, 45790},
+      {"Symmtry4", true, 59850},
       {"Symmtry5", true, 72000},
   };
   frBox dieBox;

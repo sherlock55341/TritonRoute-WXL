@@ -1086,10 +1086,6 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
       mirrorPins.push_back(pin);
     }
   }
-  if (leadPins.empty() && !net->getPins().empty()) {
-    leadPins.push_back(net->getPins().front().get());
-  }
-
   drPin axisBoundaryPin;
   if (sharedState != nullptr &&
       sharedState->axisLinkDone &&
@@ -1220,13 +1216,18 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
   vector<FlexMazeIdx> leadConnComps;
   FlexMazeIdx leadCCMazeIdx1, leadCCMazeIdx2;
   frPoint leadCenterPt;
-  cout << "self-symmetry dr lead terminal search: "
-       << net->getFrNet()->getName() << "\n";
-  if (!routeSelectedPins(leadPins, nullptr, leadConnComps, leadCCMazeIdx1,
-                         leadCCMazeIdx2, leadCenterPt)) {
-    printSelfSymmetryDRRouteDebug(net, ctx);
-    deactivateSelfSymmetryDRRoutingContext();
-    return false;
+  if (!leadPins.empty()) {
+    cout << "self-symmetry dr lead terminal search: "
+         << net->getFrNet()->getName() << "\n";
+    if (!routeSelectedPins(leadPins, nullptr, leadConnComps, leadCCMazeIdx1,
+                           leadCCMazeIdx2, leadCenterPt)) {
+      printSelfSymmetryDRRouteDebug(net, ctx);
+      deactivateSelfSymmetryDRRoutingContext();
+      return false;
+    }
+  } else {
+    cout << "self-symmetry dr lead terminal search skipped: "
+         << net->getFrNet()->getName() << "\n";
   }
   printSelfSymmetryDRRouteSnapshot(net, ctx, "after_lead_before_axis_link");
 
@@ -1241,7 +1242,7 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
 
   bool axisLinkAttempted = false;
   bool axisLinkSucceeded = false;
-  if (!ctx.leadAxisContactBeforeLink) {
+  if (!leadPins.empty() && !ctx.leadAxisContactBeforeLink) {
     vector<FlexMazeIdx> axisCandidates;
     collectSelfSymmetryDRAxisCandidates(ctx, axisCandidates);
     vector<FlexMazeIdx> boundaryAxisCandidates;
@@ -1366,7 +1367,8 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
     deactivateSelfSymmetryDRRoutingContext();
     return false;
   }
-  if (sharedState == nullptr && !ctx.leadAxisContactAfterLink) {
+  if (sharedState == nullptr && !leadPins.empty() &&
+      !ctx.leadAxisContactAfterLink) {
     cout << "Error: self-symmetry DR lead tree still misses axis after link for "
          << net->getFrNet()->getName() << "\n";
     printSelfSymmetryDRRouteDebug(net, ctx);
@@ -1383,23 +1385,26 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
     vector<FlexMazeIdx> axisSources;
     ctx.mirrorAxisSourceCount =
         collectSelfSymmetryDRAxisSources(leadConnComps, ctx, axisSources);
-    if (!mirrorPins.empty() && !axisSources.empty()) {
-      cout << "self-symmetry dr mirror pass: "
-           << net->getFrNet()->getName() << "\n";
+    if (!mirrorPins.empty()) {
+      auto forcedMirrorSources = axisSources.empty() ? nullptr : &axisSources;
+      if (forcedMirrorSources != nullptr) {
+        cout << "self-symmetry dr mirror pass: "
+             << net->getFrNet()->getName() << "\n";
+      } else {
+        cout << "self-symmetry dr mirror local repair: "
+             << net->getFrNet()->getName() << "\n";
+      }
       ctx.routeMode = SelfSymmetryDRRouteMode::Mirror;
       vector<FlexMazeIdx> mirrorConnComps;
       FlexMazeIdx mirrorCCMazeIdx1, mirrorCCMazeIdx2;
       frPoint mirrorCenterPt;
-      if (!routeSelectedPins(mirrorPins, &axisSources, mirrorConnComps,
+      if (!routeSelectedPins(mirrorPins, forcedMirrorSources, mirrorConnComps,
                              mirrorCCMazeIdx1, mirrorCCMazeIdx2,
                              mirrorCenterPt)) {
         printSelfSymmetryDRRouteDebug(net, ctx);
         deactivateSelfSymmetryDRRoutingContext();
         return false;
       }
-    } else if (!mirrorPins.empty()) {
-      cout << "Error: self-symmetry DR mirror pass has no axis source for "
-           << net->getFrNet()->getName() << "\n";
     }
     printSelfSymmetryDRRouteSnapshot(net, ctx, "after_mirror");
   }

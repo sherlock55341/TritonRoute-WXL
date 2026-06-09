@@ -2487,7 +2487,7 @@ void FlexDRWorker::initNets() {
   if (hasTargetNetFilter()) {
     set<frNet*, frBlockObjectComp> ordinaryNets;
     for (auto &net: getNets()) {
-      if (!isTargetNet(net->getFrNet())) {
+      if (net->getFrNet()->getSelfSymmetryConstraintPtr() == nullptr) {
         ordinaryNets.insert(net->getFrNet());
       }
     }
