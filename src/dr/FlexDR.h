@@ -55,7 +55,6 @@ namespace fr {
     bool axisLinkPointValid = false;
     frPoint axisLinkPoint;
     frLayerNum axisLinkLayerNum = 0;
-    int axisLinkSearchCount = 0;
     bool failed = false;
   };
   using SelfSymmetryDRSharedStateMap =
@@ -118,6 +117,15 @@ namespace fr {
 
     std::vector<int>                   numViols;
     std::map<frNet*, std::vector<std::string>, frBlockObjectComp> selfSymmetryDRRouteSnapshots;
+
+    struct FlexDRSearchRepairPhase {
+      const std::set<frNet*, frBlockObjectComp> *targetNets = nullptr;
+      std::string stageName;
+      int *ordinaryNetsInPhase = nullptr;
+      bool removeBoundaryPinsOnInit = true;
+      bool skipConnectivityCheck = false;
+      SelfSymmetryDRSharedStateMap *selfSymmetryDRSharedStates = nullptr;
+    };
 
     // others
     void init();
@@ -222,12 +230,7 @@ namespace fr {
                       frUInt4 workerMarkerBloatWidth = 0, frUInt4 workerMarkerBloatDepth = 0,
                       bool enableDRC = false, int ripupMode = 1, bool followGuide = true, 
                       int fixMode = 0, bool TEST = false,
-                      const std::set<frNet*, frBlockObjectComp> *targetNets = nullptr,
-                      bool removeBoundaryPinsOnInit = true,
-                      const std::string &stageName = std::string(),
-                      int *ordinaryNetsInPhase = nullptr,
-                      bool skipConnectivityCheck = false,
-                      SelfSymmetryDRSharedStateMap *selfSymmetryDRSharedStates = nullptr);
+                      const FlexDRSearchRepairPhase *phase = nullptr);
     void end();
 
     // utility
@@ -332,15 +335,8 @@ namespace fr {
     struct SelfSymmetryDRRouteContext {
       SelfSymmetryDRAxisContext axis;
       SelfSymmetryDRRouteMode routeMode = SelfSymmetryDRRouteMode::None;
-      unsigned long long axisAttractEdges = 0;
-      unsigned long long axisAttractCostTotal = 0;
       bool leadAxisContactBeforeLink = false;
       bool leadAxisContactAfterLink = false;
-      int leadAxisLinkSearches = 0;
-      int mirrorAxisSourceCount = 0;
-      int mirrorGuidesGenerated = 0;
-      int mirrorGuideHits = 0;
-      int mirrorGuideMisses = 0;
       std::set<std::tuple<frMIdx, frMIdx, frMIdx, int> > mirrorRewardEdges;
     };
     // setters
@@ -879,9 +875,6 @@ namespace fr {
                                          std::vector<FlexMazeIdx> &axisSources) const;
     void buildSelfSymmetryDRMirrorGuides(drNet* net,
                                          SelfSymmetryDRRouteContext &ctx);
-    void printSelfSymmetryDRRouteDebug(
-        drNet* net,
-        const SelfSymmetryDRRouteContext &ctx) const;
     void initTrackCoords_selfSymmetryAxis(frNet* net,
                                           std::map<frCoord, std::map<frLayerNum, frTrackPattern*> > &xMap,
                                           std::map<frCoord, std::map<frLayerNum, frTrackPattern*> > &yMap);

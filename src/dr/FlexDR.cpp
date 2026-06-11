@@ -1456,75 +1456,6 @@ map<frNet*, set<pair<frPoint, frLayerNum> >, frBlockObjectComp> FlexDR::initDR_m
   return bp;
 }
 
-void FlexDR::collectSelfSymmetryDRTargetNets(set<frNet*, frBlockObjectComp> &targetNets) const {
-  targetNets.clear();
-  if (getDesign() == nullptr || getDesign()->getTopBlock() == nullptr) {
-    return;
-  }
-  for (auto &net: getDesign()->getTopBlock()->getNets()) {
-    if (net && net->getSelfSymmetryConstraintPtr() != nullptr) {
-      targetNets.insert(net.get());
-    }
-  }
-}
-
-void FlexDR::collectOrdinaryDRTargetNets(set<frNet*, frBlockObjectComp> &targetNets) const {
-  targetNets.clear();
-  if (getDesign() == nullptr || getDesign()->getTopBlock() == nullptr) {
-    return;
-  }
-  for (auto &net: getDesign()->getTopBlock()->getNets()) {
-    if (net && net->getSelfSymmetryConstraintPtr() == nullptr) {
-      targetNets.insert(net.get());
-    }
-  }
-}
-
-bool FlexDR::runSelfSymmetryDRPhase() {
-  set<frNet*, frBlockObjectComp> selfSymmetryNets;
-  collectSelfSymmetryDRTargetNets(selfSymmetryNets);
-  if (selfSymmetryNets.empty()) {
-    return false;
-  }
-
-  cout << endl << "@@@ self-symmetry dr phase @@@" << endl;
-  cout << "self_symmetry_nets: " << selfSymmetryNets.size() << "\n";
-  int ordinaryNetsInPhase = 0;
-  SelfSymmetryDRSharedStateMap selfSymmetryDRSharedStates;
-  for (auto net: selfSymmetryNets) {
-    SelfSymmetryDRSharedState state;
-    if (!initSelfSymmetryDRSharedState(net, state)) {
-      cout << "Error: self-symmetry DR shared state init failed for "
-           << net->getName() << "\n";
-      exit(1);
-    }
-    selfSymmetryDRSharedStates[net] = state;
-    cout << "snapped_axis: " << net->getName() << " "
-         << state.snappedAxis << "\n";
-    cout << "root_side: " << net->getName() << " "
-         << state.rootSide << "\n";
-  }
-  searchRepair(0, 7, 0, 3, DRCCOST, 0, 0, 0, true, 2, true, 9, false,
-               &selfSymmetryNets, false, "self-symmetry dr phase",
-               &ordinaryNetsInPhase, false, &selfSymmetryDRSharedStates);
-  for (auto &[net, state]: selfSymmetryDRSharedStates) {
-    if (state.failed || (!state.axisContactSeen && !state.axisLinkDone)) {
-      cout << "Error: self-symmetry DR failed for "
-           << net->getName() << "\n";
-      exit(1);
-    }
-    cout << "self-symmetry dr lead axis-link searches: "
-         << net->getName() << " "
-         << state.axisLinkSearchCount << "\n";
-  }
-  cout << "ordinary_nets_in_phase: " << ordinaryNetsInPhase << "\n";
-  reportSelfSymmetryDRPhaseRouteCount(selfSymmetryNets);
-  reportSelfSymmetryDRChecker();
-  snapshotSelfSymmetryDRRoutes();
-  keepOnlySelfSymmetryDRTargetRoutes(selfSymmetryNets);
-  return true;
-}
-
 void FlexDR::initDR(int size, bool enableDRC) {
   bool TEST = false;
   // bool TEST = true;
@@ -1860,18 +1791,20 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
                           frUInt4 workerMarkerBloatWidth, frUInt4 workerMarkerBloatDepth,
                           bool enableDRC, int ripupMode, bool followGuide, 
                           int fixMode, bool TEST,
-                          const set<frNet*, frBlockObjectComp> *targetNets,
-                          bool removeBoundaryPinsOnInit,
-                          const string &stageName,
-                          int *ordinaryNetsInPhase,
-                          bool skipConnectivityCheck,
-                          SelfSymmetryDRSharedStateMap *selfSymmetryDRSharedStates) {
+                          const FlexDRSearchRepairPhase *phase) {
   if (iter > END_ITERATION) {
     return;
   }
   if (iter && getDesign()->getTopBlock()->getMarkers().size() == 0) {
     return;
   } 
+
+  const auto targetNets = phase == nullptr ? nullptr : phase->targetNets;
+  const auto &stageName = phase == nullptr ? string() : phase->stageName;
+  auto ordinaryNetsInPhase = phase == nullptr ? nullptr : phase->ordinaryNetsInPhase;
+  auto removeBoundaryPinsOnInit = phase == nullptr ? true : phase->removeBoundaryPinsOnInit;
+  auto skipConnectivityCheck = phase == nullptr ? false : phase->skipConnectivityCheck;
+  auto selfSymmetryDRSharedStates = phase == nullptr ? nullptr : phase->selfSymmetryDRSharedStates;
 
   frTime t;
   //bool TEST = false;
@@ -2459,6 +2392,8 @@ int FlexDR::main() {
     ordinaryTargetNets = &ordinaryNets;
     cout << "ordinary_dr_target_nets: " << ordinaryNets.size() << "\n";
   }
+  FlexDRSearchRepairPhase ordinaryPhase;
+  ordinaryPhase.targetNets = ordinaryTargetNets;
 
   auto runOrdinarySearchRepair =
       [&](int iter, int size, int offset, int mazeEndIter,
@@ -2468,7 +2403,8 @@ int FlexDR::main() {
         searchRepair(iter, size, offset, mazeEndIter, workerDRCCost,
                      workerMarkerCost, workerMarkerBloatWidth,
                      workerMarkerBloatDepth, enableDRC, ripupMode,
-                     followGuide, fixMode, false, ordinaryTargetNets);
+                     followGuide, fixMode, false,
+                     ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase);
       };
 
   int iterNum = 0;

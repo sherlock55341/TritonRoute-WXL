@@ -494,106 +494,6 @@ namespace {
     return mirrorPoint;
   }
 
-  void printSelfSymmetryDRRouteSnapshot(
-      drNet *net,
-      const FlexDRWorker::SelfSymmetryDRRouteContext &ctx,
-      const string &phase) {
-    if (net == nullptr || !SelfSymmetryDebug::isDebugNet(net->getFrNet())) {
-      return;
-    }
-
-    auto printPoint = [](stringstream &ss, const frPoint &point) {
-      ss << "(" << point.x() << ", " << point.y() << ")";
-    };
-    auto printBox = [](stringstream &ss, const frBox &box) {
-      ss << "(" << box.left() << ", " << box.bottom() << ", "
-         << box.right() << ", " << box.top() << ")";
-    };
-    auto printMazeIdx = [](stringstream &ss, const FlexMazeIdx &mazeIdx) {
-      ss << "(" << mazeIdx.x() << ", " << mazeIdx.y() << ", "
-         << mazeIdx.z() << ")";
-    };
-
-    auto &axis = ctx.axis;
-    stringstream ss;
-    ss << "@@@ self-symmetry dr route snapshot @@@\n";
-    ss << "net: " << net->getFrNet()->getName() << "\n";
-    ss << "phase: " << phase << "\n";
-    ss << "original_axis: " << axis.originalAxis << "\n";
-    ss << "effective_axis: " << axis.effectiveAxis << "\n";
-    ss << "root_side: " << axis.rootSide << "\n";
-    ss << "route_objs: " << net->getRouteConnFigs().size() << "\n";
-
-    int objIdx = 0;
-    for (auto &uConnFig: net->getRouteConnFigs()) {
-      auto connFig = uConnFig.get();
-      ss << "  o" << objIdx++ << ": ";
-      if (connFig->typeId() == drcPathSeg) {
-        auto pathSeg = static_cast<drPathSeg*>(connFig);
-        frPoint begin, end;
-        pathSeg->getPoints(begin, end);
-        ss << "pathseg layer=" << pathSeg->getLayerNum()
-           << " begin=";
-        printPoint(ss, begin);
-        ss << " end=";
-        printPoint(ss, end);
-        ss << " begin_side=" << selfSymmetryDRSideOfPoint(axis, begin)
-           << " end_side=" << selfSymmetryDRSideOfPoint(axis, end);
-        if (pathSeg->hasMazeIdx()) {
-          FlexMazeIdx beginMazeIdx, endMazeIdx;
-          pathSeg->getMazeIdx(beginMazeIdx, endMazeIdx);
-          ss << " begin_maze=";
-          printMazeIdx(ss, beginMazeIdx);
-          ss << " end_maze=";
-          printMazeIdx(ss, endMazeIdx);
-        }
-      } else if (connFig->typeId() == drcVia) {
-        auto via = static_cast<drVia*>(connFig);
-        frPoint origin;
-        via->getOrigin(origin);
-        auto viaDef = via->getViaDef();
-        ss << "via name="
-           << (viaDef == nullptr ? string("<null>") : viaDef->getName())
-           << " origin=";
-        printPoint(ss, origin);
-        if (viaDef != nullptr) {
-          ss << " layer1=" << viaDef->getLayer1Num()
-             << " layer2=" << viaDef->getLayer2Num();
-        }
-        ss << " side=" << selfSymmetryDRSideOfPoint(axis, origin);
-        if (via->hasMazeIdx()) {
-          FlexMazeIdx beginMazeIdx, endMazeIdx;
-          via->getMazeIdx(beginMazeIdx, endMazeIdx);
-          ss << " begin_maze=";
-          printMazeIdx(ss, beginMazeIdx);
-          ss << " end_maze=";
-          printMazeIdx(ss, endMazeIdx);
-        }
-      } else if (connFig->typeId() == drcPatchWire) {
-        auto patchWire = static_cast<drPatchWire*>(connFig);
-        frPoint origin;
-        frBox bbox;
-        patchWire->getOrigin(origin);
-        patchWire->getBBox(bbox);
-        ss << "patchwire layer=" << patchWire->getLayerNum()
-           << " origin=";
-        printPoint(ss, origin);
-        ss << " bbox=";
-        printBox(ss, bbox);
-        ss << " origin_side=" << selfSymmetryDRSideOfPoint(axis, origin);
-      } else {
-        ss << "unsupported type=" << static_cast<int>(connFig->typeId());
-      }
-      ss << "\n";
-    }
-
-    ss << "@@@ end self-symmetry dr route snapshot @@@\n";
-#pragma omp critical(self_symmetry_dr_snapshot_log)
-    {
-      cout << ss.str() << flush;
-    }
-  }
-
   bool skipSelfSymmetryDRMirrorPass(frNet *net) {
     return net == nullptr;
   }
@@ -839,7 +739,6 @@ void FlexDRWorker::buildSelfSymmetryDRMirrorGuides(
     drNet* net,
     SelfSymmetryDRRouteContext &ctx) {
   ctx.mirrorRewardEdges.clear();
-  ctx.mirrorGuidesGenerated = 0;
   if (net == nullptr || !ctx.axis.valid) {
     return;
   }
@@ -863,7 +762,6 @@ void FlexDRWorker::buildSelfSymmetryDRMirrorGuides(
                                                     endPoint);
     if (!gridGraph.hasMazeIdx(mirrorBeginPoint, lNum) ||
         !gridGraph.hasMazeIdx(mirrorEndPoint, lNum)) {
-      ++ctx.mirrorGuideMisses;
       return;
     }
     FlexMazeIdx mirrorBegin, mirrorEnd;
@@ -879,14 +777,11 @@ void FlexDRWorker::buildSelfSymmetryDRMirrorGuides(
                mirrorBegin.z() == mirrorEnd.z()) {
       dir = mirrorBegin.y() < mirrorEnd.y() ? frDirEnum::N : frDirEnum::S;
     } else {
-      ++ctx.mirrorGuideMisses;
       return;
     }
     auto key = selfSymmetryDREdgeKey(mirrorBegin.x(), mirrorBegin.y(),
                                      mirrorBegin.z(), dir);
-    if (ctx.mirrorRewardEdges.insert(key).second) {
-      ++ctx.mirrorGuidesGenerated;
-    }
+    ctx.mirrorRewardEdges.insert(key);
   };
 
   for (auto &uConnFig: net->getRouteConnFigs()) {
@@ -920,16 +815,13 @@ void FlexDRWorker::buildSelfSymmetryDRMirrorGuides(
                                                     origin);
       auto lNum = via->getViaDef()->getLayer1Num();
       if (!gridGraph.hasMazeIdx(mirrorOrigin, lNum)) {
-        ++ctx.mirrorGuideMisses;
         continue;
       }
       FlexMazeIdx mirrorIdx;
       gridGraph.getMazeIdx(mirrorIdx, mirrorOrigin, lNum);
-      if (ctx.mirrorRewardEdges.insert(
-              selfSymmetryDREdgeKey(mirrorIdx.x(), mirrorIdx.y(),
-                                    mirrorIdx.z(), frDirEnum::U)).second) {
-        ++ctx.mirrorGuidesGenerated;
-      }
+      ctx.mirrorRewardEdges.insert(
+          selfSymmetryDREdgeKey(mirrorIdx.x(), mirrorIdx.y(),
+                                mirrorIdx.z(), frDirEnum::U));
     }
   }
 }
@@ -960,12 +852,10 @@ frCost FlexDRWorker::getSelfSymmetryDRCost(frMIdx x,
   if (ctx.routeMode == SelfSymmetryDRRouteMode::Mirror) {
     auto key = selfSymmetryDREdgeKey(x, y, z, dir);
     if (ctx.mirrorRewardEdges.find(key) != ctx.mirrorRewardEdges.end()) {
-      ++ctx.mirrorGuideHits;
       return 0;
     }
     auto missMultiplier = max(1u, min((unsigned)(4 * GUIDECOST),
                                       workerDRCCost > 0 ? workerDRCCost - 1 : 1));
-    ++ctx.mirrorGuideMisses;
     return (hasGuide ? GUIDECOST : missMultiplier) * edgeLen;
   }
 
@@ -1002,50 +892,7 @@ frCost FlexDRWorker::getSelfSymmetryDRCost(frMIdx x,
     cost = static_cast<frCost>(edgeLen);
   }
 
-  ++ctx.axisAttractEdges;
-  ctx.axisAttractCostTotal += cost;
   return cost;
-}
-
-void FlexDRWorker::printSelfSymmetryDRRouteDebug(
-    drNet* net,
-    const SelfSymmetryDRRouteContext &ctx) const {
-  if (net == nullptr || net->getFrNet() == nullptr ||
-      net->getFrNet()->getSelfSymmetryConstraintPtr() == nullptr) {
-    return;
-  }
-  auto &axis = ctx.axis;
-  stringstream ss;
-  ss << "@@@ self-symmetry dr m3 route @@@\n";
-  ss << "net: " << net->getFrNet()->getName() << "\n";
-  ss << "original_axis: " << axis.originalAxis << "\n";
-  ss << "effective_axis: " << axis.effectiveAxis << "\n";
-  ss << "axis_snap_delta: " << axis.axisSnapDelta << "\n";
-  ss << "axis_snap_failed: "
-     << (axis.axisSnapFailed ? 1 : 0) << "\n";
-  ss << "root_side: " << axis.rootSide << "\n";
-  ss << "axis_in_route_box: "
-     << (axis.axisInRouteBox ? 1 : 0) << "\n";
-  ss << "axis_attract_edges: " << ctx.axisAttractEdges << "\n";
-  ss << "axis_attract_cost_total: "
-     << ctx.axisAttractCostTotal << "\n";
-  ss << "lead_axis_contact_before_link: "
-     << (ctx.leadAxisContactBeforeLink ? 1 : 0) << "\n";
-  ss << "lead_axis_link_searches: "
-     << ctx.leadAxisLinkSearches << "\n";
-  ss << "lead_axis_contact_after_link: "
-     << (ctx.leadAxisContactAfterLink ? 1 : 0) << "\n";
-  ss << "mirror_guides_generated: "
-     << ctx.mirrorGuidesGenerated << "\n";
-  ss << "mirror_guide_hits: " << ctx.mirrorGuideHits << "\n";
-  ss << "mirror_guide_misses: " << ctx.mirrorGuideMisses << "\n";
-  ss << "mirror_axis_source_count: "
-     << ctx.mirrorAxisSourceCount << "\n";
-  ss << "@@@ end self-symmetry dr m3 route @@@\n";
-#pragma omp critical(self_symmetry_dr_m3_log)
-  {
-    cout << ss.str() << flush;
-  }
 }
 
 bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
@@ -1217,25 +1064,15 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
   FlexMazeIdx leadCCMazeIdx1, leadCCMazeIdx2;
   frPoint leadCenterPt;
   if (!leadPins.empty()) {
-    cout << "self-symmetry dr lead terminal search: "
-         << net->getFrNet()->getName() << "\n";
     if (!routeSelectedPins(leadPins, nullptr, leadConnComps, leadCCMazeIdx1,
                            leadCCMazeIdx2, leadCenterPt)) {
-      printSelfSymmetryDRRouteDebug(net, ctx);
       deactivateSelfSymmetryDRRoutingContext();
       return false;
     }
-  } else {
-    cout << "self-symmetry dr lead terminal search skipped: "
-         << net->getFrNet()->getName() << "\n";
   }
-  printSelfSymmetryDRRouteSnapshot(net, ctx, "after_lead_before_axis_link");
 
   ctx.leadAxisContactBeforeLink =
       hasSelfSymmetryDRAxisContact(ctx, leadConnComps);
-  cout << "self-symmetry dr lead axis contact before link: "
-       << net->getFrNet()->getName() << " "
-       << (ctx.leadAxisContactBeforeLink ? 1 : 0) << "\n";
   if (sharedState != nullptr && ctx.leadAxisContactBeforeLink) {
     sharedState->axisContactSeen = true;
   }
@@ -1263,13 +1100,7 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
                              (!sharedState->axisContactSeen &&
                               !sharedState->axisLinkDone);
     if (maySearchAxisLink && !axisCandidates.empty()) {
-      cout << "self-symmetry dr lead axis-link search: "
-           << net->getFrNet()->getName() << "\n";
       axisLinkAttempted = true;
-      ++ctx.leadAxisLinkSearches;
-      if (sharedState != nullptr) {
-        ++sharedState->axisLinkSearchCount;
-      }
       ctx.routeMode = SelfSymmetryDRRouteMode::AxisLink;
       drPin axisPin;
       set<FlexMazeIdx> axisDst;
@@ -1320,9 +1151,6 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
       for (auto &mi: axisDst) {
         gridGraph.resetDst(mi);
       }
-    } else if (sharedState != nullptr) {
-      cout << "self-symmetry dr lead axis-link deferred: "
-           << net->getFrNet()->getName() << "\n";
     } else {
       cout << "Error: self-symmetry DR has no axis candidates for "
            << net->getFrNet()->getName() << "\n";
@@ -1331,7 +1159,6 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
       if (sharedState != nullptr) {
         sharedState->failed = true;
       }
-      printSelfSymmetryDRRouteDebug(net, ctx);
       deactivateSelfSymmetryDRRoutingContext();
       return false;
     }
@@ -1340,7 +1167,6 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
       cout << "Error: self-symmetry DR axis-link missed tile boundary for "
            << net->getFrNet()->getName() << "\n";
       sharedState->failed = true;
-      printSelfSymmetryDRRouteDebug(net, ctx);
       deactivateSelfSymmetryDRRoutingContext();
       return false;
     }
@@ -1353,17 +1179,12 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
   if (sharedState != nullptr && axisLinkSucceeded) {
     sharedState->axisLinkDone = true;
   }
-  cout << "self-symmetry dr lead axis contact after link: "
-       << net->getFrNet()->getName() << " "
-       << (ctx.leadAxisContactAfterLink ? 1 : 0) << "\n";
-  printSelfSymmetryDRRouteSnapshot(net, ctx, "after_axis_link_before_mirror");
   if (axisLinkAttempted && !ctx.leadAxisContactAfterLink) {
     cout << "Error: self-symmetry DR lead tree still misses axis after link for "
          << net->getFrNet()->getName() << "\n";
     if (sharedState != nullptr) {
       sharedState->failed = true;
     }
-    printSelfSymmetryDRRouteDebug(net, ctx);
     deactivateSelfSymmetryDRRoutingContext();
     return false;
   }
@@ -1371,29 +1192,18 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
       !ctx.leadAxisContactAfterLink) {
     cout << "Error: self-symmetry DR lead tree still misses axis after link for "
          << net->getFrNet()->getName() << "\n";
-    printSelfSymmetryDRRouteDebug(net, ctx);
     deactivateSelfSymmetryDRRoutingContext();
     return false;
   }
 
   if (skipSelfSymmetryDRMirrorPass(net->getFrNet())) {
-    cout << "self-symmetry dr mirror pass skipped: "
-         << net->getFrNet()->getName() << "\n";
   } else {
     buildSelfSymmetryDRMirrorGuides(net, ctx);
 
     vector<FlexMazeIdx> axisSources;
-    ctx.mirrorAxisSourceCount =
-        collectSelfSymmetryDRAxisSources(leadConnComps, ctx, axisSources);
+    collectSelfSymmetryDRAxisSources(leadConnComps, ctx, axisSources);
     if (!mirrorPins.empty()) {
       auto forcedMirrorSources = axisSources.empty() ? nullptr : &axisSources;
-      if (forcedMirrorSources != nullptr) {
-        cout << "self-symmetry dr mirror pass: "
-             << net->getFrNet()->getName() << "\n";
-      } else {
-        cout << "self-symmetry dr mirror local repair: "
-             << net->getFrNet()->getName() << "\n";
-      }
       ctx.routeMode = SelfSymmetryDRRouteMode::Mirror;
       vector<FlexMazeIdx> mirrorConnComps;
       FlexMazeIdx mirrorCCMazeIdx1, mirrorCCMazeIdx2;
@@ -1401,16 +1211,13 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
       if (!routeSelectedPins(mirrorPins, forcedMirrorSources, mirrorConnComps,
                              mirrorCCMazeIdx1, mirrorCCMazeIdx2,
                              mirrorCenterPt)) {
-        printSelfSymmetryDRRouteDebug(net, ctx);
         deactivateSelfSymmetryDRRoutingContext();
         return false;
       }
     }
-    printSelfSymmetryDRRouteSnapshot(net, ctx, "after_mirror");
   }
 
   routeNet_postRouteAddPathCost(net);
-  printSelfSymmetryDRRouteDebug(net, ctx);
   deactivateSelfSymmetryDRRoutingContext();
   return true;
 }
@@ -1455,6 +1262,79 @@ bool FlexDR::initSelfSymmetryDRSharedState(
   state.rootSide = getSelfSymmetryDRRootSide(net,
                                              constraint.isAxisHorizontal,
                                              snappedAxis);
+  return true;
+}
+
+void FlexDR::collectSelfSymmetryDRTargetNets(
+    set<frNet*, frBlockObjectComp> &targetNets) const {
+  targetNets.clear();
+  if (getDesign() == nullptr || getDesign()->getTopBlock() == nullptr) {
+    return;
+  }
+  for (auto &net: getDesign()->getTopBlock()->getNets()) {
+    if (net && net->getSelfSymmetryConstraintPtr() != nullptr) {
+      targetNets.insert(net.get());
+    }
+  }
+}
+
+void FlexDR::collectOrdinaryDRTargetNets(
+    set<frNet*, frBlockObjectComp> &targetNets) const {
+  targetNets.clear();
+  if (getDesign() == nullptr || getDesign()->getTopBlock() == nullptr) {
+    return;
+  }
+  for (auto &net: getDesign()->getTopBlock()->getNets()) {
+    if (net && net->getSelfSymmetryConstraintPtr() == nullptr) {
+      targetNets.insert(net.get());
+    }
+  }
+}
+
+bool FlexDR::runSelfSymmetryDRPhase() {
+  set<frNet*, frBlockObjectComp> selfSymmetryNets;
+  collectSelfSymmetryDRTargetNets(selfSymmetryNets);
+  if (selfSymmetryNets.empty()) {
+    return false;
+  }
+
+  cout << endl << "@@@ self-symmetry dr phase @@@" << endl;
+  cout << "self_symmetry_nets: " << selfSymmetryNets.size() << "\n";
+  int ordinaryNetsInPhase = 0;
+  SelfSymmetryDRSharedStateMap selfSymmetryDRSharedStates;
+  for (auto net: selfSymmetryNets) {
+    SelfSymmetryDRSharedState state;
+    if (!initSelfSymmetryDRSharedState(net, state)) {
+      cout << "Error: self-symmetry DR shared state init failed for "
+           << net->getName() << "\n";
+      exit(1);
+    }
+    selfSymmetryDRSharedStates[net] = state;
+    cout << "snapped_axis: " << net->getName() << " "
+         << state.snappedAxis << "\n";
+    cout << "root_side: " << net->getName() << " "
+         << state.rootSide << "\n";
+  }
+  FlexDRSearchRepairPhase selfSymmetryPhase;
+  selfSymmetryPhase.targetNets = &selfSymmetryNets;
+  selfSymmetryPhase.stageName = "self-symmetry dr phase";
+  selfSymmetryPhase.ordinaryNetsInPhase = &ordinaryNetsInPhase;
+  selfSymmetryPhase.removeBoundaryPinsOnInit = false;
+  selfSymmetryPhase.selfSymmetryDRSharedStates = &selfSymmetryDRSharedStates;
+  searchRepair(0, 7, 0, 3, DRCCOST, 0, 0, 0, true, 2, true, 9, false,
+               &selfSymmetryPhase);
+  for (auto &[net, state]: selfSymmetryDRSharedStates) {
+    if (state.failed || (!state.axisContactSeen && !state.axisLinkDone)) {
+      cout << "Error: self-symmetry DR failed for "
+           << net->getName() << "\n";
+      exit(1);
+    }
+  }
+  cout << "ordinary_nets_in_phase: " << ordinaryNetsInPhase << "\n";
+  reportSelfSymmetryDRPhaseRouteCount(selfSymmetryNets);
+  reportSelfSymmetryDRChecker();
+  snapshotSelfSymmetryDRRoutes();
+  keepOnlySelfSymmetryDRTargetRoutes(selfSymmetryNets);
   return true;
 }
 
