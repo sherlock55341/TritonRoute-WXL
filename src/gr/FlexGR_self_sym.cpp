@@ -30,8 +30,10 @@
 #include "FlexGR.h"
 #include "gr/FlexGR_self_sym_utils.h"
 #include <algorithm>
+#include <cmath>
 #include <deque>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -1740,4 +1742,98 @@ FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
   }
 
   return stats;
+}
+
+namespace fr {
+
+void get_self_symmetry_axis(const std::vector<frPoint> &points,
+                            bool &is_horizontal, int &coor) {
+  double mean_x = 0;
+  double mean_y = 0;
+  double sigma_x = 0;
+  double sigma_y = 0;
+  for (auto p : points) {
+    mean_x += p.x();
+    mean_y += p.y();
+  }
+  mean_x /= points.size();
+  mean_y /= points.size();
+
+  for (auto p : points) {
+    auto dx = p.x() - mean_x;
+    auto dy = p.y() - mean_y;
+    sigma_x += dx * dx;
+    sigma_y += dy * dy;
+  }
+  sigma_x /= points.size();
+  sigma_y /= points.size();
+  sigma_x = std::sqrt(sigma_x);
+  sigma_y = std::sqrt(sigma_y);
+  double moment_x_1 = 0;
+  double moment_x_2 = 0;
+  double moment_x_3 = 0;
+  double moment_y_1 = 0;
+  double moment_y_2 = 0;
+  double moment_y_3 = 0;
+  for (auto p : points) {
+    auto dx = p.x() - mean_x;
+    auto dy = p.y() - mean_y;
+    dx /= sigma_x;
+    dy /= sigma_y;
+    moment_x_1 += dx * dx * dx;
+    moment_x_2 += dx * dy;
+    moment_x_3 += dx * dy * dy;
+    moment_y_1 += dy * dy * dy;
+    moment_y_2 += dy * dx;
+    moment_y_3 += dy * dx * dx;
+  }
+  moment_x_1 /= points.size();
+  moment_x_2 /= points.size();
+  moment_x_3 /= points.size();
+  moment_y_1 /= points.size();
+  moment_y_2 /= points.size();
+  moment_y_3 /= points.size();
+  auto sum_moment_x =
+      std::abs(moment_x_1) + std::abs(moment_x_2) + std::abs(moment_x_3);
+  auto sum_moment_y =
+      std::abs(moment_y_1) + std::abs(moment_y_2) + std::abs(moment_y_3);
+  if (sum_moment_x * 2 < sum_moment_y) {
+    is_horizontal = false;
+    coor = std::round(mean_x);
+  } else if (sum_moment_y * 2 < sum_moment_x) {
+    is_horizontal = true;
+    coor = std::round(mean_y);
+  } else {
+    std::vector<point_t> rtree_points;
+    rtree_points.reserve(points.size());
+    for (auto p : points) {
+      rtree_points.push_back(point_t(p.x(), p.y()));
+    }
+    bgi::rtree<point_t, bgi::quadratic<16>> tree(rtree_points);
+    double mirror_x_score = 0;
+    double mirror_y_score = 0;
+    for (auto p : points) {
+      int mx = mean_x * 2 - p.x();
+      int my = p.y();
+      std::vector<point_t> results;
+      tree.query(bgi::nearest(point_t(mx, my), 1), std::back_inserter(results));
+      mirror_x_score += (results[0].x() - mx) * (results[0].x() - mx) +
+                        (results[0].y() - my) * (results[0].y() - my);
+      mx = p.x();
+      my = mean_y * 2 - p.y();
+      results.clear();
+      tree.query(bgi::nearest(point_t(mx, my), 1), std::back_inserter(results));
+      mirror_y_score += (results[0].x() - mx) * (results[0].x() - mx) +
+                        (results[0].y() - my) * (results[0].y() - my);
+    }
+    if (mirror_x_score < mirror_y_score) {
+      is_horizontal = false;
+      coor = std::round(mean_x);
+    } else {
+      is_horizontal = true;
+      coor = std::round(mean_y);
+    }
+  }
+}
+
 }

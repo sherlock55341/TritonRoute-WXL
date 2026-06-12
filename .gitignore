@@ -1,2 +1,5 @@
 build
-.codegraph
+.codegraph/
+.claude/
+.cache/
+.agents/

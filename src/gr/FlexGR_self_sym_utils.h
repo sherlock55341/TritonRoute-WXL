@@ -33,6 +33,7 @@
 #include <limits>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "frDesign.h"
 #include "global.h"
@@ -416,6 +417,9 @@ namespace fr {
     result.valid = true;
     return result;
   }
+
+  void get_self_symmetry_axis(const std::vector<frPoint> &points,
+                              bool &is_horizontal, int &coor);
 
   struct SelfSymmetryDebug {
     static const std::string& netName() {
