@@ -41,7 +41,7 @@ void FlexDRWorker::initNetObjs_pathSeg(frPathSeg* pathSeg,
   bool enableOutput = false;
   auto gridBBox = getRouteBox();
   auto net = pathSeg->getNet();
-  if (!isTargetNet(net)) {
+  if (net == nullptr) {
     return;
   }
   nets.insert(net);
@@ -238,7 +238,7 @@ void FlexDRWorker::initNetObjs_via(frVia* via,
   bool enableOutput = false;
   auto gridBBox = getRouteBox();
   auto net = via->getNet();
-  if (!isTargetNet(net)) {
+  if (net == nullptr) {
     return;
   }
   nets.insert(net);
@@ -272,7 +272,7 @@ void FlexDRWorker::initNetObjs_patchWire(frPatchWire* pwire,
   bool enableOutput = false;
   auto gridBBox = getRouteBox();
   auto net = pwire->getNet();
-  if (!isTargetNet(net)) {
+  if (net == nullptr) {
     return;
   }
   nets.insert(net);
@@ -835,9 +835,6 @@ void FlexDRWorker::initNets_searchRepair(set<frNet*, frBlockObjectComp> &nets,
                                          map<frNet*, vector<unique_ptr<drConnFig> >, frBlockObjectComp> &netExtObjs,
                                          map<frNet*, vector<frRect>, frBlockObjectComp> &netOrigGuides) {
   for (auto net: nets) {
-    if (!isTargetNet(net)) {
-      continue;
-    }
     // build big graph;
     // node number : routeObj, pins
     map<frBlockObject*, set<pair<frPoint, frLayerNum> >, frBlockObjectComp> pin2epMap;
@@ -2222,6 +2219,7 @@ void FlexDRWorker::initNet(frNet* net,
   //bool enableOutput = true;
   auto dNet = make_unique<drNet>();
   dNet->setFrNet(net);
+  dNet->setFixed(!isRoutableDRNet(net));
   // true pin
   initNet_term_new(dNet.get(), terms);
   // boundary pin, could overlap with any of true pins
@@ -2230,7 +2228,7 @@ void FlexDRWorker::initNet(frNet* net,
   for (auto &obj: extObjs) {
     dNet->addRoute(obj, true);
   }
-  if (getRipupMode() == 0) {
+  if (getRipupMode() == 0 || dNet->isFixed()) {
     for (auto &obj: routeObjs) {
       dNet->addRoute(obj, false);
     }
@@ -4081,6 +4079,9 @@ void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, 
     // }
 
     for (auto &net: ripupNets) {
+      if (!isRoutableDRNet(net)) {
+        continue;
+      }
       routes.push_back(make_pair(net, make_pair(true, 0)));
       // reserve via because all nets are ripupped
       initMazeCost_via_helper(net, true);
@@ -4131,6 +4132,9 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
         movableAggressorNets.insert(fNet);
         if (getDRNets(fNet)) {
           for (auto dNet: *(getDRNets(fNet))) {
+            if (!isRoutableDRNet(dNet)) {
+              continue;
+            }
             if (dNet->getNumReroutes() >= getMazeEndIter()) {
               continue;
             }
@@ -4149,6 +4153,9 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
         // int subNetIdx = -1;
         for (auto dNet: *(getDRNets(fNet))) {
           // subNetIdx++;
+          if (!isRoutableDRNet(dNet)) {
+            continue;
+          }
           if (dNet->getNumReroutes() >= getMazeEndIter()) {
             continue;
           }
@@ -4214,6 +4221,9 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
             for (auto dNet: *(getDRNets(fNet))) {
               // subNetIdx++;
               // if (dNet->getNumReroutes() >= getMazeEndIter() * 2) {
+              if (!isRoutableDRNet(dNet)) {
+                continue;
+              }
               if (dNet->getNumReroutes() >= getMazeEndIter()) {
                 continue;
               }
@@ -4275,6 +4285,9 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
           for (auto dNet: *(getDRNets(fNet))) {
             // subNetIdx++;
             // if (dNet->getNumReroutes() >= getMazeEndIter() * 2) {
+            if (!isRoutableDRNet(dNet)) {
+              continue;
+            }
             if (dNet->getNumReroutes() >= getMazeEndIter()) {
               continue;
             }

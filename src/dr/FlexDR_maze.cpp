@@ -1806,24 +1806,28 @@ bool FlexDRWorker::mazeIterInit_searchRepair(int mazeIter, vector<drNet*> &rerou
   if (mazeIter == 0) {
     if (getRipupMode() == 0) {
       for (auto &net: nets) {
-        if (net->isRipup()) {
+        if (isRoutableDRNet(net.get()) && net->isRipup()) {
           rerouteNets.push_back(net.get());
         }
       }
     } else if (getRipupMode() == 1) {
       for (auto &net: nets) {
-        rerouteNets.push_back(net.get());
+        if (isRoutableDRNet(net.get())) {
+          rerouteNets.push_back(net.get());
+        }
       }
     } else if (getRipupMode() == 2) {
       for (auto &net: nets) {
-        rerouteNets.push_back(net.get());
+        if (isRoutableDRNet(net.get())) {
+          rerouteNets.push_back(net.get());
+        }
       }
     }
   } else {
     if (getFixMode() == 1 || getFixMode() == 2 || getFixMode() == 3 || getFixMode() == 4 || getFixMode() == 5) {
       rerouteNets.clear();
       for (auto &net: nets) {
-        if (net->isRipup()) {
+        if (isRoutableDRNet(net.get()) && net->isRipup()) {
           rerouteNets.push_back(net.get());
         }
       }
@@ -1915,7 +1919,7 @@ void FlexDRWorker::route_2_init_getNets_sort(vector<drNet*> &rerouteNets) {
 void FlexDRWorker::route_2_init_getNets(vector<drNet*> &tmpNets) {
   initMazeCost_marker();
   for (auto &net: nets) {
-    if (getRipupMode() == 1 || net->isRipup()) {
+    if (isRoutableDRNet(net.get()) && (getRipupMode() == 1 || net->isRipup())) {
       tmpNets.push_back(net.get());
     }
   }
@@ -1937,7 +1941,7 @@ void FlexDRWorker::route_2_ripupNet(drNet* net) {
 
 
 void FlexDRWorker::route_2_pushNet(deque<drNet*> &rerouteNets, drNet* net, bool ripUp, bool isPushFront) {
-  if (net->isInQueue() || net->getNumReroutes() >= getMazeEndIter()) {
+  if (!isRoutableDRNet(net) || net->isInQueue() || net->getNumReroutes() >= getMazeEndIter()) {
     return;
   }
   if (isPushFront) {

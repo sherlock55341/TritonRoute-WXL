@@ -639,6 +639,12 @@ namespace fr {
       }
       return targetNets == nullptr || targetNets->find(net) != targetNets->end();
     }
+    bool isRoutableDRNet(frNet *net) const {
+      return isTargetNet(net);
+    }
+    bool isRoutableDRNet(drNet *net) const {
+      return net != nullptr && !net->isFixed();
+    }
     bool hasSelfSymmetryDRAxisInRouteBox(frNet *net);
     SelfSymmetryDRSharedState* getSelfSymmetryDRSharedState(frNet *net) const {
       if (selfSymmetryDRSharedStates == nullptr || net == nullptr) {
