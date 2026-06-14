@@ -5055,8 +5055,12 @@ void FlexDRWorker::initMazeCost_fixedObj() {
       // snet
       } else if (obj->typeId() == frcPathSeg) {
         auto ps = static_cast<frPathSeg*>(obj);
+        if (!ps->hasNet()) {
+          continue;
+        }
+        auto net = ps->getNet();
         if (QUICKDRCTEST) {
-          cout <<"  initMazeCost_snet " <<ps->getNet()->getName() <<endl;
+          cout <<"  initMazeCost_snet " <<net->getName() <<endl;
         }
         box.set(boostb.min_corner().x(), boostb.min_corner().y(), boostb.max_corner().x(), boostb.max_corner().y());
         // assume only routing layer
@@ -5064,16 +5068,22 @@ void FlexDRWorker::initMazeCost_fixedObj() {
         modMinSpacingCostVia(box, zIdx, 3, true,  true);
         modMinSpacingCostVia(box, zIdx, 3, false, true);
         modEolSpacingCost(box, zIdx, 3);
-        // block for PDN (fixed obj)
-        if (ps->getNet()->getType() == frNetEnum::frcPowerNet || ps->getNet()->getType() == frNetEnum::frcGroundNet) {
+        // block for PDN and imported routed nets (fixed objs)
+        if (net->getType() == frNetEnum::frcPowerNet ||
+            net->getType() == frNetEnum::frcGroundNet ||
+            getDesign()->getTopBlock()->isRoutedNet(net->getName())) {
           modBlockedPlanar(box, zIdx, true);
           modBlockedVia(box, zIdx, true);
         }
       // snet
       } else if (obj->typeId() == frcVia) {
+        auto via = static_cast<frVia*>(obj);
+        if (!via->hasNet()) {
+          continue;
+        }
+        auto net = via->getNet();
         if (QUICKDRCTEST) {
-          auto via = static_cast<frVia*>(obj);
-          cout <<"  initMazeCost_snet " <<via->getNet()->getName() <<endl;
+          cout <<"  initMazeCost_snet " <<net->getName() <<endl;
         }
         box.set(boostb.min_corner().x(), boostb.min_corner().y(), boostb.max_corner().x(), boostb.max_corner().y());
         if (isRoutingLayer) {
@@ -5082,8 +5092,13 @@ void FlexDRWorker::initMazeCost_fixedObj() {
           modMinSpacingCostVia(box, zIdx, 3, true,  false);
           modMinSpacingCostVia(box, zIdx, 3, false, false);
           modEolSpacingCost(box, zIdx, 3);
+          if (net->getType() == frNetEnum::frcPowerNet ||
+              net->getType() == frNetEnum::frcGroundNet ||
+              getDesign()->getTopBlock()->isRoutedNet(net->getName())) {
+            modBlockedPlanar(box, zIdx, true);
+            modBlockedVia(box, zIdx, true);
+          }
         } else {
-          auto via = static_cast<frVia*>(obj);
           modAdjCutSpacingCost_fixedObj(box, via);
 
           modCutSpacingCost(box, zIdx, 3);

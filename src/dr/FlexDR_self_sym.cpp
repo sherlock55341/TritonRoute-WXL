@@ -1271,8 +1271,10 @@ void FlexDR::collectSelfSymmetryDRTargetNets(
   if (getDesign() == nullptr || getDesign()->getTopBlock() == nullptr) {
     return;
   }
+  auto block = getDesign()->getTopBlock();
   for (auto &net: getDesign()->getTopBlock()->getNets()) {
-    if (net && net->getSelfSymmetryConstraintPtr() != nullptr) {
+    if (net && !block->isRoutedNet(net->getName()) &&
+        net->getSelfSymmetryConstraintPtr() != nullptr) {
       targetNets.insert(net.get());
     }
   }
@@ -1284,8 +1286,10 @@ void FlexDR::collectOrdinaryDRTargetNets(
   if (getDesign() == nullptr || getDesign()->getTopBlock() == nullptr) {
     return;
   }
+  auto block = getDesign()->getTopBlock();
   for (auto &net: getDesign()->getTopBlock()->getNets()) {
-    if (net && net->getSelfSymmetryConstraintPtr() == nullptr) {
+    if (net && !block->isRoutedNet(net->getName()) &&
+        net->getSelfSymmetryConstraintPtr() == nullptr) {
       targetNets.insert(net.get());
     }
   }
@@ -1418,9 +1422,11 @@ void FlexDR::keepOnlySelfSymmetryDRTargetRoutes(
     return;
   }
   auto regionQuery = getRegionQuery();
+  auto block = getDesign()->getTopBlock();
   for (auto &uNet: getDesign()->getTopBlock()->getNets()) {
     auto net = uNet.get();
-    if (targetNets.find(net) != targetNets.end()) {
+    if (targetNets.find(net) != targetNets.end() ||
+        block->isRoutedNet(net->getName())) {
       continue;
     }
     for (auto &shape: net->getShapes()) {

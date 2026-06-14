@@ -91,7 +91,6 @@ void checkType(defrCallbackType_e c) {
   }
 }
 
-
 int done(defrCallbackType_e c, void*, defiUserData ud) {
   checkType(c);
   if (ud != userData) dataError();
@@ -273,7 +272,6 @@ int netpath(defrCallbackType_e, defiNet*, defiUserData) {
 
   return 0;
 }
-
 
 int netNamef(defrCallbackType_e c, const char* netName, defiUserData ud) {
   checkType(c);

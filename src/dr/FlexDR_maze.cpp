@@ -1242,7 +1242,9 @@ void FlexDRWorker::modMinSpacingCostVia(const frBox &box, frMIdx z, int type, bo
 
 // forbid via if it would trigger violation
 void FlexDRWorker::modAdjCutSpacingCost_fixedObj(const frBox &origCutBox, frVia *origVia) {
-  if (origVia->getNet()->getType() != frNetEnum::frcPowerNet && origVia->getNet()->getType() != frNetEnum::frcGroundNet) {
+  if (!origVia->hasNet() ||
+      (origVia->getNet()->getType() != frNetEnum::frcPowerNet &&
+       origVia->getNet()->getType() != frNetEnum::frcGroundNet)) {
     return;
   }
   auto lNum = origVia->getViaDef()->getCutLayerNum();
@@ -1273,7 +1275,9 @@ void FlexDRWorker::modAdjCutSpacingCost_fixedObj(const frBox &origCutBox, frVia 
       box.set(boostb.min_corner().x(), boostb.min_corner().y(), boostb.max_corner().x(), boostb.max_corner().y());
       if (obj->typeId() == frcVia) {
         auto via = static_cast<frVia*>(obj);
-        if (via->getNet()->getType() != frNetEnum::frcPowerNet && via->getNet()->getType() != frNetEnum::frcGroundNet) {
+        if (!via->hasNet() ||
+            (via->getNet()->getType() != frNetEnum::frcPowerNet &&
+             via->getNet()->getType() != frNetEnum::frcGroundNet)) {
           continue;
         }
         if (origCutBox == box) {

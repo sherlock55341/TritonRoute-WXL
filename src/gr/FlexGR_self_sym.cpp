@@ -1187,7 +1187,8 @@ bool FlexGR::hasSelfSymmetryNets() const {
   }
   for (auto &uNet: block->getNets()) {
     auto net = uNet.get();
-    if (net != nullptr && net->getSelfSymmetryConstraintPtr() != nullptr) {
+    if (net != nullptr && !block->isRoutedNet(net->getName()) &&
+        net->getSelfSymmetryConstraintPtr() != nullptr) {
       return true;
     }
   }
@@ -1207,6 +1208,9 @@ void FlexGR::stageSelfSymmetry3DLeadOnly() {
 
   for (auto &uNet: block->getNets()) {
     auto net = uNet.get();
+    if (net != nullptr && block->isRoutedNet(net->getName())) {
+      continue;
+    }
     auto constraint = net ? net->getSelfSymmetryConstraintPtr() : nullptr;
     if (constraint == nullptr) {
       continue;
@@ -1341,7 +1345,8 @@ void FlexGR::buildSelfSymmetryMirror2DTopology() {
     return;
   }
   for (auto &uNet: block->getNets()) {
-    if (uNet->getSelfSymmetryConstraintPtr()) {
+    if (!block->isRoutedNet(uNet->getName()) &&
+        uNet->getSelfSymmetryConstraintPtr()) {
       buildSelfSymmetryMirror2DTopology_net(uNet.get());
     }
   }

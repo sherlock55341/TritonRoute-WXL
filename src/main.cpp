@@ -167,6 +167,10 @@ int main(int argc, char** argv) {
         argc--;
         VERBOSE = atoi(*argv);
         //cout <<"output: " <<OUT_FILE <<endl;
+      } else if (strcmp(*argv, "-drouteEndIterNum") == 0) {
+        argv++;
+        argc--;
+        END_ITERATION = atoi(*argv);
       } else {
         cout <<"ERROR: Illegal command line option: " <<*argv <<endl;
         return 2;

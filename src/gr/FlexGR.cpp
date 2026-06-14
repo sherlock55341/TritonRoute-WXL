@@ -989,7 +989,11 @@ void FlexGR::initGR_patternRoute() {
 }
 
 void FlexGR::initGR_patternRoute_init(vector<pair<pair<frNode*, frNode*>, int> > &patternRoutes) {
+  auto block = design->getTopBlock();
   for (auto &net: design->getTopBlock()->getNets()) {
+    if (block->isRoutedNet(net->getName())) {
+      continue;
+    }
     for (auto &node: net->getNodes()) {
       frNode *parentNode = node->getParent();
       if (parentNode == nullptr) {
@@ -1273,7 +1277,11 @@ bool FlexGR::hasOverflow2D(frNode *child, frNode *parent) {
 }
 
 void FlexGR::initGR_initObj() {
+  auto block = design->getTopBlock();
   for (auto &net: design->getTopBlock()->getNets()) {
+    if (block->isRoutedNet(net->getName())) {
+      continue;
+    }
     initGR_initObj_net(net.get());
 
     int steinerNodeCnt = net->getNodes().size() - net->getRPins().size();
@@ -1358,7 +1366,11 @@ void FlexGR::initGR_initObj_net(frNet* net) {
 void FlexGR::initGR_genTopology() {
   cout << "generating net topology...\n";
   // Flute::readLUT();
+  auto block = design->getTopBlock();
   for (auto &net: design->getTopBlock()->getNets()) {
+    if (block->isRoutedNet(net->getName())) {
+      continue;
+    }
     // generate MST (currently using Prim-Dijkstra) and steiner tree (currently using HVW)
     if (net->getConstraint() == frNetRoutingConstraint::frcSelfSymmetry) {
       initGR_genTopology_selfsymmetry_net(net.get());
@@ -1581,8 +1593,12 @@ void FlexGR::initGR_genTopology_net(frNet *net) {
 void FlexGR::layerAssign() {
   cout << "layer assignment...\n";
   vector<pair<int, frNet*> > sortedNets;
+  auto block = design->getTopBlock();
   for (auto &uNet: design->getTopBlock()->getNets()) {
     auto net = uNet.get();
+    if (block->isRoutedNet(net->getName())) {
+      continue;
+    }
     if (net2GCellNodes.find(net) == net2GCellNodes.end() || net2GCellNodes[net].size() <= 1) {
       continue;
     }
@@ -2369,8 +2385,12 @@ void FlexGR::layerAssign_node_commit(frNode *currNode,
 // }
 
 void FlexGR::writeToGuide() {
+  auto block = design->getTopBlock();
   for (auto &uNet: design->getTopBlock()->getNets()) {
     auto net = uNet.get();
+    if (block->isRoutedNet(net->getName())) {
+      continue;
+    }
     bool hasGRShape = false;
     // pathSeg guide
     for (auto &uShape: net->getGRShapes()) {
@@ -2456,7 +2476,11 @@ void FlexGR::writeGuideFile() {
   }
   ofstream outputGuide(OUTGUIDE_FILE.c_str());
   if (outputGuide.is_open()) {
+    auto block = design->getTopBlock();
     for (auto &net: design->getTopBlock()->getNets()) {
+      if (block->isRoutedNet(net->getName())) {
+        continue;
+      }
       auto netName = net->getName();
       outputGuide << netName << endl;
       outputGuide << "(\n"; 

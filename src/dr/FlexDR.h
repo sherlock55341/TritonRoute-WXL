@@ -633,6 +633,10 @@ namespace fr {
       return targetNets != nullptr;
     }
     bool isTargetNet(frNet *net) const {
+      auto block = design == nullptr ? nullptr : design->getTopBlock();
+      if (net == nullptr || (block != nullptr && block->isRoutedNet(net->getName()))) {
+        return false;
+      }
       return targetNets == nullptr || targetNets->find(net) != targetNets->end();
     }
     bool hasSelfSymmetryDRAxisInRouteBox(frNet *net);

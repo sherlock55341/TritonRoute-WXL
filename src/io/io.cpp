@@ -543,6 +543,7 @@ int io::Parser::getDefNets(defrCallbackType_e type, defiNet* net, defiUserData d
     //exit(1);
     isSNet = true;
   }
+  bool hasParsedWireGeometry = false;
 
   unique_ptr<frNet> uNetIn = make_unique<frNet>(net->name());
   auto netIn = uNetIn.get();
@@ -864,9 +865,11 @@ int io::Parser::getDefNets(defrCallbackType_e type, defiNet* net, defiUserData d
 
       for (auto &pathShape: pathShapes) {
         netIn->addShape(pathShape);
+        hasParsedWireGeometry = true;
       }
       for (auto &pathVia: pathVias) {
         netIn->addVia(pathVia);
+        hasParsedWireGeometry = true;
       }
     } // end path
   } // end wire
@@ -911,6 +914,17 @@ int io::Parser::getDefNets(defrCallbackType_e type, defiNet* net, defiUserData d
     } else {
       if (((io::Parser*)data)->tmpBlock->snets.size() % 10000 == 0) {
         cout <<"defIn read " <<((io::Parser*)data)->tmpBlock->snets.size() <<" snets" <<endl;
+      }
+    }
+  } else if (hasParsedWireGeometry) {
+    ((io::Parser*)data)->tmpBlock->addRoutedNet(uNetIn);
+    if (((io::Parser*)data)->tmpBlock->nets.size() < 100000) {
+      if (((io::Parser*)data)->tmpBlock->nets.size() % 10000 == 0) {
+        cout <<"defIn read " <<((io::Parser*)data)->tmpBlock->nets.size() <<" nets" <<endl;
+      }
+    } else {
+      if (((io::Parser*)data)->tmpBlock->nets.size() % 100000 == 0) {
+        cout <<"defIn read " <<((io::Parser*)data)->tmpBlock->nets.size() <<" nets" <<endl;
       }
     }
   } else {
@@ -5352,67 +5366,6 @@ void io::Parser::readLefDef() {
 
   readDef();
 
-  struct SelfSymmetrySpec {
-    const char *netName;
-    bool isAxisHorizontal;
-    frCoord axis;
-  };
-  const vector<SelfSymmetrySpec> selfSymmetrySpecs = {
-      {"Symmtry1", false, 17400},
-      {"Symmtry2", false, 23400},
-      {"Symmtry3", true, 45790},
-      {"Symmtry4", true, 59850},
-      {"Symmtry5", true, 72000},
-  };
-  frBox dieBox;
-  design->getTopBlock()->getBoundaryBBox(dieBox);
-  for (const auto &spec: selfSymmetrySpecs) {
-    auto netIt = design->getTopBlock()->name2net.find(spec.netName);
-    if (netIt == design->getTopBlock()->name2net.end()) {
-      continue;
-    }
-    auto net = netIt->second;
-    auto axisName = spec.isAxisHorizontal ? "y" : "x";
-    bool axisInDie = spec.isAxisHorizontal ?
-                     spec.axis >= dieBox.bottom() && spec.axis <= dieBox.top() :
-                     spec.axis >= dieBox.left() && spec.axis <= dieBox.right();
-    if (!axisInDie) {
-      cout << "Error: " << spec.netName << " self-symmetry axis "
-           << axisName << "=" << spec.axis
-           << " is outside die box " << dieBox << "\n";
-      exit(1);
-    }
-
-    int lowerCnt = 0;
-    int onAxisCnt = 0;
-    int upperCnt = 0;
-    for (auto instTerm: net->getInstTerms()) {
-      frPoint origin;
-      instTerm->getInst()->getOrigin(origin);
-      auto originCoord = spec.isAxisHorizontal ? origin.y() : origin.x();
-      if (originCoord < spec.axis) {
-        lowerCnt++;
-      } else if (originCoord > spec.axis) {
-        upperCnt++;
-      } else {
-        onAxisCnt++;
-      }
-    }
-    if (lowerCnt == 0 || upperCnt == 0) {
-      cout << "Error: " << spec.netName << " self-symmetry axis "
-           << axisName << "=" << spec.axis
-           << " does not split instances on both sides; lower=" << lowerCnt
-           << ", onAxis=" << onAxisCnt << ", upper=" << upperCnt << "\n";
-      exit(1);
-    }
-
-    frSelfSymmetryConstraint selfSymmetryConstraint;
-    selfSymmetryConstraint.isAxisHorizontal = spec.isAxisHorizontal;
-    selfSymmetryConstraint.axis = spec.axis;
-    net->setSelfSymmetryConstraint(selfSymmetryConstraint);
-    net->setConstraint(frNetRoutingConstraint::frcSelfSymmetry);
-  }
-
   if (VERBOSE > 0) {
     cout <<endl;
     frBox dieBox;
@@ -5483,12 +5436,19 @@ void io::Parser::readGuide() {
         exit(2);
       } else if (vLine.size() == 1) {
         netName = vLine[0];
+        if (design->topBlock->isRoutedNet(netName)) {
+          net = nullptr;
+          continue;
+        }
         if (design->topBlock->name2net.find(vLine[0]) == design->topBlock->name2net.end()) {
           cout <<"Error: cannot find net: " <<vLine[0] <<endl;
           exit(2);
         }
         net = design->topBlock->name2net[netName]; 
       } else if (vLine.size() == 5) {
+        if (net == nullptr) {
+          continue;
+        }
         if (tech->name2layer.find(vLine[4]) == tech->name2layer.end()) {
           cout <<"Error: cannot find layer: " <<vLine[4] <<endl;
           exit(2);

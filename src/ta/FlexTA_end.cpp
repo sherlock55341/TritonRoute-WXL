@@ -254,6 +254,9 @@ namespace {
 
     for (auto &uNet: block->getNets()) {
       auto net = uNet.get();
+      if (block->isRoutedNet(net->getName())) {
+        continue;
+      }
       auto constraint = net == nullptr ?
                         nullptr :
                         net->getSelfSymmetryConstraintPtr();

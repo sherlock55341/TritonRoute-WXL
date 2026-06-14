@@ -30,6 +30,7 @@
 #define _FR_BLOCK_H_
 
 #include <algorithm>
+#include <set>
 #include "frBaseTypes.h"
 #include "db/obj/frTrackPattern.h"
 #include "db/obj/frBlockage.h"
@@ -162,11 +163,24 @@ namespace fr {
     const std::vector<std::unique_ptr<frNet> >& getNets() const {
       return nets;
     }
+    frNet* getNet(const frString &nameIn) const {
+      auto it = name2net.find(nameIn);
+      if (it == name2net.end()) {
+        return nullptr;
+      }
+      return it->second;
+    }
     std::vector<std::unique_ptr<frNet> >& getSNets() {
       return snets;
     }
     const std::vector<std::unique_ptr<frNet> >& getSNets() const {
       return snets;
+    }
+    bool isRoutedNet(const frString &nameIn) const {
+      return routedNets.find(nameIn) != routedNets.end();
+    }
+    const std::set<frString>& getRoutedNets() const {
+      return routedNets;
     }
     std::vector<frTrackPattern*> getTrackPatterns() const {
       std::vector<frTrackPattern*> sol;
@@ -335,6 +349,10 @@ namespace fr {
       //in->setId(snets.size() + nets.size());
       snets.push_back(std::move(in));
     }
+    void addRoutedNet(std::unique_ptr<frNet> &in) {
+      routedNets.insert(in->getName());
+      addNet(in);
+    }
     void setBoundaries(const std::vector<frBoundary> &in) {
       boundaries = in;
     }
@@ -391,6 +409,7 @@ namespace fr {
     
     std::map<std::string, frNet*>                                 name2snet;
     std::vector<std::unique_ptr<frNet> >                          snets;
+    std::set<frString>                                            routedNets;
 
     std::vector<std::unique_ptr<frBlockage> >                     blockages;
     

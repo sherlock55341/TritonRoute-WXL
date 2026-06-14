@@ -27,8 +27,14 @@
  */
 
 #include <iostream>
+#include <vector>
 #include "global.h"
 #include "FlexRoute.h"
+#include "db/infra/frTransform.h"
+#include "db/obj/frAccess.h"
+#include "db/obj/frInst.h"
+#include "db/obj/frInstTerm.h"
+#include "db/obj/frRPin.h"
 #include "io/io.h"
 #include "pa/FlexPA.h"
 #include "ta/FlexTA.h"
@@ -36,10 +42,89 @@
 //#include "io/frPinPrep.h"
 #include "gc/FlexGC.h"
 #include "gr/FlexGR.h"
+#include "gr/FlexGR_self_sym_utils.h"
 #include "rp/FlexRP.h"
 
 using namespace std;
 using namespace fr;
+
+namespace {
+
+  bool isSelfSymmetryCandidateNet(frNet *net) {
+    static const string prefix = "Symmtry";
+    return net != nullptr &&
+           net->getName().compare(0, prefix.size(), prefix) == 0;
+  }
+
+  frPoint getRPinGlobalAccessPoint(frRPin *rpin) {
+    frPoint pt;
+    auto ap = rpin->getAccessPoint();
+    ap->getPoint(pt);
+    if (rpin->getFrTerm()->typeId() == frcInstTerm) {
+      auto inst = static_cast<frInstTerm*>(rpin->getFrTerm())->getInst();
+      frTransform shiftXform;
+      inst->getTransform(shiftXform);
+      shiftXform.set(frOrient(frcR0));
+      pt.transform(shiftXform);
+    } else if (rpin->getFrTerm()->typeId() == frcTerm) {
+      ;
+    } else {
+      cout << "Error: unknown rpin term type in getRPinGlobalAccessPoint\n";
+      exit(1);
+    }
+    return pt;
+  }
+
+  void initSelfSymmetryConstraints(frDesign *design) {
+    auto block = design ? design->getTopBlock() : nullptr;
+    if (block == nullptr) {
+      return;
+    }
+
+    frBox dieBox;
+    block->getBoundaryBBox(dieBox);
+    for (auto &uNet: block->getNets()) {
+      auto net = uNet.get();
+      if (block->isRoutedNet(net->getName()) || !isSelfSymmetryCandidateNet(net)) {
+        continue;
+      }
+
+      vector<frPoint> points;
+      points.reserve(net->getRPins().size());
+      for (auto &rpin: net->getRPins()) {
+        if (rpin->getAccessPoint() == nullptr || rpin->getFrTerm() == nullptr) {
+          continue;
+        }
+        points.push_back(getRPinGlobalAccessPoint(rpin.get()));
+      }
+      if (points.empty()) {
+        continue;
+      }
+
+      bool isHorizontal = false;
+      int axis = 0;
+      get_self_symmetry_axis(points, isHorizontal, axis);
+
+      auto axisName = isHorizontal ? "y" : "x";
+      bool axisInDie = isHorizontal ?
+                       axis >= dieBox.bottom() && axis <= dieBox.top() :
+                       axis >= dieBox.left() && axis <= dieBox.right();
+      if (!axisInDie) {
+        cout << "Error: " << net->getName() << " self-symmetry axis "
+             << axisName << "=" << axis
+             << " is outside die box " << dieBox << "\n";
+        exit(1);
+      }
+
+      frSelfSymmetryConstraint selfSymmetryConstraint;
+      selfSymmetryConstraint.isAxisHorizontal = isHorizontal;
+      selfSymmetryConstraint.axis = axis;
+      net->setSelfSymmetryConstraint(selfSymmetryConstraint);
+      net->setConstraint(frNetRoutingConstraint::frcSelfSymmetry);
+    }
+  }
+
+}
 
 void FlexRoute::init() {
   io::Parser parser(getDesign());
@@ -57,6 +142,7 @@ void FlexRoute::init() {
   }
   // GR-related
   parser.initRPin();
+  initSelfSymmetryConstraints(getDesign());
 }
 
 void FlexRoute::prep() {
@@ -134,4 +220,3 @@ int FlexRoute::main() {
   */
   return 0;
 }
-
