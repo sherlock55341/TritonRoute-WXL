@@ -126,6 +126,9 @@ namespace {
                                         const frPoint &newBegin,
                                         const frPoint &newEnd,
                                         const char *reason) {
+    if (VERBOSE <= 1) {
+      return;
+    }
     frBox guideBox;
     if (guide != nullptr) {
       guide->getBBox(guideBox);
@@ -254,9 +257,6 @@ namespace {
 
     for (auto &uNet: block->getNets()) {
       auto net = uNet.get();
-      if (block->isRoutedNet(net->getName())) {
-        continue;
-      }
       auto constraint = net == nullptr ?
                         nullptr :
                         net->getSelfSymmetryConstraintPtr();
@@ -273,17 +273,19 @@ namespace {
       auto axisCtx = SelfSymmetryAxisContext::fromReferencePoint(
           design, *constraint, refLoc);
       if (!axisCtx.valid || axisCtx.axisSnapFailed) {
-        cout << "SSTA_AXIS_SNAP_TRACE"
-             << " status=skip_net"
-             << " net=" << net->getName()
-             << " axis=" << constraint->axis
-             << " originalAxis=" << constraint->axis
-             << " isHorizontal=" << (constraint->isAxisHorizontal ? 1 : 0)
-             << " rootSide=0"
-             << " guideBox=0,0:0,0:layer=-1"
-             << " old=0,0:0,0:layer=-1"
-             << " new=0,0:0,0"
-             << " reason=axis_snap_failed\n";
+        if (VERBOSE > 1) {
+          cout << "SSTA_AXIS_SNAP_TRACE"
+               << " status=skip_net"
+               << " net=" << net->getName()
+               << " axis=" << constraint->axis
+               << " originalAxis=" << constraint->axis
+               << " isHorizontal=" << (constraint->isAxisHorizontal ? 1 : 0)
+               << " rootSide=0"
+               << " guideBox=0,0:0,0:layer=-1"
+               << " old=0,0:0,0:layer=-1"
+               << " new=0,0:0,0"
+               << " reason=axis_snap_failed\n";
+        }
         continue;
       }
       axisCtx.rootSide =
@@ -311,17 +313,19 @@ namespace {
         for (auto &connFig: guide->getRoutes()) {
           if (connFig->typeId() != frcPathSeg) {
             ++stats.skipped;
-            cout << "SSTA_AXIS_SNAP_TRACE"
-                 << " status=skip"
-                 << " net=" << net->getName()
-                 << " axis=" << axisCtx.axis
-                 << " originalAxis=" << axisCtx.originalAxis
-                 << " isHorizontal=" << (axisCtx.isAxisHorizontal ? 1 : 0)
-                 << " rootSide=" << axisCtx.rootSide
-                 << " guideBox=0,0:0,0:layer=-1"
-                 << " old=0,0:0,0:layer=-1"
-                 << " new=0,0:0,0"
-                 << " reason=unsupported_route\n";
+            if (VERBOSE > 1) {
+              cout << "SSTA_AXIS_SNAP_TRACE"
+                   << " status=skip"
+                   << " net=" << net->getName()
+                   << " axis=" << axisCtx.axis
+                   << " originalAxis=" << axisCtx.originalAxis
+                   << " isHorizontal=" << (axisCtx.isAxisHorizontal ? 1 : 0)
+                   << " rootSide=" << axisCtx.rootSide
+                   << " guideBox=0,0:0,0:layer=-1"
+                   << " old=0,0:0,0:layer=-1"
+                   << " new=0,0:0,0"
+                   << " reason=unsupported_route\n";
+            }
             continue;
           }
           auto pathSeg = static_cast<frPathSeg*>(connFig.get());

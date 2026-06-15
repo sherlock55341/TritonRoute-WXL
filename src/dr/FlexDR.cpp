@@ -2059,7 +2059,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     //   omp_set_num_threads(1);
     // }
     const bool runWorkersSerially = selfSymmetryDRSharedStates != nullptr;
-    if (runWorkersSerially) {
+    if (VERBOSE > 1 && runWorkersSerially) {
       cout << "self-symmetry dr phase: serial tiled workers\n";
     }
 
@@ -2112,9 +2112,9 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
       }
     }
   }
-  if (skipConnectivityCheck) {
+  if (VERBOSE > 1 && skipConnectivityCheck) {
     cout << "self-symmetry dr phase: connectivity check skipped\n";
-  } else {
+  } else if (!skipConnectivityCheck) {
     checkConnectivity(iter, targetNets);
   }
   numViols.push_back(getDesign()->getTopBlock()->getNumMarkers());

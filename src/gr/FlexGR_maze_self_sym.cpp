@@ -591,7 +591,7 @@ void FlexGRWorker::routeNet_addSelfSymmetry2DAxisEndpoint(
 
 void FlexGRWorker::printSelfSymmetry2DDebug(grNet* net, bool mustTouchAxis,
                                             bool axisContactAfter) const {
-  if (!net || !net->getFrNet() ||
+  if (VERBOSE <= 1 || !net || !net->getFrNet() ||
       !SelfSymmetryDebug::isDebugNet(net->getFrNet()) ||
       !isSelfSymmetry2DNet(net->getFrNet()) || !is2DRouting) {
     return;

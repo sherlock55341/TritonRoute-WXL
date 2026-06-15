@@ -55,7 +55,7 @@ namespace {
     unsigned long long mirrorCostTotal = 0;
 
     void print() {
-      if (!sawDebugNet || printed) {
+      if (VERBOSE <= 1 || !sawDebugNet || printed) {
         return;
       }
       printed = true;
@@ -473,6 +473,9 @@ unsigned FlexGR::getSelfSymmetryLayerAssignMirrorCost(frNode *currNode,
 }
 
 void FlexGR::dumpSelfSymmetry2DAscii(const string &tag) const {
+  if (VERBOSE <= 1) {
+    return;
+  }
   auto block = design ? design->getTopBlock() : nullptr;
   if (block == nullptr) {
     return;
@@ -1187,8 +1190,7 @@ bool FlexGR::hasSelfSymmetryNets() const {
   }
   for (auto &uNet: block->getNets()) {
     auto net = uNet.get();
-    if (net != nullptr && !block->isRoutedNet(net->getName()) &&
-        net->getSelfSymmetryConstraintPtr() != nullptr) {
+    if (net != nullptr && net->getSelfSymmetryConstraintPtr() != nullptr) {
       return true;
     }
   }
@@ -1208,9 +1210,6 @@ void FlexGR::stageSelfSymmetry3DLeadOnly() {
 
   for (auto &uNet: block->getNets()) {
     auto net = uNet.get();
-    if (net != nullptr && block->isRoutedNet(net->getName())) {
-      continue;
-    }
     auto constraint = net ? net->getSelfSymmetryConstraintPtr() : nullptr;
     if (constraint == nullptr) {
       continue;
@@ -1334,9 +1333,13 @@ void FlexGR::endSelfSymmetry3DGuidedSearchRepair() {
 }
 
 void FlexGR::searchRepairSelfSymmetryMirror() {
-  cout << "self-symmetry mirror repair...\n";
+  if (VERBOSE > 1) {
+    cout << "self-symmetry mirror repair...\n";
+  }
   buildSelfSymmetryMirror2DTopology();
-  cout << "done self-symmetry mirror repair...\n";
+  if (VERBOSE > 1) {
+    cout << "done self-symmetry mirror repair...\n";
+  }
 }
 
 void FlexGR::buildSelfSymmetryMirror2DTopology() {
@@ -1345,8 +1348,7 @@ void FlexGR::buildSelfSymmetryMirror2DTopology() {
     return;
   }
   for (auto &uNet: block->getNets()) {
-    if (!block->isRoutedNet(uNet->getName()) &&
-        uNet->getSelfSymmetryConstraintPtr()) {
+    if (uNet->getSelfSymmetryConstraintPtr()) {
       buildSelfSymmetryMirror2DTopology_net(uNet.get());
     }
   }
@@ -1477,7 +1479,7 @@ FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
 
   frNode *rootGCellNode = findCurrentRootGCellNode();
   if (rootGCellNode == nullptr) {
-    if (SelfSymmetryDebug::isDebugNet(net)) {
+    if (VERBOSE > 1 && SelfSymmetryDebug::isDebugNet(net)) {
       cout << "@@@ self-symmetry mirror repair 2d @@@\n";
       cout << "net: " << net->getName() << "\n";
       cout << "mirror_hanan_pins_covered: 0/0\n";
@@ -1731,7 +1733,7 @@ FlexGR::buildSelfSymmetryMirror2DTopology_net(frNet *net) {
   refreshFirstNonRPinNode();
   refreshTopologyCaches();
 
-  if (SelfSymmetryDebug::isDebugNet(net)) {
+  if (VERBOSE > 1 && SelfSymmetryDebug::isDebugNet(net)) {
     cout << "@@@ self-symmetry mirror repair 2d @@@\n";
     cout << "net: " << net->getName() << "\n";
     cout << "mirror_hanan_pins_covered: "

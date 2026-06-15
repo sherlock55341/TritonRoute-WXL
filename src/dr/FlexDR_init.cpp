@@ -2235,7 +2235,7 @@ void FlexDRWorker::initNet(frNet* net,
   }
   dNet->setOrigGuides(origGuides);
   dNet->setId(nets.size());
-  if (net->getSelfSymmetryConstraintPtr() != nullptr) {
+  if (VERBOSE > 1 && net->getSelfSymmetryConstraintPtr() != nullptr) {
     stringstream ss;
     ss << "@@@ self-symmetry drnet init @@@\n";
     ss << "net: " << net->getName() << "\n";
@@ -5081,13 +5081,8 @@ void FlexDRWorker::initMazeCost_fixedObj() {
         modMinSpacingCostVia(box, zIdx, 3, true,  true);
         modMinSpacingCostVia(box, zIdx, 3, false, true);
         modEolSpacingCost(box, zIdx, 3);
-        // block for PDN and imported routed nets (fixed objs)
-        if (net->getType() == frNetEnum::frcPowerNet ||
-            net->getType() == frNetEnum::frcGroundNet ||
-            getDesign()->getTopBlock()->isRoutedNet(net->getName())) {
-          modBlockedPlanar(box, zIdx, true);
-          modBlockedVia(box, zIdx, true);
-        }
+        modBlockedPlanar(box, zIdx, true);
+        modBlockedVia(box, zIdx, true);
       // snet
       } else if (obj->typeId() == frcVia) {
         auto via = static_cast<frVia*>(obj);
@@ -5105,12 +5100,8 @@ void FlexDRWorker::initMazeCost_fixedObj() {
           modMinSpacingCostVia(box, zIdx, 3, true,  false);
           modMinSpacingCostVia(box, zIdx, 3, false, false);
           modEolSpacingCost(box, zIdx, 3);
-          if (net->getType() == frNetEnum::frcPowerNet ||
-              net->getType() == frNetEnum::frcGroundNet ||
-              getDesign()->getTopBlock()->isRoutedNet(net->getName())) {
-            modBlockedPlanar(box, zIdx, true);
-            modBlockedVia(box, zIdx, true);
-          }
+          modBlockedPlanar(box, zIdx, true);
+          modBlockedVia(box, zIdx, true);
         } else {
           modAdjCutSpacingCost_fixedObj(box, via);
 

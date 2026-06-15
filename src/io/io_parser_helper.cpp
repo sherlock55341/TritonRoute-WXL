@@ -35,11 +35,242 @@
 #include "frBaseTypes.h"
 #include <fstream>
 #include <sstream>
+#include <cctype>
+#include <algorithm>
 
 //#include "frGuidePrep.h"
 using namespace std;
 using namespace fr;
 using namespace boost::polygon::operators;
+
+namespace {
+  string trimDefWhitespace(const string &line) {
+    auto begin = line.begin();
+    while (begin != line.end() &&
+           isspace(static_cast<unsigned char>(*begin))) {
+      ++begin;
+    }
+    auto end = line.end();
+    while (end != begin &&
+           isspace(static_cast<unsigned char>(*(end - 1)))) {
+      --end;
+    }
+    return string(begin, end);
+  }
+
+  string getDefSectionKeyword(const string &line) {
+    auto trimmed = trimDefWhitespace(line);
+    istringstream iss(trimmed);
+    string keyword;
+    int count;
+    string semicolon;
+    if ((iss >> keyword >> count >> semicolon) && semicolon == ";") {
+      return keyword;
+    }
+    return "";
+  }
+
+  bool parseDefSectionHeader(const string &line,
+                             const string &sectionName,
+                             int &count) {
+    auto trimmed = trimDefWhitespace(line);
+    istringstream iss(trimmed);
+    string keyword;
+    string semicolon;
+    return (iss >> keyword >> count >> semicolon) &&
+           keyword == sectionName &&
+           semicolon == ";";
+  }
+
+  bool isDefNetStartLine(const string &line) {
+    auto trimmed = trimDefWhitespace(line);
+    return trimmed.size() >= 2 && trimmed[0] == '-' &&
+           isspace(static_cast<unsigned char>(trimmed[1]));
+  }
+
+  bool isDefEndNetsLine(const string &line) {
+    return trimDefWhitespace(line) == "END NETS";
+  }
+
+  bool isDefEndSpecialNetsLine(const string &line) {
+    return trimDefWhitespace(line) == "END SPECIALNETS";
+  }
+
+  bool isDefRouteGeometryLine(const string &line) {
+    auto trimmed = trimDefWhitespace(line);
+    istringstream iss(trimmed);
+    string plus;
+    string routeStatus;
+    return (iss >> plus >> routeStatus) &&
+           plus == "+" &&
+           (routeStatus == "ROUTED" ||
+            routeStatus == "FIXED" ||
+            routeStatus == "COVER");
+  }
+
+  bool isDefRouteStatusToken(const string &token) {
+    return token == "ROUTED" || token == "FIXED" || token == "COVER";
+  }
+
+  bool isDefIntegerToken(const string &token) {
+    if (token.empty()) {
+      return false;
+    }
+    auto begin = token.begin();
+    if (*begin == '-' || *begin == '+') {
+      ++begin;
+    }
+    return begin != token.end() &&
+           all_of(begin, token.end(), [](unsigned char c) {
+             return isdigit(c);
+           });
+  }
+
+  vector<string> splitDefTokens(const string &line) {
+    vector<string> tokens;
+    istringstream iss(line);
+    string token;
+    while (iss >> token) {
+      tokens.push_back(token);
+    }
+    return tokens;
+  }
+
+  bool isDefRouteNewLine(const string &line) {
+    auto tokens = splitDefTokens(line);
+    return !tokens.empty() && tokens[0] == "NEW";
+  }
+
+  string getDefLeadingWhitespace(const string &line) {
+    auto pos = line.find_first_not_of(" \t\r\n");
+    return pos == string::npos ? string("") : line.substr(0, pos);
+  }
+
+  void appendDefSNetLayerWidth(const string &layerName,
+                               const vector<string> &tokens,
+                               size_t tokenIdx,
+                               frTechObject *tech,
+                               vector<string> &outTokens) {
+    auto layer = tech == nullptr ? nullptr : tech->getLayer(layerName);
+    if (layer == nullptr) {
+      cout << "Error: cannot find layer while migrating DEF routed net to SPECIALNETS: "
+           << layerName << endl;
+      exit(1);
+    }
+    if (tokenIdx + 1 >= tokens.size() || !isDefIntegerToken(tokens[tokenIdx + 1])) {
+      outTokens.push_back(to_string(layer->getWidth()));
+    }
+  }
+
+  string joinDefTokens(const string &leadingWhitespace,
+                       const vector<string> &tokens) {
+    ostringstream oss;
+    oss << leadingWhitespace;
+    for (size_t i = 0; i < tokens.size(); ++i) {
+      if (i != 0) {
+        oss << " ";
+      }
+      oss << tokens[i];
+    }
+    return oss.str();
+  }
+
+  string convertDefNetRouteLineToSNet(const string &line, frTechObject *tech) {
+    auto tokens = splitDefTokens(line);
+    if (tokens.empty()) {
+      return line;
+    }
+
+    vector<string> outTokens;
+    for (size_t i = 0; i < tokens.size(); ++i) {
+      if (tokens[i] == "+" && i + 2 < tokens.size() &&
+          isDefRouteStatusToken(tokens[i + 1])) {
+        outTokens.push_back(tokens[i]);
+        outTokens.push_back(tokens[++i]);
+        outTokens.push_back(tokens[++i]);
+        appendDefSNetLayerWidth(tokens[i], tokens, i, tech, outTokens);
+      } else if (tokens[i] == "NEW" && i + 1 < tokens.size()) {
+        outTokens.push_back(tokens[i]);
+        outTokens.push_back(tokens[++i]);
+        appendDefSNetLayerWidth(tokens[i], tokens, i, tech, outTokens);
+      } else {
+        outTokens.push_back(tokens[i]);
+      }
+    }
+    return joinDefTokens(getDefLeadingWhitespace(line), outTokens);
+  }
+
+  bool defNetBlockHasRouteGeometry(const vector<string> &netBlock) {
+    for (auto &line: netBlock) {
+      if (isDefRouteGeometryLine(line)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  int collectDefRoutedOrdinaryNetGeometry(
+      const string &defFile,
+      vector<string> &migratedNetBlocks) {
+    ifstream fin(defFile);
+    if (!fin.is_open()) {
+      cout << "Error: cannot open input DEF\n";
+      exit(1);
+    }
+
+    bool inNets = false;
+    vector<string> currNetBlock;
+    int count = 0;
+    string line;
+    while (getline(fin, line)) {
+      int sectionCount = 0;
+      if (!inNets) {
+        if (parseDefSectionHeader(line, "NETS", sectionCount)) {
+          inNets = true;
+        }
+        continue;
+      }
+
+      if (isDefEndNetsLine(line)) {
+        break;
+      }
+      if (isDefNetStartLine(line)) {
+        if (defNetBlockHasRouteGeometry(currNetBlock)) {
+          migratedNetBlocks.insert(migratedNetBlocks.end(),
+                                   currNetBlock.begin(),
+                                   currNetBlock.end());
+          ++count;
+        }
+        currNetBlock.clear();
+      }
+      if (!currNetBlock.empty() || isDefNetStartLine(line)) {
+        currNetBlock.push_back(line);
+      }
+    }
+
+    if (defNetBlockHasRouteGeometry(currNetBlock)) {
+      migratedNetBlocks.insert(migratedNetBlocks.end(),
+                               currNetBlock.begin(),
+                               currNetBlock.end());
+      ++count;
+    }
+    return count;
+  }
+
+  bool writeDefNonMigratedNetBlock(const vector<string> &netBlock,
+                                   ofstream &fout) {
+    if (netBlock.empty()) {
+      return false;
+    }
+    if (defNetBlockHasRouteGeometry(netBlock)) {
+      return true;
+    }
+    for (auto &netLine: netBlock) {
+      fout << netLine << endl;
+    }
+    return false;
+  }
+}
 
 // void io::Parser::initDefaultVias() {
 //   for (int layerNum = 1; layerNum < (int)tech->getLayers().size(); layerNum += 2) {
@@ -682,9 +913,17 @@ void io::Parser::writeRefDef() {
     }
   }
 
+  vector<string> migratedNetBlocks;
+  auto expectedMigratedNetCnt =
+      collectDefRoutedOrdinaryNetGeometry(DEF_FILE, migratedNetBlocks);
+  if (REF_OUT_FILE == DEF_FILE && expectedMigratedNetCnt > 0) {
+    REF_OUT_FILE = OUT_FILE + string(".ref");
+  }
+
   if (REF_OUT_FILE != DEF_FILE) {
     cout << "Writing reference output def (" << REF_OUT_FILE << ")...\n";
     bool hasVia = false;
+    bool hasSpecialNets = false;
     ifstream fin(DEF_FILE);
     ofstream fout(REF_OUT_FILE);
     if (!fin.is_open()) {
@@ -699,13 +938,10 @@ void io::Parser::writeRefDef() {
     string a;
     int b;
     while (getline(fin, line)) {
-      istringstream iss(line);
-      if (!(iss >> a >> b)) {
-        continue;
-      }
-      if (a == string("VIAS")) {
+      if (parseDefSectionHeader(line, "VIAS", b)) {
         hasVia = true;
-        break;
+      } else if (parseDefSectionHeader(line, "SPECIALNETS", b)) {
+        hasSpecialNets = true;
       }
     }
 
@@ -713,66 +949,102 @@ void io::Parser::writeRefDef() {
     fin.clear();
     fin.seekg(0, ios::beg);
 
+    bool inNets = false;
+    bool inSpecialNets = false;
+    vector<string> currNetBlock;
+    bool wroteMigratedSNets = false;
+
+    auto writeGeneratedVias = [&]() {
+      for (auto viaDef: genViaDefs) {
+        frVia via(viaDef);
+        frBox layer1Box, layer2Box, cutBox;
+        via.getLayer1BBox(layer1Box);
+        via.getCutBBox(cutBox);
+        via.getLayer2BBox(layer2Box);
+
+        fout << "- " << viaDef->getName() << endl;
+        fout << "  + RECT " << tech->getLayer(viaDef->getLayer1Num())->getName()
+             << " ( " << layer1Box.left() << " " << layer1Box.bottom() << " )"
+             << " ( " << layer1Box.right() << " " << layer1Box.top() << " )\n";
+        fout << "  + RECT " << tech->getLayer(viaDef->getCutLayerNum())->getName()
+             << " ( " << cutBox.left() << " " << cutBox.bottom() << " )"
+             << " ( " << cutBox.right() << " " << cutBox.top() << " )\n";
+        fout << "  + RECT " << tech->getLayer(viaDef->getLayer2Num())->getName()
+             << " ( " << layer2Box.left() << " " << layer2Box.bottom() << " )"
+             << " ( " << layer2Box.right() << " " << layer2Box.top() << " )\n";
+        fout << "  ;\n";
+      }
+    };
+
+    auto writeMigratedSNets = [&]() {
+      for (auto &migratedLine: migratedNetBlocks) {
+        if (isDefRouteGeometryLine(migratedLine) ||
+            isDefRouteNewLine(migratedLine)) {
+          fout << convertDefNetRouteLineToSNet(migratedLine, tech) << endl;
+        } else {
+          fout << migratedLine << endl;
+        }
+      }
+    };
+
     while (getline(fin, line)) {
       bool skip = false;
-      istringstream iss(line);
-      if (iss >> a >> b) {
-        // write empty VIAS section if does not exist
-        if (!hasVia) {
-          if (a == string("COMPONENTS")) {
-            fout << "\nVIAS " << genViaDefs.size() << " ;\n";
-            for (auto viaDef: genViaDefs) {
-              frVia via(viaDef);
-              frBox layer1Box, layer2Box, cutBox;
-              via.getLayer1BBox(layer1Box);
-              via.getCutBBox(cutBox);
-              via.getLayer2BBox(layer2Box);
-
-              fout << "- " << viaDef->getName() << endl;
-              fout << "  + RECT " << tech->getLayer(viaDef->getLayer1Num())->getName() 
-                   << " ( " << layer1Box.left() << " " << layer1Box.bottom() << " )"
-                   << " ( " << layer1Box.right() << " " << layer1Box.top() << " )\n";
-              fout << "  + RECT " << tech->getLayer(viaDef->getCutLayerNum())->getName() 
-                   << " ( " << cutBox.left() << " " << cutBox.bottom() << " )"
-                   << " ( " << cutBox.right() << " " << cutBox.top() << " )\n";
-              fout << "  + RECT " << tech->getLayer(viaDef->getLayer2Num())->getName() 
-                   << " ( " << layer2Box.left() << " " << layer2Box.bottom() << " )"
-                   << " ( " << layer2Box.right() << " " << layer2Box.top() << " )\n";
-              fout << "  ;\n";
-            }
-            fout << "END VIAS\n\n";
-          }
-        } else {
-          if (a == string("VIAS")) {
-            skip = true;
-            fout << "\nVIAS " << b + (int)genViaDefs.size() << " ;\n";
-            for (auto viaDef: genViaDefs) {
-              frVia via(viaDef);
-              frBox layer1Box, layer2Box, cutBox;
-              via.getLayer1BBox(layer1Box);
-              via.getCutBBox(cutBox);
-              via.getLayer2BBox(layer2Box);
-
-              fout << "- " << viaDef->getName() << endl;
-              fout << "  + RECT " << tech->getLayer(viaDef->getLayer1Num())->getName() 
-                   << " ( " << layer1Box.left() << " " << layer1Box.bottom() << " )"
-                   << " ( " << layer1Box.right() << " " << layer1Box.top() << " )\n";
-              fout << "  + RECT " << tech->getLayer(viaDef->getCutLayerNum())->getName() 
-                   << " ( " << cutBox.left() << " " << cutBox.bottom() << " )"
-                   << " ( " << cutBox.right() << " " << cutBox.top() << " )\n";
-              fout << "  + RECT " << tech->getLayer(viaDef->getLayer2Num())->getName() 
-                   << " ( " << layer2Box.left() << " " << layer2Box.bottom() << " )"
-                   << " ( " << layer2Box.right() << " " << layer2Box.top() << " )\n";
-              fout << "  ;\n";
-            }
-          }
-        }
-        // append generated via 
-
+      string sectionKeyword = getDefSectionKeyword(line);
+      if (!inNets && !inSpecialNets && sectionKeyword == "COMPONENTS" &&
+          !hasVia && !genViaDefs.empty()) {
+        fout << "\nVIAS " << genViaDefs.size() << " ;\n";
+        writeGeneratedVias();
+        fout << "END VIAS\n\n";
       }
+
+      if (parseDefSectionHeader(line, "NETS", b)) {
+        inNets = true;
+        skip = true;
+        fout << "NETS " << b - expectedMigratedNetCnt << " ;\n";
+      } else if (inNets) {
+        skip = true;
+        if (isDefEndNetsLine(line)) {
+          writeDefNonMigratedNetBlock(currNetBlock, fout);
+          currNetBlock.clear();
+          fout << line << endl;
+          if (!hasSpecialNets && !migratedNetBlocks.empty()) {
+            fout << "\nSPECIALNETS " << expectedMigratedNetCnt << " ;\n";
+            writeMigratedSNets();
+            fout << "END SPECIALNETS\n";
+            wroteMigratedSNets = true;
+          }
+          inNets = false;
+        } else {
+          if (isDefNetStartLine(line)) {
+            writeDefNonMigratedNetBlock(currNetBlock, fout);
+            currNetBlock.clear();
+          }
+          currNetBlock.push_back(line);
+        }
+      } else if (parseDefSectionHeader(line, "SPECIALNETS", b)) {
+        inSpecialNets = true;
+        skip = true;
+        fout << "SPECIALNETS " << b + expectedMigratedNetCnt << " ;\n";
+      } else if (inSpecialNets && isDefEndSpecialNetsLine(line)) {
+        writeMigratedSNets();
+        wroteMigratedSNets = true;
+        skip = false;
+        inSpecialNets = false;
+      } else if (parseDefSectionHeader(line, "VIAS", b) && hasVia) {
+        skip = true;
+        fout << "\nVIAS " << b + (int)genViaDefs.size() << " ;\n";
+        writeGeneratedVias();
+      }
+
       if (!skip) {
         fout << line << endl;
       }
+    }
+
+    if (!hasSpecialNets && !wroteMigratedSNets && !migratedNetBlocks.empty()) {
+      fout << "\nSPECIALNETS " << expectedMigratedNetCnt << " ;\n";
+      writeMigratedSNets();
+      fout << "END SPECIALNETS\n";
     }
 
     fin.close();

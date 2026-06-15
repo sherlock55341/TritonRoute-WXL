@@ -930,8 +930,7 @@ void FlexGR::initGR_genTopology_selfsymmetry_net(frNet* net) {
     }
 
     auto shouldDumpSelfSymmetryTopology = [&]() {
-        const bool enableDump = true;
-        return enableDump && SelfSymmetryDebug::isDebugNet(net);
+        return VERBOSE > 1 && SelfSymmetryDebug::isDebugNet(net);
     };
 
     if (shouldDumpSelfSymmetryTopology()) {

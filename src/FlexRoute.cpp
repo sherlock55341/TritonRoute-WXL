@@ -85,7 +85,7 @@ namespace {
     block->getBoundaryBBox(dieBox);
     for (auto &uNet: block->getNets()) {
       auto net = uNet.get();
-      if (block->isRoutedNet(net->getName()) || !isSelfSymmetryCandidateNet(net)) {
+      if (!isSelfSymmetryCandidateNet(net)) {
         continue;
       }
 

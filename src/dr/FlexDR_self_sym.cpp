@@ -883,9 +883,9 @@ frCost FlexDRWorker::getSelfSymmetryDRCost(frMIdx x,
 
   frCost cost = 0;
   if (beginDist == 0 && endDist == 0) {
-    cost = selfSymmetryDRCeilCost(edgeLen, 1, 10);
+    cost = selfSymmetryDRCeilCost(edgeLen, 1, 4);
   } else if (endDist > beginDist) {
-    cost = selfSymmetryDRCeilCost(edgeLen, 2, 1);
+    cost = selfSymmetryDRCeilCost(edgeLen, 5, 4);
   } else if (endDist < beginDist) {
     cost = selfSymmetryDRCeilCost(edgeLen, 3, 4);
   } else {
@@ -1271,10 +1271,8 @@ void FlexDR::collectSelfSymmetryDRTargetNets(
   if (getDesign() == nullptr || getDesign()->getTopBlock() == nullptr) {
     return;
   }
-  auto block = getDesign()->getTopBlock();
   for (auto &net: getDesign()->getTopBlock()->getNets()) {
-    if (net && !block->isRoutedNet(net->getName()) &&
-        net->getSelfSymmetryConstraintPtr() != nullptr) {
+    if (net && net->getSelfSymmetryConstraintPtr() != nullptr) {
       targetNets.insert(net.get());
     }
   }
@@ -1286,10 +1284,8 @@ void FlexDR::collectOrdinaryDRTargetNets(
   if (getDesign() == nullptr || getDesign()->getTopBlock() == nullptr) {
     return;
   }
-  auto block = getDesign()->getTopBlock();
   for (auto &net: getDesign()->getTopBlock()->getNets()) {
-    if (net && !block->isRoutedNet(net->getName()) &&
-        net->getSelfSymmetryConstraintPtr() == nullptr) {
+    if (net && net->getSelfSymmetryConstraintPtr() == nullptr) {
       targetNets.insert(net.get());
     }
   }
@@ -1302,8 +1298,10 @@ bool FlexDR::runSelfSymmetryDRPhase() {
     return false;
   }
 
-  cout << endl << "@@@ self-symmetry dr phase @@@" << endl;
-  cout << "self_symmetry_nets: " << selfSymmetryNets.size() << "\n";
+  if (VERBOSE > 1) {
+    cout << endl << "@@@ self-symmetry dr phase @@@" << endl;
+    cout << "self_symmetry_nets: " << selfSymmetryNets.size() << "\n";
+  }
   int ordinaryNetsInPhase = 0;
   SelfSymmetryDRSharedStateMap selfSymmetryDRSharedStates;
   for (auto net: selfSymmetryNets) {
@@ -1314,10 +1312,12 @@ bool FlexDR::runSelfSymmetryDRPhase() {
       exit(1);
     }
     selfSymmetryDRSharedStates[net] = state;
-    cout << "snapped_axis: " << net->getName() << " "
-         << state.snappedAxis << "\n";
-    cout << "root_side: " << net->getName() << " "
-         << state.rootSide << "\n";
+    if (VERBOSE > 1) {
+      cout << "snapped_axis: " << net->getName() << " "
+           << state.snappedAxis << "\n";
+      cout << "root_side: " << net->getName() << " "
+           << state.rootSide << "\n";
+    }
   }
   FlexDRSearchRepairPhase selfSymmetryPhase;
   selfSymmetryPhase.targetNets = &selfSymmetryNets;
@@ -1334,7 +1334,9 @@ bool FlexDR::runSelfSymmetryDRPhase() {
       exit(1);
     }
   }
-  cout << "ordinary_nets_in_phase: " << ordinaryNetsInPhase << "\n";
+  if (VERBOSE > 1) {
+    cout << "ordinary_nets_in_phase: " << ordinaryNetsInPhase << "\n";
+  }
   reportSelfSymmetryDRPhaseRouteCount(selfSymmetryNets);
   reportSelfSymmetryDRChecker();
   snapshotSelfSymmetryDRRoutes();
@@ -1343,6 +1345,9 @@ bool FlexDR::runSelfSymmetryDRPhase() {
 }
 
 void FlexDR::reportSelfSymmetryDRGuideRoutes() const {
+  if (VERBOSE <= 1) {
+    return;
+  }
   auto nets = collectSelfSymmetryDRNets(design);
   if (nets.empty()) {
     return;
@@ -1376,6 +1381,9 @@ void FlexDR::reportSelfSymmetryDRGuideRoutes() const {
 }
 
 void FlexDR::reportSelfSymmetryDRBoundaryPins() const {
+  if (VERBOSE <= 1) {
+    return;
+  }
   auto nets = collectSelfSymmetryDRNets(design);
   if (nets.empty()) {
     return;
@@ -1401,6 +1409,9 @@ void FlexDR::reportSelfSymmetryDRBoundaryPins() const {
 }
 
 void FlexDR::reportSelfSymmetryDRPhaseRouteCount(const set<frNet*, frBlockObjectComp> &targetNets) const {
+  if (VERBOSE <= 1) {
+    return;
+  }
   int shapes = 0;
   int vias = 0;
   int patchWires = 0;
@@ -1422,11 +1433,9 @@ void FlexDR::keepOnlySelfSymmetryDRTargetRoutes(
     return;
   }
   auto regionQuery = getRegionQuery();
-  auto block = getDesign()->getTopBlock();
   for (auto &uNet: getDesign()->getTopBlock()->getNets()) {
     auto net = uNet.get();
-    if (targetNets.find(net) != targetNets.end() ||
-        block->isRoutedNet(net->getName())) {
+    if (targetNets.find(net) != targetNets.end()) {
       continue;
     }
     for (auto &shape: net->getShapes()) {
@@ -1459,6 +1468,9 @@ void FlexDR::snapshotSelfSymmetryDRRoutes() {
 }
 
 void FlexDR::reportSelfSymmetryDRChecker() const {
+  if (VERBOSE <= 1) {
+    return;
+  }
   auto nets = collectSelfSymmetryDRNets(design);
   if (nets.empty()) {
     return;

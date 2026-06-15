@@ -666,25 +666,6 @@ void frRegionQuery::init(frLayerNum numLayers) {
   }
   */
   cnt = 0;
-  for (auto &netName: design->getTopBlock()->getRoutedNets()) {
-    auto net = design->getTopBlock()->getNet(netName);
-    if (net == nullptr) {
-      continue;
-    }
-    for (auto &shape: net->getShapes()) {
-      add(shape.get(), allShapes);
-    }
-    for (auto &via: net->getVias()) {
-      add(via.get(), allShapes);
-    }
-    cnt++;
-    if (VERBOSE > 0) {
-      if (cnt % 10000 == 0) {
-        cout <<"  complete " <<cnt <<" routed nets" <<endl;
-      }
-    }
-  }
-  cnt = 0;
   for (auto &net: design->getTopBlock()->getSNets()) {
     for (auto &shape: net->getShapes()) {
       add(shape.get(), allShapes);

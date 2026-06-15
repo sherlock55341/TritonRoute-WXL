@@ -917,14 +917,14 @@ int io::Parser::getDefNets(defrCallbackType_e type, defiNet* net, defiUserData d
       }
     }
   } else if (hasParsedWireGeometry) {
-    ((io::Parser*)data)->tmpBlock->addRoutedNet(uNetIn);
-    if (((io::Parser*)data)->tmpBlock->nets.size() < 100000) {
-      if (((io::Parser*)data)->tmpBlock->nets.size() % 10000 == 0) {
-        cout <<"defIn read " <<((io::Parser*)data)->tmpBlock->nets.size() <<" nets" <<endl;
+    ((io::Parser*)data)->tmpBlock->addSNet(uNetIn);
+    if (((io::Parser*)data)->tmpBlock->snets.size() < 100000) {
+      if (((io::Parser*)data)->tmpBlock->snets.size() % 10000 == 0) {
+        cout <<"defIn read " <<((io::Parser*)data)->tmpBlock->snets.size() <<" snets" <<endl;
       }
     } else {
-      if (((io::Parser*)data)->tmpBlock->nets.size() % 100000 == 0) {
-        cout <<"defIn read " <<((io::Parser*)data)->tmpBlock->nets.size() <<" nets" <<endl;
+      if (((io::Parser*)data)->tmpBlock->snets.size() % 100000 == 0) {
+        cout <<"defIn read " <<((io::Parser*)data)->tmpBlock->snets.size() <<" snets" <<endl;
       }
     }
   } else {
@@ -5436,11 +5436,11 @@ void io::Parser::readGuide() {
         exit(2);
       } else if (vLine.size() == 1) {
         netName = vLine[0];
-        if (design->topBlock->isRoutedNet(netName)) {
-          net = nullptr;
-          continue;
-        }
         if (design->topBlock->name2net.find(vLine[0]) == design->topBlock->name2net.end()) {
+          if (design->topBlock->name2snet.find(vLine[0]) != design->topBlock->name2snet.end()) {
+            net = nullptr;
+            continue;
+          }
           cout <<"Error: cannot find net: " <<vLine[0] <<endl;
           exit(2);
         }
