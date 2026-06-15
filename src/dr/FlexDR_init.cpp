@@ -2219,7 +2219,7 @@ void FlexDRWorker::initNet(frNet* net,
   //bool enableOutput = true;
   auto dNet = make_unique<drNet>();
   dNet->setFrNet(net);
-  dNet->setFixed(!isRoutableDRNet(net));
+  dNet->setFixed(!isTargetNet(net));
   // true pin
   initNet_term_new(dNet.get(), terms);
   // boundary pin, could overlap with any of true pins
@@ -4079,7 +4079,7 @@ void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, 
     // }
 
     for (auto &net: ripupNets) {
-      if (!isRoutableDRNet(net)) {
+      if (net == nullptr || net->isFixed()) {
         continue;
       }
       routes.push_back(make_pair(net, make_pair(true, 0)));
@@ -4132,7 +4132,7 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
         movableAggressorNets.insert(fNet);
         if (getDRNets(fNet)) {
           for (auto dNet: *(getDRNets(fNet))) {
-            if (!isRoutableDRNet(dNet)) {
+            if (dNet == nullptr || dNet->isFixed()) {
               continue;
             }
             if (dNet->getNumReroutes() >= getMazeEndIter()) {
@@ -4153,7 +4153,7 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
         // int subNetIdx = -1;
         for (auto dNet: *(getDRNets(fNet))) {
           // subNetIdx++;
-          if (!isRoutableDRNet(dNet)) {
+          if (dNet == nullptr || dNet->isFixed()) {
             continue;
           }
           if (dNet->getNumReroutes() >= getMazeEndIter()) {
@@ -4221,7 +4221,7 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
             for (auto dNet: *(getDRNets(fNet))) {
               // subNetIdx++;
               // if (dNet->getNumReroutes() >= getMazeEndIter() * 2) {
-              if (!isRoutableDRNet(dNet)) {
+              if (dNet == nullptr || dNet->isFixed()) {
                 continue;
               }
               if (dNet->getNumReroutes() >= getMazeEndIter()) {
@@ -4285,7 +4285,7 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
           for (auto dNet: *(getDRNets(fNet))) {
             // subNetIdx++;
             // if (dNet->getNumReroutes() >= getMazeEndIter() * 2) {
-            if (!isRoutableDRNet(dNet)) {
+            if (dNet == nullptr || dNet->isFixed()) {
               continue;
             }
             if (dNet->getNumReroutes() >= getMazeEndIter()) {
