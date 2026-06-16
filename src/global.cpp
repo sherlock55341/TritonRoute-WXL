@@ -87,7 +87,7 @@ frLayerNum ONGRIDONLY_VIA_TOPLAYERNUM             = std::numeric_limits<frLayerN
 
 frLayerNum VIA_ACCESS_LAYERNUM = 2;
 
-int END_ITERATION = 80;
+int END_ITERATION = 2;
 
 frUInt4 TAVIACOST       = 1;
 frUInt4 TAPINCOST       = 4;
@@ -265,4 +265,3 @@ ostream& operator<< (ostream& os, const frBox &box) {
   os <<"( " <<box.left() <<" " <<box.bottom() <<" ) ( " <<box.right() <<" " <<box.top() <<" )";
   return os;
 }
-

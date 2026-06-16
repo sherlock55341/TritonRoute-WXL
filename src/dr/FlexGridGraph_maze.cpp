@@ -266,6 +266,9 @@ using namespace fr;
                                 const FlexMazeIdx &dstMazeIdx2, const frDirEnum &dir) {
   //bool enableOutput = true;
   bool enableOutput = false;
+  if (drWorker && drWorker->isSelfSymmetryDRActive()) {
+    return 0;
+  }
   if (enableOutput) {
     cout <<"est from (" <<src.x() <<", " <<src.y() <<", " <<src.z() <<") "
          <<"to ("       <<dstMazeIdx1.x() <<", " <<dstMazeIdx1.y() <<", " <<dstMazeIdx1.z() <<") ("
@@ -649,16 +652,20 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
   bool shapeCost  = hasShapeCost(gridX, gridY, gridZ, dir);
   bool blockCost  = isBlocked(gridX, gridY, gridZ, dir);
   bool guideCost  = hasGuide(gridX, gridY, gridZ, dir);
+  auto edgeLen = getEdgeLength(gridX, gridY, gridZ, dir);
+  auto wirelengthCost = drWorker &&
+      drWorker->isSelfSymmetryDRAxisEdge(gridX, gridY, gridZ, dir) ?
+      edgeLen / 4.0 : edgeLen;
 
   // temporarily disable guideCost
-  nextPathCost += getEdgeLength(gridX, gridY, gridZ, dir)
-                  + (gridCost   ? GRIDCOST         * getEdgeLength(gridX, gridY, gridZ, dir) : 0)
-                  + (drcCost    ? ggDRCCost        * getEdgeLength(gridX, gridY, gridZ, dir) : 0)
-                  + (markerCost ? ggMarkerCost     * getEdgeLength(gridX, gridY, gridZ, dir) : 0)
+  nextPathCost += wirelengthCost
+                  + (gridCost   ? GRIDCOST         * edgeLen : 0)
+                  + (drcCost    ? ggDRCCost        * edgeLen : 0)
+                  + (markerCost ? ggMarkerCost     * edgeLen : 0)
                   // + (markerCost ? ggMarkerCost     * pathWidth                               : 0)
-                  + (shapeCost  ? SHAPECOST        * getEdgeLength(gridX, gridY, gridZ, dir) : 0)
+                  + (shapeCost  ? SHAPECOST        * edgeLen : 0)
                   + (blockCost  ? BLOCKCOST        * pathWidth * 20                          : 0)
-                  + (!guideCost ? GUIDECOST        * getEdgeLength(gridX, gridY, gridZ, dir) : 0);
+                  + (!guideCost ? GUIDECOST        * edgeLen : 0);
   if (drWorker) {
     nextPathCost += drWorker->getSelfSymmetryDRCost(gridX, gridY, gridZ,
                                                     dir, guideCost);
