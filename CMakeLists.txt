@@ -69,6 +69,7 @@ set (FLEXROUTE_SRC
   ${FLEXROUTE_HOME}/src/ta/FlexTA_init.cpp
   ${FLEXROUTE_HOME}/src/ta/FlexTA_rq.cpp
   ${FLEXROUTE_HOME}/src/ta/FlexTA_assign.cpp
+  ${FLEXROUTE_HOME}/src/ta/FlexTA_self_sym.cpp
   ${FLEXROUTE_HOME}/src/ta/FlexTA.cpp
   ${FLEXROUTE_HOME}/src/global.cpp
   ${FLEXROUTE_HOME}/src/gc/FlexGC_end.cpp

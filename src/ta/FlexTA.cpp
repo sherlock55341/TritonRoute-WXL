@@ -365,6 +365,7 @@ int FlexTA::main() {
   initTA(50);
   searchRepair(1, 50, 0);
   snapSelfSymmetryAxisGuides();
+  alignSelfSymmetryMirrorGuides();
   //searchRepair(2, 50, 0);
   //searchRepair(2, 50, 0);
   //searchRepair(-1, 50, 0);
