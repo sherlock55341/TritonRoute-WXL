@@ -654,7 +654,7 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
   bool guideCost  = hasGuide(gridX, gridY, gridZ, dir);
   auto edgeLen = getEdgeLength(gridX, gridY, gridZ, dir);
   auto wirelengthCost = drWorker &&
-      drWorker->isSelfSymmetryDRAxisEdge(gridX, gridY, gridZ, dir) ?
+      drWorker->hasSelfSymmetryDRWirelengthDiscount(gridX, gridY, gridZ, dir) ?
       edgeLen / 4.0 : edgeLen;
 
   // temporarily disable guideCost
@@ -666,10 +666,6 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
                   + (shapeCost  ? SHAPECOST        * edgeLen : 0)
                   + (blockCost  ? BLOCKCOST        * pathWidth * 20                          : 0)
                   + (!guideCost ? GUIDECOST        * edgeLen : 0);
-  if (drWorker) {
-    nextPathCost += drWorker->getSelfSymmetryDRCost(gridX, gridY, gridZ,
-                                                    dir, guideCost);
-  }
   if (enableOutput) {
     cout <<"edge grid/shape/drc/marker/blk/length = " 
          <<hasGridCost(gridX, gridY, gridZ, dir)   <<"/"

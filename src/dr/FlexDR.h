@@ -328,6 +328,9 @@ namespace fr {
       bool leadAxisContactBeforeLink = false;
       bool leadAxisContactAfterLink = false;
       std::set<std::tuple<frMIdx, frMIdx, frMIdx, int> > mirrorRewardEdges;
+      long long mirrorRouteLength = 0;
+      long long mirrorOffGuideLength = 0;
+      bool mirrorNeedsReroute = false;
     };
     // setters
     void setRouteBox(const frBox &boxIn) {
@@ -556,10 +559,9 @@ namespace fr {
     int getOrdinaryNetsInTargetPhase() const {
       return ordinaryNetsInTargetPhase;
     }
-    frCost getSelfSymmetryDRCost(frMIdx x, frMIdx y, frMIdx z,
-                                 frDirEnum dir, bool hasGuide);
-    bool isSelfSymmetryDRAxisEdge(frMIdx x, frMIdx y, frMIdx z,
-                                  frDirEnum dir);
+    bool hasSelfSymmetryDRWirelengthDiscount(frMIdx x, frMIdx y, frMIdx z,
+                                             frDirEnum dir);
+    bool needsSelfSymmetryDRMirrorReroute(frNet *net) const;
     bool isSelfSymmetryDRActive() const {
       return selfSymmetryDRActiveNet != nullptr;
     }
@@ -865,6 +867,9 @@ namespace fr {
                                          std::vector<FlexMazeIdx> &axisSources) const;
     void buildSelfSymmetryDRMirrorGuides(drNet* net,
                                          SelfSymmetryDRRouteContext &ctx);
+    void recordSelfSymmetryDRMirrorPathStats(
+        SelfSymmetryDRRouteContext &ctx,
+        const std::vector<FlexMazeIdx> &path);
     void initTrackCoords_selfSymmetryAxis(frNet* net,
                                           std::map<frCoord, std::map<frLayerNum, frTrackPattern*> > &xMap,
                                           std::map<frCoord, std::map<frLayerNum, frTrackPattern*> > &yMap);

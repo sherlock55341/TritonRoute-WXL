@@ -782,59 +782,28 @@ void FlexDRWorker::buildSelfSymmetryDRMirrorGuides(
   }
 }
 
-frCost FlexDRWorker::getSelfSymmetryDRCost(frMIdx x,
-                                           frMIdx y,
-                                           frMIdx z,
-                                           frDirEnum dir,
-                                           bool hasGuide) {
+bool FlexDRWorker::hasSelfSymmetryDRWirelengthDiscount(frMIdx x,
+                                                       frMIdx y,
+                                                       frMIdx z,
+                                                       frDirEnum dir) {
   if (selfSymmetryDRActiveNet == nullptr) {
-    return 0;
+    return false;
   }
   auto contextIt = selfSymmetryDRRouteContexts.find(selfSymmetryDRActiveNet);
   if (contextIt == selfSymmetryDRRouteContexts.end()) {
-    return 0;
+    return false;
   }
   auto &ctx = contextIt->second;
   auto &axis = ctx.axis;
   if (!axis.valid || ctx.routeMode == SelfSymmetryDRRouteMode::None) {
-    return 0;
-  }
-
-  auto edgeLen = gridGraph.getEdgeLength(x, y, z, dir);
-  if (edgeLen <= 0) {
-    edgeLen = 1;
+    return false;
   }
 
   if (ctx.routeMode == SelfSymmetryDRRouteMode::Mirror) {
     auto key = selfSymmetryDREdgeKey(x, y, z, dir);
-    if (ctx.mirrorRewardEdges.find(key) != ctx.mirrorRewardEdges.end()) {
-      return 0;
-    }
-    auto missMultiplier = max(1u, min((unsigned)(4 * GUIDECOST),
-                                      workerDRCCost > 0 ? workerDRCCost - 1 : 1));
-    return (hasGuide ? GUIDECOST : missMultiplier) * edgeLen;
+    return ctx.mirrorRewardEdges.find(key) != ctx.mirrorRewardEdges.end();
   }
-  return 0;
-}
 
-bool FlexDRWorker::isSelfSymmetryDRAxisEdge(frMIdx x,
-                                            frMIdx y,
-                                            frMIdx z,
-                                            frDirEnum dir) {
-  if (selfSymmetryDRActiveNet == nullptr) {
-    return false;
-  }
-  auto contextIt = selfSymmetryDRRouteContexts.find(selfSymmetryDRActiveNet);
-  if (contextIt == selfSymmetryDRRouteContexts.end()) {
-    return false;
-  }
-  auto &ctx = contextIt->second;
-  auto &axis = ctx.axis;
-  if (!axis.valid ||
-      ctx.routeMode == SelfSymmetryDRRouteMode::None ||
-      ctx.routeMode == SelfSymmetryDRRouteMode::Mirror) {
-    return false;
-  }
   if (dir == frDirEnum::U || dir == frDirEnum::D) {
     return false;
   }
@@ -858,6 +827,54 @@ bool FlexDRWorker::isSelfSymmetryDRAxisEdge(frMIdx x,
                                        axis.effectiveAxis);
 
   return beginDist == 0 && endDist == 0;
+}
+
+bool FlexDRWorker::needsSelfSymmetryDRMirrorReroute(frNet *net) const {
+  auto contextIt = selfSymmetryDRRouteContexts.find(net);
+  if (contextIt == selfSymmetryDRRouteContexts.end()) {
+    return false;
+  }
+  return contextIt->second.mirrorNeedsReroute;
+}
+
+void FlexDRWorker::recordSelfSymmetryDRMirrorPathStats(
+    SelfSymmetryDRRouteContext &ctx,
+    const vector<FlexMazeIdx> &path) {
+  if (ctx.routeMode != SelfSymmetryDRRouteMode::Mirror ||
+      path.size() <= 1) {
+    return;
+  }
+
+  for (size_t i = 0; i + 1 < path.size(); ++i) {
+    auto begin = path[i];
+    auto end = path[i + 1];
+    frDirEnum dir = frDirEnum::UNKNOWN;
+    frMIdx x = begin.x();
+    frMIdx y = begin.y();
+    frMIdx z = begin.z();
+    if (begin.x() != end.x() && begin.y() == end.y() &&
+        begin.z() == end.z()) {
+      dir = begin.x() < end.x() ? frDirEnum::E : frDirEnum::W;
+    } else if (begin.y() != end.y() && begin.x() == end.x() &&
+               begin.z() == end.z()) {
+      dir = begin.y() < end.y() ? frDirEnum::N : frDirEnum::S;
+    } else if (begin.z() != end.z() && begin.x() == end.x() &&
+               begin.y() == end.y()) {
+      dir = begin.z() < end.z() ? frDirEnum::U : frDirEnum::D;
+    } else {
+      continue;
+    }
+
+    auto edgeLen = gridGraph.getEdgeLength(x, y, z, dir);
+    if (edgeLen <= 0) {
+      edgeLen = 1;
+    }
+    ctx.mirrorRouteLength += edgeLen;
+    auto key = selfSymmetryDREdgeKey(x, y, z, dir);
+    if (ctx.mirrorRewardEdges.find(key) == ctx.mirrorRewardEdges.end()) {
+      ctx.mirrorOffGuideLength += edgeLen;
+    }
+  }
 }
 
 bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
@@ -1025,6 +1042,7 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
           gridGraph.search(connComps, nextPin, path, ccMazeIdx1,
                            ccMazeIdx2, centerPt)) {
         logSelfSymmetryPath("pin", path);
+        recordSelfSymmetryDRMirrorPathStats(ctx, path);
         routeNet_postAstarUpdate(path, connComps, unConnPins,
                                  mazeIdx2unConnPins, isFirstConn);
         routeNet_postAstarWritePath(net, path, realPinAPMazeIdx);
@@ -1161,6 +1179,9 @@ bool FlexDRWorker::routeNet_selfSymmetry(drNet* net) {
         deactivateSelfSymmetryDRRoutingContext();
         return false;
       }
+      ctx.mirrorNeedsReroute =
+          ctx.mirrorRouteLength > 0 &&
+          ctx.mirrorOffGuideLength * 10 > ctx.mirrorRouteLength * 3;
     }
   }
 

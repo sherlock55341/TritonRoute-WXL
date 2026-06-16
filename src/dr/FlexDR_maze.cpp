@@ -2727,6 +2727,11 @@ void FlexDRWorker::route_queue_main(deque<pair<frBlockObject*, pair<bool, int> >
       }
       mazeNetEnd(net);
       net->addNumReroutes();
+      if (needsSelfSymmetryDRMirrorReroute(net->getFrNet()) &&
+          net->getNumReroutes() < getMazeEndIter()) {
+        rerouteQueue.push_front(make_pair(net, make_pair(true,
+                                                         net->getNumReroutes())));
+      }
       didRoute = true;
 
       // if (routeBox.left() == 462000 && routeBox.bottom() == 81100) {
