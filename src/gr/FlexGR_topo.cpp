@@ -28,14 +28,7 @@
 
 #include <iostream>
 #include "FlexGR.h"
-#include <algorithm>
-#include <array>
 #include <deque>
-#include <functional>
-#include <limits>
-#include <map>
-#include <queue>
-#include <set>
 
 using namespace std;
 using namespace fr;

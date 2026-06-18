@@ -1187,8 +1187,7 @@ void FlexDR::checkConnectivity_addMarker(frNet* net, frLayerNum lNum, const frBo
 }
 
 // feedthrough and loop check
-void FlexDR::checkConnectivity(int iter,
-                               const set<frNet*, frBlockObjectComp> *targetNets) {
+void FlexDR::checkConnectivity(int iter) {
   //cout <<"checking connectivity " <<endl;
 
   // if (iter != -1) {
@@ -1208,9 +1207,6 @@ void FlexDR::checkConnectivity(int iter,
   vector<vector<frNet*> > batches(1);
   for (auto &uPtr: getDesign()->getTopBlock()->getNets()) {
     auto net = uPtr.get();   
-    if (targetNets != nullptr && targetNets->find(net) == targetNets->end()) {
-      continue;
-    }
     if (!net->isModified()) {
       continue;
     } else {
@@ -1393,3 +1389,4 @@ void FlexDR::checkConnectivity(int iter,
     exit(1);
   }
 }
+

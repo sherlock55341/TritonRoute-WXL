@@ -42,8 +42,6 @@
 //#include <boost/pool/pool_alloc.hpp>
 
 namespace fr {
-  frGuide* findSelfSymmetryMirrorGuide(frDesign* design, frGuide* guide);
-
   //class FlexIroute {
   //public:
   //  FlexIroute(): guide(), track(), begin(0), end(0), wlen_helper(0) {};
@@ -110,8 +108,6 @@ namespace fr {
     void initTA(int size);
     void searchRepair(int iter, int size, int offset);
     int  initTA_helper(int iter, int size, int offset, bool isH, int &numPanels);
-    void snapSelfSymmetryAxisGuides();
-    void alignSelfSymmetryMirrorGuides();
   };
 
 

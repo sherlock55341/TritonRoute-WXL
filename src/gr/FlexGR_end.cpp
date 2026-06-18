@@ -348,7 +348,7 @@ void FlexGRWorker::endAddNets(set<frNet*, frBlockObjectComp> &modNets) {
 }
 
 void FlexGRWorker::endAddNets_stitchRouteBound(grNet* net) {
-  bool enableOutput = VERBOSE > 1;
+  bool enableOutput = true;
 
   auto &pinNodePairs = net->getPinNodePairs();
   for (auto pinNodePair: pinNodePairs) {

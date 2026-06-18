@@ -29,12 +29,7 @@
 #ifndef _FR_FLEXDR_H_
 #define _FR_FLEXDR_H_
 
-#include <map>
 #include <memory>
-#include <set>
-#include <string>
-#include <tuple>
-#include <vector>
 #include "frDesign.h"
 #include "db/drObj/drNet.h"
 #include "db/drObj/drMarker.h"
@@ -44,13 +39,6 @@
 #include <deque>
 
 namespace fr {
-
-  enum class SelfSymmetryDRPhaseMode {
-    Full = 0,
-    LeadOnly = 1,
-    LeadAxis = 2,
-    FullMirror = 3
-  };
 
   class FlexDR {
   public:
@@ -108,31 +96,11 @@ namespace fr {
     std::vector<std::vector<frCoord> > via2turnMinLen;
 
     std::vector<int>                   numViols;
-    std::map<frNet*, std::vector<std::string>, frBlockObjectComp> selfSymmetryDRRouteSnapshots;
-
-    struct FlexDRSearchRepairPhase {
-      const std::set<frNet*, frBlockObjectComp> *targetNets = nullptr;
-      std::string stageName;
-      int *ordinaryNetsInPhase = nullptr;
-      bool removeBoundaryPinsOnInit = true;
-      bool skipConnectivityCheck = false;
-      SelfSymmetryDRPhaseMode selfSymmetryDRPhaseMode =
-          SelfSymmetryDRPhaseMode::Full;
-    };
 
     // others
     void init();
     void initFromTA();
     void initGCell2BoundaryPin();
-    void reportSelfSymmetryDRGuideRoutes() const;
-    void reportSelfSymmetryDRBoundaryPins() const;
-    void snapshotSelfSymmetryDRRoutes();
-    void reportSelfSymmetryDRChecker() const;
-    void reportSelfSymmetryDRPhaseRouteCount(const std::set<frNet*, frBlockObjectComp> &targetNets) const;
-    void collectSelfSymmetryDRTargetNets(std::set<frNet*, frBlockObjectComp> &targetNets) const;
-    void collectOrdinaryDRTargetNets(std::set<frNet*, frBlockObjectComp> &targetNets) const;
-    void keepOnlySelfSymmetryDRTargetRoutes(const std::set<frNet*, frBlockObjectComp> &targetNets);
-    bool runSelfSymmetryDRPhase();
     void getBatchInfo(int &batchStepX, int &batchStepY);
 
     void init_halfViaEncArea();
@@ -151,8 +119,7 @@ namespace fr {
     void init_via2turnMinLen();
 
     void removeGCell2BoundaryPin();
-    void checkConnectivity(int iter = -1,
-                           const std::set<frNet*, frBlockObjectComp> *targetNets = nullptr);
+    void checkConnectivity(int iter = -1);
     void checkConnectivity_initDRObjs(frNet* net, std::vector<frConnFig*> &netDRObjs);
     void checkConnectivity_pin2epMap(frNet* net, std::vector<frConnFig*> &netDRObjs,
                                      std::map<frBlockObject*, std::set<std::pair<frPoint, frLayerNum> >, frBlockObjectComp> &pin2epMap);
@@ -219,8 +186,7 @@ namespace fr {
     void searchRepair(int iter, int size, int offset, int mazeEndIter = 1, frUInt4 workerDRCCost = DRCCOST, frUInt4 workerMarkerCost = MARKERCOST, 
                       frUInt4 workerMarkerBloatWidth = 0, frUInt4 workerMarkerBloatDepth = 0,
                       bool enableDRC = false, int ripupMode = 1, bool followGuide = true, 
-                      int fixMode = 0, bool TEST = false,
-                      const FlexDRSearchRepairPhase *phase = nullptr);
+                      int fixMode = 0, bool TEST = false);
     void end();
 
     // utility
@@ -295,43 +261,13 @@ namespace fr {
     FlexDRWorker(FlexDR* drIn): 
                  design(drIn->getDesign()), dr(drIn), routeBox(), extBox(), drcBox(), drIter(0), mazeEndIter(1), 
                  TEST(false), DRCTEST(false), QUICKDRCTEST(false), enableDRC(true), 
-                 followGuide(false), needRecheck(false), skipRouting(false),
-                 selfSymmetryDRPhaseMode(SelfSymmetryDRPhaseMode::Full),
-                 ripupMode(1), fixMode(0), workerDRCCost(DRCCOST),
+                 followGuide(false), needRecheck(false), skipRouting(false), ripupMode(1), fixMode(0), workerDRCCost(DRCCOST), 
                  workerMarkerCost(MARKERCOST), workerMarkerBloatWidth(0), 
                  workerMarkerBloatDepth(0), boundaryPin(), 
-                 targetNets(nullptr), ordinaryNetsInTargetPhase(0),
                  pinCnt(0), initNumMarkers(0),
                  apSVia(), fixedObjs(), planarHistoryMarkers(), viaHistoryMarkers(), 
                  historyMarkers(std::vector<std::set<FlexMazeIdx> >(3)),
                  nets(), owner2nets(), owner2pins(), gridGraph(drIn->getDesign(), this), markers(), rq(this), gcWorker(nullptr) /*, drcWorker(drIn->getDesign())*/ {}
-    struct SelfSymmetryDRAxisContext {
-      bool valid = false;
-      bool axisSnapFailed = false;
-      bool isAxisHorizontal = false;
-      bool axisInRouteBox = false;
-      frCoord originalAxis = 0;
-      frCoord effectiveAxis = 0;
-      frCoord axisSnapDelta = 0;
-      int rootSide = -1;
-      frMIdx axisMazeIdx = -1;
-    };
-    enum class SelfSymmetryDRRouteMode {
-      None = 0,
-      Lead = 1,
-      AxisLink = 2,
-      Mirror = 3
-    };
-    struct SelfSymmetryDRRouteContext {
-      SelfSymmetryDRAxisContext axis;
-      SelfSymmetryDRRouteMode routeMode = SelfSymmetryDRRouteMode::None;
-      bool leadAxisContactBeforeLink = false;
-      bool leadAxisContactAfterLink = false;
-      std::set<std::tuple<frMIdx, frMIdx, frMIdx, int> > mirrorRewardEdges;
-      long long mirrorRouteLength = 0;
-      long long mirrorOffGuideLength = 0;
-      bool mirrorNeedsReroute = false;
-    };
     // setters
     void setRouteBox(const frBox &boxIn) {
       routeBox.set(boxIn);
@@ -381,12 +317,6 @@ namespace fr {
       workerMarkerCost = markerCostIn;
       workerMarkerBloatWidth = markerBloatWidthIn;
       workerMarkerBloatDepth = markerBloatDepthIn;
-    }
-    void setTargetNets(const std::set<frNet*, frBlockObjectComp> *in) {
-      targetNets = in;
-    }
-    void setSelfSymmetryDRPhaseMode(SelfSymmetryDRPhaseMode in) {
-      selfSymmetryDRPhaseMode = in;
     }
     //void addMarker(std::unique_ptr<frMarker> &in) {
     //  auto rptr = in.get();
@@ -556,15 +486,6 @@ namespace fr {
     FlexGCWorker* getGCWorker() {
       return gcWorker;
     }
-    int getOrdinaryNetsInTargetPhase() const {
-      return ordinaryNetsInTargetPhase;
-    }
-    bool hasSelfSymmetryDRWirelengthDiscount(frMIdx x, frMIdx y, frMIdx z,
-                                             frDirEnum dir);
-    bool needsSelfSymmetryDRMirrorReroute(frNet *net) const;
-    bool isSelfSymmetryDRActive() const {
-      return selfSymmetryDRActiveNet != nullptr;
-    }
 
     // others
     int main();
@@ -587,15 +508,12 @@ namespace fr {
     bool      followGuide:1;
     bool      needRecheck:1;
     bool      skipRouting:1;
-    SelfSymmetryDRPhaseMode selfSymmetryDRPhaseMode;
     int       ripupMode;
     int       fixMode;
     //drNetOrderingEnum netOrderingMode;
     frUInt4   workerDRCCost, workerMarkerCost, workerMarkerBloatWidth, workerMarkerBloatDepth;
     // used in init route as gr boundary pin
     std::map<frNet*, std::set<std::pair<frPoint, frLayerNum> >, frBlockObjectComp> boundaryPin;
-    const std::set<frNet*, frBlockObjectComp> *targetNets;
-    int       ordinaryNetsInTargetPhase;
     // determine whether to merge colinear pts in end(), must consider local on-boundary pins in routing (get changed in routing)
     //std::map<frNet*, std::set<std::pair<frPoint, frLayerNum> >, frBlockObjectComp> mergeBoundaryPt;
     int       pinCnt;
@@ -605,8 +523,6 @@ namespace fr {
     std::set<FlexMazeIdx>                   planarHistoryMarkers;
     std::set<FlexMazeIdx>                   viaHistoryMarkers;
     std::vector<std::set<FlexMazeIdx> >     historyMarkers;
-    frNet* selfSymmetryDRActiveNet = nullptr;
-    std::map<frNet*, SelfSymmetryDRRouteContext, frBlockObjectComp> selfSymmetryDRRouteContexts;
     //std::vector<FlexDRMinAreaVio>           minAreaVios;
 
     // local storage
@@ -626,16 +542,6 @@ namespace fr {
     //DRCWorker                               drcWorker;
 
     // init
-    bool hasTargetNetFilter() const {
-      return targetNets != nullptr;
-    }
-    bool isTargetNet(frNet *net) const {
-      if (net == nullptr) {
-        return false;
-      }
-      return targetNets == nullptr || targetNets->find(net) != targetNets->end();
-    }
-    bool hasSelfSymmetryDRAxisInRouteBox(frNet *net);
     void init();
     void initNets();
     void initNetObjs(std::set<frNet*, frBlockObjectComp> &nets, 
@@ -851,28 +757,6 @@ namespace fr {
     void        routeNet_postAstarAddPatchMetal_addPWire(drNet* net, const FlexMazeIdx &bpIdx, bool isPatchHorz, bool isPatchLeft, frCoord patchLength, frCoord patchWidth);
     void        routeNet_postRouteAddPathCost(drNet* net);
     void        routeNet_postRouteAddPatchMetalCost(drNet* net);
-    bool routeNet_selfSymmetry(drNet* net);
-    SelfSymmetryDRRouteContext& initSelfSymmetryDRRoutingContext(frNet* net);
-    void deactivateSelfSymmetryDRRoutingContext();
-    void initSelfSymmetryDRAxisContext(frNet* net,
-                                       SelfSymmetryDRRouteContext &ctx);
-    bool hasSelfSymmetryDRAxisContact(
-        const SelfSymmetryDRRouteContext &ctx,
-        const std::vector<FlexMazeIdx> &connComps) const;
-    void collectSelfSymmetryDRAxisCandidates(
-        const SelfSymmetryDRRouteContext &ctx,
-        std::vector<FlexMazeIdx> &candidates) const;
-    int collectSelfSymmetryDRAxisSources(const std::vector<FlexMazeIdx> &connComps,
-                                         const SelfSymmetryDRRouteContext &ctx,
-                                         std::vector<FlexMazeIdx> &axisSources) const;
-    void buildSelfSymmetryDRMirrorGuides(drNet* net,
-                                         SelfSymmetryDRRouteContext &ctx);
-    void recordSelfSymmetryDRMirrorPathStats(
-        SelfSymmetryDRRouteContext &ctx,
-        const std::vector<FlexMazeIdx> &path);
-    void initTrackCoords_selfSymmetryAxis(frNet* net,
-                                          std::map<frCoord, std::map<frLayerNum, frTrackPattern*> > &xMap,
-                                          std::map<frCoord, std::map<frLayerNum, frTrackPattern*> > &yMap);
 
     // drc
     void route_drc();

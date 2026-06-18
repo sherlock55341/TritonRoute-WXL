@@ -39,7 +39,6 @@
 #include "frDesign.h"
 #include "db/grObj/grPin.h"
 #include "gr/FlexGRWavefront.h"
-#include "db/obj/frNet.h"
 #include <map>
 #include <iostream>
 
@@ -53,8 +52,7 @@ namespace fr {
       prevDirs(), srcs(), dsts(),
       xCoords(), yCoords(), zCoords(), zHeights(), zDirs(),
       ggCongCost(0), ggHistCost(0),
-      wavefront(), is2DRouting(false), activeNet(nullptr),
-      mirrorCostQueries(0), mirrorCostTotal(0) {}
+      wavefront(), is2DRouting(false) {}
     // getters
     frTechObject* getTech() const {
       return design->getTech();
@@ -570,20 +568,6 @@ namespace fr {
     void set2D(bool in) {
       is2DRouting = in;
     }
-    void setActiveNet(frNet* in) {
-      activeNet = in;
-      mirrorCostQueries = 0;
-      mirrorCostTotal = 0;
-    }
-    frNet* getActiveNet() const {
-      return activeNet;
-    }
-    long long getMirrorCostQueries() const {
-      return mirrorCostQueries;
-    }
-    frCost getMirrorCostTotal() const {
-      return mirrorCostTotal;
-    }
     
     // functions
     void init();
@@ -643,9 +627,6 @@ namespace fr {
 
     // flags
     bool                              is2DRouting;
-    frNet*                            activeNet;
-    long long                         mirrorCostQueries;
-    frCost                            mirrorCostTotal;
 
     // internal getters
     bool getBit(frMIdx idx, frMIdx pos) const {
@@ -768,7 +749,7 @@ namespace fr {
       return;
     }
     void getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, const frDirEnum dir) const;
-    void getNextGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, const frDirEnum dir) const;
+    void getNextGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, const frDirEnum dir);
     bool isValid(frMIdx x, frMIdx y, frMIdx z) const {
       if (x < 0 || y < 0 || z < 0 ||
           x >= (frMIdx)xCoords.size() || y >= (frMIdx)yCoords.size() || z >= (frMIdx)zCoords.size()) {

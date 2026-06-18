@@ -1242,9 +1242,7 @@ void FlexDRWorker::modMinSpacingCostVia(const frBox &box, frMIdx z, int type, bo
 
 // forbid via if it would trigger violation
 void FlexDRWorker::modAdjCutSpacingCost_fixedObj(const frBox &origCutBox, frVia *origVia) {
-  if (!origVia->hasNet() ||
-      (origVia->getNet()->getType() != frNetEnum::frcPowerNet &&
-       origVia->getNet()->getType() != frNetEnum::frcGroundNet)) {
+  if (origVia->getNet()->getType() != frNetEnum::frcPowerNet && origVia->getNet()->getType() != frNetEnum::frcGroundNet) {
     return;
   }
   auto lNum = origVia->getViaDef()->getCutLayerNum();
@@ -1275,9 +1273,7 @@ void FlexDRWorker::modAdjCutSpacingCost_fixedObj(const frBox &origCutBox, frVia 
       box.set(boostb.min_corner().x(), boostb.min_corner().y(), boostb.max_corner().x(), boostb.max_corner().y());
       if (obj->typeId() == frcVia) {
         auto via = static_cast<frVia*>(obj);
-        if (!via->hasNet() ||
-            (via->getNet()->getType() != frNetEnum::frcPowerNet &&
-             via->getNet()->getType() != frNetEnum::frcGroundNet)) {
+        if (via->getNet()->getType() != frNetEnum::frcPowerNet && via->getNet()->getType() != frNetEnum::frcGroundNet) {
           continue;
         }
         if (origCutBox == box) {
@@ -1806,28 +1802,24 @@ bool FlexDRWorker::mazeIterInit_searchRepair(int mazeIter, vector<drNet*> &rerou
   if (mazeIter == 0) {
     if (getRipupMode() == 0) {
       for (auto &net: nets) {
-        if (!net->isFixed() && net->isRipup()) {
+        if (net->isRipup()) {
           rerouteNets.push_back(net.get());
         }
       }
     } else if (getRipupMode() == 1) {
       for (auto &net: nets) {
-        if (!net->isFixed()) {
-          rerouteNets.push_back(net.get());
-        }
+        rerouteNets.push_back(net.get());
       }
     } else if (getRipupMode() == 2) {
       for (auto &net: nets) {
-        if (!net->isFixed()) {
-          rerouteNets.push_back(net.get());
-        }
+        rerouteNets.push_back(net.get());
       }
     }
   } else {
     if (getFixMode() == 1 || getFixMode() == 2 || getFixMode() == 3 || getFixMode() == 4 || getFixMode() == 5) {
       rerouteNets.clear();
       for (auto &net: nets) {
-        if (!net->isFixed() && net->isRipup()) {
+        if (net->isRipup()) {
           rerouteNets.push_back(net.get());
         }
       }
@@ -1919,7 +1911,7 @@ void FlexDRWorker::route_2_init_getNets_sort(vector<drNet*> &rerouteNets) {
 void FlexDRWorker::route_2_init_getNets(vector<drNet*> &tmpNets) {
   initMazeCost_marker();
   for (auto &net: nets) {
-    if (!net->isFixed() && (getRipupMode() == 1 || net->isRipup())) {
+    if (getRipupMode() == 1 || net->isRipup()) {
       tmpNets.push_back(net.get());
     }
   }
@@ -1941,7 +1933,7 @@ void FlexDRWorker::route_2_ripupNet(drNet* net) {
 
 
 void FlexDRWorker::route_2_pushNet(deque<drNet*> &rerouteNets, drNet* net, bool ripUp, bool isPushFront) {
-  if (net == nullptr || net->isFixed() || net->isInQueue() || net->getNumReroutes() >= getMazeEndIter()) {
+  if (net->isInQueue() || net->getNumReroutes() >= getMazeEndIter()) {
     return;
   }
   if (isPushFront) {
@@ -2727,11 +2719,6 @@ void FlexDRWorker::route_queue_main(deque<pair<frBlockObject*, pair<bool, int> >
       }
       mazeNetEnd(net);
       net->addNumReroutes();
-      if (needsSelfSymmetryDRMirrorReroute(net->getFrNet()) &&
-          net->getNumReroutes() < getMazeEndIter()) {
-        rerouteQueue.push_front(make_pair(net, make_pair(true,
-                                                         net->getNumReroutes())));
-      }
       didRoute = true;
 
       // if (routeBox.left() == 462000 && routeBox.bottom() == 81100) {
@@ -3817,11 +3804,6 @@ void FlexDRWorker::routeNet_prepAreaMap(drNet* net, map<FlexMazeIdx, frCoord> &a
 bool FlexDRWorker::routeNet(drNet* net) {
   //bool enableOutput = true;
   bool enableOutput = false;
-  if (net && net->getFrNet() &&
-      net->getFrNet()->getSelfSymmetryConstraintPtr() != nullptr &&
-      getFixMode() == 9) {
-    return routeNet_selfSymmetry(net);
-  }
   if (net->getPins().size() <= 1) {
     return true;
   }

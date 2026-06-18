@@ -74,11 +74,7 @@ void FlexGRWorker::route() {
     route_mazeIterInit();
     route_getRerouteNets(rerouteNets);
     for (auto net: rerouteNets) {
-      bool forceSelfSymmetry2DAxisRepair = is2DRouting &&
-                                           net->getFrNet()->getSelfSymmetryConstraintPtr() &&
-                                           isSelfSymmetry2DAxisInRouteBox(net->getFrNet());
-      if (ripupMode == 0 ||
-          (ripupMode == 1 && (mazeNetHasCong(net) || forceSelfSymmetry2DAxisRepair))) {
+      if (ripupMode == 0 || (ripupMode == 1 && mazeNetHasCong(net))) {
         mazeNetInit(net);
         bool isRouted = routeNet(net);
       }
@@ -241,7 +237,6 @@ void FlexGRWorker::mazeNetInit(grNet* net) {
   // }
 
   gridGraph.resetStatus();
-  resetSelfSymmetry2DDebug();
   if (ripupMode == 0) {
     mazeNetInit_decayHistCost(net);
   } else if (ripupMode == 1) {
@@ -317,55 +312,23 @@ void FlexGRWorker::mazeNetInit_decayHistCost(grNet* net) {
 // if we need partial ripup, need to change routeConnfigs to list
 void FlexGRWorker::mazeNetInit_removeNetObjs(grNet* net) {
   auto &workerRegionQuery = getWorkerRegionQuery();
-  std::vector<std::unique_ptr<grConnFig> > frozenRouteConnFigs;
-  selfSym2DFrozenAxisObjs = 0;
-
+  // remove everything from region query
   for (auto &uptr: net->getRouteConnFigs()) {
-    bool isFrozenAxisObj = false;
+    workerRegionQuery.remove(uptr.get());
+  }
+  // update congestion for the to-be-removed objs
+  for (auto &uptr: net->getRouteConnFigs()) {
     if (uptr->typeId() == grcPathSeg) {
       auto cptr = static_cast<grPathSeg*>(uptr.get());
-      isFrozenAxisObj = isSelfSymmetry2DFrozenAxisBoundaryPathSeg(cptr);
-      if (!isFrozenAxisObj) {
-        workerRegionQuery.remove(uptr.get());
-        modCong_pathSeg(cptr, /*isAdd*/false);
-        selfSym2DOldSourceSegments++;
-      } else {
-        selfSym2DFrozenAxisObjs++;
-      }
-    } else {
-      workerRegionQuery.remove(uptr.get());
-    }
-
-    if (isFrozenAxisObj) {
-      frozenRouteConnFigs.push_back(std::move(uptr));
+      modCong_pathSeg(cptr, /*isAdd*/false);
     }
   }
-  net->getRouteConnFigs().swap(frozenRouteConnFigs);
+
+  // remove the connFigs themselves
+  net->clearRouteConnFigs();
 }
 
 void FlexGRWorker::modCong_pathSeg(grPathSeg* pathSeg, bool isAdd) {
-  if (is2DRouting && pathSeg->hasGrNet() &&
-      pathSeg->getGrNet()->getFrNet()->getSelfSymmetryConstraintPtr()) {
-    int outsideDelta = 0;
-    modSelfSymmetry2DPathSegDemand(pathSeg, isAdd);
-    int shadowCells = modSelfSymmetry2DPathSegMirrorDemand(pathSeg, isAdd, outsideDelta);
-    if (isAdd) {
-      selfSym2DNewShadowCells += shadowCells;
-    } else {
-      selfSym2DOldShadowCells += shadowCells;
-    }
-    selfSym2DOutsideShadowDelta += outsideDelta;
-    return;
-  }
-  if (!is2DRouting && pathSeg->hasGrNet() &&
-      pathSeg->getGrNet()->getFrNet()->getSelfSymmetryConstraintPtr() &&
-      gr->isSelfSymmetry3DLeadOnlyActive(pathSeg->getGrNet()->getFrNet())) {
-    int outsideDelta = 0;
-    modSelfSymmetry3DPathSegDemand(pathSeg, isAdd);
-    modSelfSymmetry3DPathSegMirrorDemand(pathSeg, isAdd, outsideDelta);
-    return;
-  }
-
   FlexMazeIdx bi, ei;
   frPoint bp, ep;
   frLayerNum lNum = pathSeg->getLayerNum();
@@ -405,7 +368,6 @@ void FlexGRWorker::mazeNetInit_removeNetNodes(grNet* net) {
   // remove non-terminal gcell nodes
   deque<grNode*> nodeQ;
   set<grNode*> terminalNodes;
-  set<grNode*> frozenAxisNodes;
   grNode* root = nullptr;
 
   for (auto &[pinNode, gcellNode]: net->getPinGCellNodePairs()) {
@@ -414,7 +376,6 @@ void FlexGRWorker::mazeNetInit_removeNetNodes(grNet* net) {
     }
     terminalNodes.insert(gcellNode);
   }
-  mazeNetInit_collectSelfSymmetry2DFrozenAxisNodes(net, frozenAxisNodes);
 
   if (root == nullptr) {
     cout << "Error: root is nullptr\n";
@@ -439,11 +400,10 @@ void FlexGRWorker::mazeNetInit_removeNetNodes(grNet* net) {
     // update connection
     // for root terminal node, clear all steiner children;
     // for non-root terminal nodes, clear all steiner children and reset parent and remove node
-    if (terminalNodes.find(node) != terminalNodes.end() || frozenAxisNodes.find(node) != frozenAxisNodes.end()) {
+    if (terminalNodes.find(node) != terminalNodes.end()) {
       std::vector<grNode*> steinerChildNodes;
       for (auto child: node->getChildren()) {
-        if (child->getType() == frNodeTypeEnum::frcSteiner &&
-            frozenAxisNodes.find(child) == frozenAxisNodes.end()) {
+        if (child->getType() == frNodeTypeEnum::frcSteiner) {
           steinerChildNodes.push_back(child);
         }
       }
@@ -451,12 +411,7 @@ void FlexGRWorker::mazeNetInit_removeNetNodes(grNet* net) {
         node->removeChild(steinerChildNode);
       }
 
-      if (!isRoot && terminalNodes.find(node) != terminalNodes.end() &&
-          frozenAxisNodes.find(node->getParent()) == frozenAxisNodes.end()) {
-        node->setParent(nullptr);
-      } else if (frozenAxisNodes.find(node) != frozenAxisNodes.end() &&
-                 node->getParent() &&
-                 frozenAxisNodes.find(node->getParent()) == frozenAxisNodes.end()) {
+      if (!isRoot) {
         node->setParent(nullptr);
       }
     } else {
@@ -469,7 +424,6 @@ void FlexGRWorker::mazeNetInit_removeNetNodes(grNet* net) {
 
 bool FlexGRWorker::routeNet(grNet* net) {
   bool enableOutput = false;
-  bool mustTouchAxis = isSelfSymmetry2DAxisInRouteBox(net->getFrNet());
   if (net->isTrivial()) {
     cout << "Error: trivial net should not be routed\n";
     return true;
@@ -482,9 +436,7 @@ bool FlexGRWorker::routeNet(grNet* net) {
   set<grNode*, frBlockObjectComp> unConnPinGCellNodes;
   map<FlexMazeIdx, grNode*> mazeIdx2unConnPinGCellNode;
   map<FlexMazeIdx, grNode*> mazeIdx2endPointNode;
-  map<FlexMazeIdx, grNode*> mazeIdx2FrozenAxisEndpoint;
-  routeNet_prep(net, unConnPinGCellNodes, mazeIdx2unConnPinGCellNode,
-                mazeIdx2endPointNode, mazeIdx2FrozenAxisEndpoint);
+  routeNet_prep(net, unConnPinGCellNodes, mazeIdx2unConnPinGCellNode, mazeIdx2endPointNode);
 
   FlexMazeIdx ccMazeIdx1, ccMazeIdx2; // connComps ll, ur FlexMazeIdx
   frPoint centerPt;
@@ -494,9 +446,7 @@ bool FlexGRWorker::routeNet(grNet* net) {
     cout << "    #pin = " << mazeIdx2unConnPinGCellNode.size() << endl;
   }
 
-  gridGraph.setActiveNet(net->getFrNet());
-  routeNet_setSrc(net, unConnPinGCellNodes, mazeIdx2unConnPinGCellNode,
-                  mazeIdx2FrozenAxisEndpoint, connComps, ccMazeIdx1, ccMazeIdx2, centerPt);
+  routeNet_setSrc(net, unConnPinGCellNodes, mazeIdx2unConnPinGCellNode, connComps, ccMazeIdx1, ccMazeIdx2, centerPt);
   
   if (enableOutput) {
     cout << "    #dst pin = " << mazeIdx2unConnPinGCellNode.size() << endl;
@@ -516,11 +466,6 @@ bool FlexGRWorker::routeNet(grNet* net) {
       auto leaf = routeNet_postAstarUpdate(path, connComps, unConnPinGCellNodes, mazeIdx2unConnPinGCellNode);
       routeNet_postAstarWritePath(net, path, leaf, mazeIdx2endPointNode);
     } else {
-      bool axisContactAfter = hasSelfSymmetry2DAxisContact(net);
-      if (mustTouchAxis && !axisContactAfter) {
-        cout << "Error: self-symmetry 2D reroute lost axis contact\n";
-      }
-      printSelfSymmetry2DDebug(net, mustTouchAxis, axisContactAfter);
       return false;
     }
   }
@@ -530,18 +475,12 @@ bool FlexGRWorker::routeNet(grNet* net) {
   }
 
   routeNet_postRouteAddCong(net);
-  bool axisContactAfter = hasSelfSymmetry2DAxisContact(net);
-  if (mustTouchAxis && !axisContactAfter) {
-    cout << "Error: self-symmetry 2D reroute lost axis contact\n";
-  }
-  printSelfSymmetry2DDebug(net, mustTouchAxis, axisContactAfter);
   return true;
 }
 
 void FlexGRWorker::routeNet_prep(grNet* net, set<grNode*, frBlockObjectComp> &unConnPinGCellNodes, 
                                  map<FlexMazeIdx, grNode*> &mazeIdx2unConnPinGCellNode,
-                                 map<FlexMazeIdx, grNode*> &mazeIdx2endPointNode,
-                                 map<FlexMazeIdx, grNode*> &mazeIdx2FrozenAxisEndpoint) {
+                                 map<FlexMazeIdx, grNode*> &mazeIdx2endPointNode) {
   bool enableOutput = false;
   for (auto pinGCellNode: net->getPinGCellNodes()) {
     auto loc = pinGCellNode->getLoc();
@@ -566,15 +505,6 @@ void FlexGRWorker::routeNet_prep(grNet* net, set<grNode*, frBlockObjectComp> &un
       }
     }
     mazeIdx2endPointNode[mi] = pinGCellNode;
-  }
-  routeNet_collectFrozenAxisEndpoints(net, mazeIdx2FrozenAxisEndpoint);
-  for (auto &[mi, frozenAxisEndpoint]: mazeIdx2FrozenAxisEndpoint) {
-    mazeIdx2endPointNode[mi] = frozenAxisEndpoint;
-  }
-  if (mazeIdx2FrozenAxisEndpoint.empty()) {
-    routeNet_addSelfSymmetry2DAxisEndpoint(net, unConnPinGCellNodes,
-                                           mazeIdx2unConnPinGCellNode,
-                                           mazeIdx2endPointNode);
   }
 }
 
@@ -626,7 +556,6 @@ void FlexGRWorker::routeNet_printNet(grNet* net) {
 void FlexGRWorker::routeNet_setSrc(grNet* net, 
                                    set<grNode*, frBlockObjectComp> &unConnPinGCellNodes, 
                                    map<FlexMazeIdx, grNode*> &mazeIdx2unConnPinGCellNode,
-                                   const map<FlexMazeIdx, grNode*> &mazeIdx2FrozenAxisEndpoint,
                                    vector<FlexMazeIdx> &connComps,
                                    FlexMazeIdx &ccMazeIdx1, 
                                    FlexMazeIdx &ccMazeIdx2, 
@@ -658,25 +587,7 @@ void FlexGRWorker::routeNet_setSrc(grNet* net,
   totZ /= totPinCnt;
   centerPt.set(centerPt.x() / totPinCnt, centerPt.y() / totPinCnt);
 
-  auto addSrc = [&](const FlexMazeIdx &mi) {
-    gridGraph.setSrc(mi);
-    gridGraph.resetDst(mi);
-    connComps.push_back(mi);
-    ccMazeIdx1.set(min(ccMazeIdx1.x(), mi.x()),
-                   min(ccMazeIdx1.y(), mi.y()),
-                   min(ccMazeIdx1.z(), mi.z()));
-    ccMazeIdx2.set(max(ccMazeIdx2.x(), mi.x()),
-                   max(ccMazeIdx2.y(), mi.y()),
-                   max(ccMazeIdx2.z(), mi.z()));
-  };
 
-  if (!mazeIdx2FrozenAxisEndpoint.empty() &&
-      isSelfSymmetry2DAxisOnRouteBoxBoundary(net->getFrNet())) {
-    for (auto &[mi, frozenAxisEndpoint]: mazeIdx2FrozenAxisEndpoint) {
-      addSrc(mi);
-    }
-    return;
-  }
 
   // currently use root gcell
   auto rootPinGCellNode = net->getPinGCellNodes()[0];
@@ -692,7 +603,16 @@ void FlexGRWorker::routeNet_setSrc(grNet* net,
   }
 
   mazeIdx2unConnPinGCellNode.erase(mi);
-  addSrc(mi);
+  gridGraph.setSrc(mi);
+  gridGraph.resetDst(mi);
+
+  connComps.push_back(mi);
+  ccMazeIdx1.set(min(ccMazeIdx1.x(), mi.x()),
+                 min(ccMazeIdx1.y(), mi.y()),
+                 min(ccMazeIdx1.z(), mi.z()));
+  ccMazeIdx2.set(max(ccMazeIdx2.x(), mi.x()),
+                 max(ccMazeIdx2.y(), mi.y()),
+                 max(ccMazeIdx2.z(), mi.z()));
 }
 
 grNode* FlexGRWorker::routeNet_getNextDst(FlexMazeIdx &ccMazeIdx1, FlexMazeIdx &ccMazeIdx2, 
@@ -1145,11 +1065,7 @@ void FlexGRWorker::routeNet_postRouteAddCong(grNet* net) {
   for (auto &uptr: net->getRouteConnFigs()) {
     if (uptr->typeId() == grcPathSeg) {
       auto cptr = static_cast<grPathSeg*>(uptr.get());
-      if (isSelfSymmetry2DFrozenAxisBoundaryPathSeg(cptr)) {
-        continue;
-      }
       modCong_pathSeg(cptr, /*isAdd*/true);
-      selfSym2DNewSourceSegments++;
     }
   }
 }

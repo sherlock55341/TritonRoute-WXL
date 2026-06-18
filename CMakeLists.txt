@@ -46,20 +46,16 @@ set (FLEXROUTE_SRC
   ${FLEXROUTE_HOME}/src/gr/FlexGRCMap.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR_end.cpp
-  ${FLEXROUTE_HOME}/src/gr/FlexGR_self_sym.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGRGridGraph.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGRGridGraph_maze.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR_init.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR_maze.cpp
-  ${FLEXROUTE_HOME}/src/gr/FlexGR_maze_self_sym.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR_rq.cpp
   ${FLEXROUTE_HOME}/src/gr/FlexGR_topo.cpp
-  ${FLEXROUTE_HOME}/src/gr/FlexGR_topo_self_sym.cpp
   ${FLEXROUTE_HOME}/src/gr/flute/flute.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexDR_conn.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexDR_init.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexDR.cpp
-  ${FLEXROUTE_HOME}/src/dr/FlexDR_self_sym.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexDR_maze.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexGridGraph_maze.cpp
   ${FLEXROUTE_HOME}/src/dr/FlexGridGraph.cpp
@@ -69,7 +65,6 @@ set (FLEXROUTE_SRC
   ${FLEXROUTE_HOME}/src/ta/FlexTA_init.cpp
   ${FLEXROUTE_HOME}/src/ta/FlexTA_rq.cpp
   ${FLEXROUTE_HOME}/src/ta/FlexTA_assign.cpp
-  ${FLEXROUTE_HOME}/src/ta/FlexTA_self_sym.cpp
   ${FLEXROUTE_HOME}/src/ta/FlexTA.cpp
   ${FLEXROUTE_HOME}/src/global.cpp
   ${FLEXROUTE_HOME}/src/gc/FlexGC_end.cpp

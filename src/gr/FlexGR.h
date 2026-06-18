@@ -30,7 +30,6 @@
 #define _FR_FLEXGR_H_
 
 #include <memory>
-#include <string>
 #include "frDesign.h"
 #include "FlexGRCMap.h"
 #include "db/grObj/grNet.h"
@@ -66,8 +65,6 @@ namespace fr {
 
     // others
     void main();
-    bool isSelfSymmetry3DLeadOnlyActive(frNet *net) const;
-    bool isSelfSymmetry3DGuidedActive(frNet *net) const;
 
   protected:
     frDesign *design;
@@ -112,7 +109,6 @@ namespace fr {
     void initGR();
     void initGR_genTopology();
     void initGR_genTopology_net(frNet *net);
-    void initGR_genTopology_selfsymmetry_net(frNet* net);
     void initGR_updateCongestion();
     void initGR_updateCongestion_net(frNet *net);
     void initGR_updateCongestion2D_net(frNet *net);
@@ -126,29 +122,6 @@ namespace fr {
     // pattern route
     void patternRoute_LShape(frNode *child, frNode *parent);
 
-  private:
-    unsigned getSelfSymmetryLayerAssignMirrorCost(frNode *currNode, frNet *net, frLayerNum layerNum);
-    void dumpSelfSymmetry2DAscii(const std::string &tag) const;
-    struct SelfSymmetryMirror2DStats {
-      int mirrorPins = 0;
-      int mirrorHananPinsCovered = 0;
-      int mirrorRepairPinsCovered = 0;
-      int mirrorGuideEdges = 0;
-      int mirrorRepairGuideHits = 0;
-      int mirrorRepairGuideMisses = 0;
-      int mirrorNodesCreated = 0;
-      int mirrorEdgesCreated = 0;
-    };
-    void searchRepairSelfSymmetryMirror();
-    void buildSelfSymmetryMirror2DTopology();
-    SelfSymmetryMirror2DStats buildSelfSymmetryMirror2DTopology_net(frNet *net);
-    bool hasSelfSymmetryNets() const;
-    void stageSelfSymmetry3DLeadOnly();
-    void restoreSelfSymmetry3DLayerAssignMirror();
-    void beginSelfSymmetry3DGuidedSearchRepair();
-    void endSelfSymmetry3DGuidedSearchRepair();
-
-  protected:
     // layer assignment
     void layerAssign();
     void layerAssign_net(frNet *net);
@@ -182,20 +155,6 @@ namespace fr {
     void genMSTTopology_PD(std::vector<frNode*> &nodes, double alpha = 0.3);
     int genMSTTopology_PD_minIdx(const std::vector<int> &keys, const std::vector<bool> &isVisited);
 
-    void genSelfSymmetryRootSideTopology(const std::vector<frPoint> &rootSideTerminalGCellIdxs,
-                                         const frPoint &rootGCellIdx,
-                                         bool isAxisHorizontal,
-                                         frCoord axisGCellIdx,
-                                         std::vector<frPoint> &rootSideTreeVertices,
-                                         std::vector<std::pair<frPoint, frPoint> > &rootSideTreeEdges);
-    void genSelfSymmetryOppositeSideTopology(const std::vector<frPoint> &oppositeSideTerminalGCellIdxs,
-                                             bool isAxisHorizontal,
-                                             frCoord axisGCellIdx,
-                                             int rootSide,
-                                             const std::vector<frPoint> &rootSideTreeVertices,
-                                             const std::vector<std::pair<frPoint, frPoint> > &rootSideTreeEdges,
-                                             std::vector<frPoint> &oppositeSideTreeVertices,
-                                             std::vector<std::pair<frPoint, frPoint> > &oppositeSideTreeEdges);
     void genSTTopology_FLUTE(std::vector<frNode*> &nodes, std::vector<frNode*> &steinerNodes);
     void genSTTopology_HVW(std::vector<frNode*> &nodes, std::vector<frNode*> &steinerNodes);
     void genSTTopology_HVW_compute(frNode *currNode, std::vector<frNode*> &nodes, std::vector<unsigned> &overlapL, 
@@ -259,10 +218,7 @@ namespace fr {
                  extBox(), routeBox(), grIter(0), mazeEndIter(1), workerCongCost(0), workerHistCost(0), 
                  congThresh(1.0), is2DRouting(false), ripupMode(0),
                  nets(), owner2nets(), /*owner2extBoundPtNodes(), owner2routeBoundPtNodes(), owner2pinGCellNodes(),*/
-                 gridGraph(grIn->getDesign(), this), rq(this),
-                 selfSym2DOldSourceSegments(0), selfSym2DNewSourceSegments(0),
-                 selfSym2DOldShadowCells(0), selfSym2DNewShadowCells(0),
-                 selfSym2DOutsideShadowDelta(0), selfSym2DFrozenAxisObjs(0) {}
+                 gridGraph(grIn->getDesign(), this), rq(this) {}
     // setters
     void setRouteGCellIdxLL(const frPoint &in) {
       routeGCellIdxLL = in;
@@ -376,20 +332,6 @@ namespace fr {
     FlexGRWorkerRegionQuery& getWorkerRegionQuery() {
       return rq;
     }
-    bool isSelfSymmetry2DAxisOnRouteBoxBoundary(frNet* net) const;
-    bool isSelfSymmetry2DAxisInRouteBox(frNet* net) const;
-    bool isSelfSymmetry2DFrozenAxisBoundaryPathSeg(grPathSeg* pathSeg) const;
-    bool isSelfSymmetry2DEdgeOnAxis(frNet* net, const FlexMazeIdx &begin,
-                                    const FlexMazeIdx &end) const;
-    bool getSelfSymmetry2DMirrorEdge(frNet* net, frMIdx x, frMIdx y, frMIdx z,
-                                     frDirEnum dir, frMIdx &mirrorX,
-                                     frMIdx &mirrorY, frMIdx &mirrorZ,
-                                     frDirEnum &mirrorDir) const;
-    frCost getSelfSymmetry3DGuidedMirrorCost(frNet* net, frMIdx x, frMIdx y,
-                                             frMIdx z, frDirEnum dir);
-    void resetSelfSymmetry2DDebug();
-    void printSelfSymmetry2DDebug(grNet* net, bool mustTouchAxis,
-                                  bool axisContactAfter) const;
 
     // others
     void initBoundary();
@@ -422,12 +364,6 @@ namespace fr {
 
     FlexGRGridGraph                        gridGraph;
     FlexGRWorkerRegionQuery                rq;
-    int                                    selfSym2DOldSourceSegments;
-    int                                    selfSym2DNewSourceSegments;
-    int                                    selfSym2DOldShadowCells;
-    int                                    selfSym2DNewShadowCells;
-    int                                    selfSym2DOutsideShadowDelta;
-    int                                    selfSym2DFrozenAxisObjs;
 
     // initBoundary
     void initBoundary_splitPathSeg(grPathSeg* pathSeg);
@@ -488,31 +424,14 @@ namespace fr {
     void mazeNetInit_decayHistCost(grNet* net);
     void mazeNetInit_removeNetObjs(grNet* net);
     void modCong_pathSeg(grPathSeg* pathSeg, bool isAdd);
-    int modSelfSymmetry2DPathSegDemand(grPathSeg* pathSeg, bool isAdd);
-    int modSelfSymmetry2DPathSegMirrorDemand(grPathSeg* pathSeg, bool isAdd,
-                                             int &outsideDelta);
-    int modSelfSymmetry3DPathSegDemand(grPathSeg* pathSeg, bool isAdd);
-    int modSelfSymmetry3DPathSegMirrorDemand(grPathSeg* pathSeg, bool isAdd,
-                                             int &outsideDelta);
     void mazeNetInit_removeNetNodes(grNet* net);
-    void mazeNetInit_collectSelfSymmetry2DFrozenAxisNodes(grNet* net,
-                                                          std::set<grNode*> &frozenAxisNodes) const;
     bool routeNet(grNet* net);
-    bool hasSelfSymmetry2DAxisContact(grNet* net) const;
-    void routeNet_collectFrozenAxisEndpoints(grNet* net,
-                                             std::map<FlexMazeIdx, grNode*> &mazeIdx2FrozenAxisEndpoint);
-    void routeNet_addSelfSymmetry2DAxisEndpoint(grNet* net,
-                                                std::set<grNode*, frBlockObjectComp> &unConnPinGCellNodes,
-                                                std::map<FlexMazeIdx, grNode*> &mazeIdx2unConnPinGCellNode,
-                                                std::map<FlexMazeIdx, grNode*> &mazeIdx2endPointNode);
     void routeNet_prep(grNet* net, std::set<grNode*, frBlockObjectComp> &unConnPinGCellNodes, 
                        std::map<FlexMazeIdx, grNode*> &mazeIdx2unConnPinGCellNode,
-                       std::map<FlexMazeIdx, grNode*> &mazeIdx2endPointNode,
-                       std::map<FlexMazeIdx, grNode*> &mazeIdx2FrozenAxisEndpoint);
+                       std::map<FlexMazeIdx, grNode*> &mazeIdx2endPointNode);
     void routeNet_setSrc(grNet* net, 
                          std::set<grNode*, frBlockObjectComp> &unConnPinGCellNodes, 
                          std::map<FlexMazeIdx, grNode*> &mazeIdx2unConnPinGCellNode,
-                         const std::map<FlexMazeIdx, grNode*> &mazeIdx2FrozenAxisEndpoint,
                          std::vector<FlexMazeIdx> &connComps,
                          FlexMazeIdx &ccMazeIdx1, 
                          FlexMazeIdx &ccMazeIdx2, 

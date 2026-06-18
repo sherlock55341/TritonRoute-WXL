@@ -30,8 +30,9 @@
 #define _FLEX_GR_SELF_SYM_UTILS_H_
 
 #include <algorithm>
+#include <cmath>
+#include <iterator>
 #include <limits>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -40,41 +41,8 @@
 
 namespace fr {
 
-  inline unsigned long long computeInvalidMirrorPenalty(long long edgeLen) {
-    return (unsigned long long)std::max(1ll, edgeLen) *
-           ((unsigned long long)BLOCKCOST * 100 +
-            (unsigned long long)MARKERCOST * 8);
-  }
-
   inline int normalizeSelfSymmetryRootSide(int side) {
     return side == 0 ? -1 : side;
-  }
-
-  inline std::pair<int, int> getSelfSymmetryGCellKey(const frPoint &point) {
-    return std::make_pair((int)point.x(), (int)point.y());
-  }
-
-  inline std::pair<frPoint, frPoint> normalizeSelfSymmetryEdge(frPoint begin,
-                                                               frPoint end) {
-    if (end < begin) {
-      std::swap(begin, end);
-    }
-    return std::make_pair(begin, end);
-  }
-
-  inline long long getSelfSymmetryEdgeLen(const frPoint &begin,
-                                          const frPoint &end) {
-    long long dx = begin.x() >= end.x() ? begin.x() - end.x() :
-                                          end.x() - begin.x();
-    long long dy = begin.y() >= end.y() ? begin.y() - end.y() :
-                                          end.y() - begin.y();
-    return std::max(1ll, dx + dy);
-  }
-
-  inline unsigned saturateSelfSymmetryCost(unsigned long long cost) {
-    return cost > std::numeric_limits<unsigned>::max() ?
-           std::numeric_limits<unsigned>::max() :
-           (unsigned)cost;
   }
 
   inline long long getSelfSymmetryAbsDiff(frCoord lhs, frCoord rhs) {
@@ -187,36 +155,6 @@ namespace fr {
     return true;
   }
 
-  inline bool selfSymmetrySegmentCovers(const frPoint &segmentBegin,
-                                        const frPoint &segmentEnd,
-                                        const frPoint &candidateBegin,
-                                        const frPoint &candidateEnd) {
-    if (candidateBegin == candidateEnd) {
-      return false;
-    }
-    if (candidateBegin.x() == candidateEnd.x()) {
-      if (segmentBegin.x() != segmentEnd.x() ||
-          segmentBegin.x() != candidateBegin.x()) {
-        return false;
-      }
-      return std::min(candidateBegin.y(), candidateEnd.y()) >=
-                 std::min(segmentBegin.y(), segmentEnd.y()) &&
-             std::max(candidateBegin.y(), candidateEnd.y()) <=
-                 std::max(segmentBegin.y(), segmentEnd.y());
-    }
-    if (candidateBegin.y() == candidateEnd.y()) {
-      if (segmentBegin.y() != segmentEnd.y() ||
-          segmentBegin.y() != candidateBegin.y()) {
-        return false;
-      }
-      return std::min(candidateBegin.x(), candidateEnd.x()) >=
-                 std::min(segmentBegin.x(), segmentEnd.x()) &&
-             std::max(candidateBegin.x(), candidateEnd.x()) <=
-                 std::max(segmentBegin.x(), segmentEnd.x());
-    }
-    return false;
-  }
-
   struct SelfSymmetryAxisContext {
     bool valid = false;
     bool axisSnapFailed = false;
@@ -227,23 +165,11 @@ namespace fr {
     frCoord axisGCellIdx = 0;
     int rootSide = 0;
 
-    static SelfSymmetryAxisContext fromGCellAxisOnly(bool isAxisHorizontalIn,
-                                                     frCoord axisGCellIdxIn,
-                                                     int rootSideIn = 0) {
-      SelfSymmetryAxisContext ctx;
-      ctx.valid = true;
-      ctx.isAxisHorizontal = isAxisHorizontalIn;
-      ctx.originalAxis = axisGCellIdxIn;
-      ctx.axis = axisGCellIdxIn;
-      ctx.axisGCellIdx = axisGCellIdxIn;
-      ctx.rootSide = rootSideIn;
-      return ctx;
-    }
-
-    static SelfSymmetryAxisContext fromAxisProbe(frDesign *design,
-                                                 const frSelfSymmetryConstraint &constraint,
-                                                 const frPoint &axisProbe,
-                                                 int rootSideIn = 0) {
+    static SelfSymmetryAxisContext fromAxisProbe(
+        frDesign *design,
+        const frSelfSymmetryConstraint &constraint,
+        const frPoint &axisProbe,
+        int rootSideIn = 0) {
       SelfSymmetryAxisContext ctx;
       auto block = design ? design->getTopBlock() : nullptr;
       if (block == nullptr) {
@@ -291,21 +217,6 @@ namespace fr {
       return fromAxisProbe(design, constraint, axisProbe, rootSideIn);
     }
 
-    frCoord axisCoord(const frPoint &gcellIdx) const {
-      return isAxisHorizontal ? gcellIdx.y() : gcellIdx.x();
-    }
-
-    int sideOfGCell(const frPoint &gcellIdx) const {
-      auto coord = axisCoord(gcellIdx);
-      if (coord < axisGCellIdx) {
-        return -1;
-      }
-      if (coord > axisGCellIdx) {
-        return 1;
-      }
-      return 0;
-    }
-
     int sideOfPoint(const frPoint &point) const {
       auto coord = isAxisHorizontal ? point.y() : point.x();
       if (coord < axis) {
@@ -317,11 +228,6 @@ namespace fr {
       return 0;
     }
 
-    bool isAxisEdge(const frPoint &begin, const frPoint &end) const {
-      return axisCoord(begin) == axisGCellIdx &&
-             axisCoord(end) == axisGCellIdx;
-    }
-
     frPoint mirrorPoint(const frPoint &point) const {
       frPoint mirroredPoint(point);
       if (isAxisHorizontal) {
@@ -331,106 +237,102 @@ namespace fr {
       }
       return mirroredPoint;
     }
-
-    frPoint mirrorGCell(const frPoint &gcellIdx) const {
-      frPoint mirroredGCellIdx(gcellIdx);
-      if (isAxisHorizontal) {
-        mirroredGCellIdx.set(gcellIdx.x(),
-                             axisGCellIdx + (axisGCellIdx - gcellIdx.y()));
-      } else {
-        mirroredGCellIdx.set(axisGCellIdx + (axisGCellIdx - gcellIdx.x()),
-                             gcellIdx.y());
-      }
-      return mirroredGCellIdx;
-    }
   };
 
-  struct SelfSymmetryMirrorEdgeResult {
-    bool valid = false;
-    bool axisOnly = false;
-    frMIdx mirrorX = 0;
-    frMIdx mirrorY = 0;
-    frMIdx mirrorZ = 0;
-    frDirEnum mirrorDir = frDirEnum::UNKNOWN;
-    unsigned long long invalidPenalty = 0;
-  };
+  inline void get_self_symmetry_axis(const std::vector<frPoint> &points,
+                                     bool &is_horizontal,
+                                     int &coor) {
+    double mean_x = 0;
+    double mean_y = 0;
+    double sigma_x = 0;
+    double sigma_y = 0;
+    for (auto p: points) {
+      mean_x += p.x();
+      mean_y += p.y();
+    }
+    mean_x /= points.size();
+    mean_y /= points.size();
 
-  inline SelfSymmetryMirrorEdgeResult makeSelfSymmetryMirrorEdge(
-      const SelfSymmetryAxisContext &ctx,
-      const frPoint &beginGCellIdx,
-      const frPoint &endGCellIdx,
-      const frPoint &boxLL,
-      const frPoint &boxUR,
-      frMIdx z,
-      long long edgeLenForPenalty = 0) {
-    SelfSymmetryMirrorEdgeResult result;
-    auto getDir = [](const frPoint &begin, const frPoint &end) {
-      if (begin.x() != end.x()) {
-        return begin.x() < end.x() ? frDirEnum::E : frDirEnum::W;
-      }
-      if (begin.y() != end.y()) {
-        return begin.y() < end.y() ? frDirEnum::N : frDirEnum::S;
-      }
-      return frDirEnum::UNKNOWN;
-    };
-    auto sourceDir = getDir(beginGCellIdx, endGCellIdx);
-    long long edgeLen = edgeLenForPenalty;
-    if (edgeLen <= 0) {
-      long long dx = beginGCellIdx.x() >= endGCellIdx.x() ?
-                     beginGCellIdx.x() - endGCellIdx.x() :
-                     endGCellIdx.x() - beginGCellIdx.x();
-      long long dy = beginGCellIdx.y() >= endGCellIdx.y() ?
-                     beginGCellIdx.y() - endGCellIdx.y() :
-                     endGCellIdx.y() - beginGCellIdx.y();
-      edgeLen = std::max(1ll, dx + dy);
+    for (auto p: points) {
+      auto dx = p.x() - mean_x;
+      auto dy = p.y() - mean_y;
+      sigma_x += dx * dx;
+      sigma_y += dy * dy;
     }
-    result.invalidPenalty = computeInvalidMirrorPenalty(edgeLen);
+    sigma_x /= points.size();
+    sigma_y /= points.size();
+    sigma_x = std::sqrt(sigma_x);
+    sigma_y = std::sqrt(sigma_y);
 
-    if (!ctx.valid || sourceDir == frDirEnum::UNKNOWN) {
-      return result;
+    double moment_x_1 = 0;
+    double moment_x_2 = 0;
+    double moment_x_3 = 0;
+    double moment_y_1 = 0;
+    double moment_y_2 = 0;
+    double moment_y_3 = 0;
+    for (auto p: points) {
+      auto dx = sigma_x == 0 ? 0 : (p.x() - mean_x) / sigma_x;
+      auto dy = sigma_y == 0 ? 0 : (p.y() - mean_y) / sigma_y;
+      moment_x_1 += dx * dx * dx;
+      moment_x_2 += dx * dy;
+      moment_x_3 += dx * dy * dy;
+      moment_y_1 += dy * dy * dy;
+      moment_y_2 += dy * dx;
+      moment_y_3 += dy * dx * dx;
     }
-    if (ctx.isAxisEdge(beginGCellIdx, endGCellIdx)) {
-      result.axisOnly = true;
-      return result;
-    }
+    moment_x_1 /= points.size();
+    moment_x_2 /= points.size();
+    moment_x_3 /= points.size();
+    moment_y_1 /= points.size();
+    moment_y_2 /= points.size();
+    moment_y_3 /= points.size();
 
-    auto mirrorBegin = ctx.mirrorGCell(beginGCellIdx);
-    auto mirrorEnd = ctx.mirrorGCell(endGCellIdx);
-    auto mirrorDir = getDir(mirrorBegin, mirrorEnd);
-    if (mirrorDir == frDirEnum::UNKNOWN ||
-        (mirrorBegin.x() != mirrorEnd.x() &&
-         mirrorBegin.y() != mirrorEnd.y())) {
-      return result;
+    auto sum_moment_x =
+        std::abs(moment_x_1) + std::abs(moment_x_2) + std::abs(moment_x_3);
+    auto sum_moment_y =
+        std::abs(moment_y_1) + std::abs(moment_y_2) + std::abs(moment_y_3);
+    if (sum_moment_x * 2 < sum_moment_y) {
+      is_horizontal = false;
+      coor = std::round(mean_x);
+      return;
     }
-    auto isGCellInBox = [&](const frPoint &gcellIdx) {
-      return gcellIdx.x() >= boxLL.x() && gcellIdx.x() <= boxUR.x() &&
-             gcellIdx.y() >= boxLL.y() && gcellIdx.y() <= boxUR.y();
-    };
-    if (!isGCellInBox(mirrorBegin) || !isGCellInBox(mirrorEnd)) {
-      return result;
+    if (sum_moment_y * 2 < sum_moment_x) {
+      is_horizontal = true;
+      coor = std::round(mean_y);
+      return;
     }
 
-    result.mirrorX = mirrorBegin.x() - boxLL.x();
-    result.mirrorY = mirrorBegin.y() - boxLL.y();
-    result.mirrorZ = z;
-    result.mirrorDir = mirrorDir;
-    result.valid = true;
-    return result;
+    std::vector<point_t> rtree_points;
+    rtree_points.reserve(points.size());
+    for (auto p: points) {
+      rtree_points.push_back(point_t(p.x(), p.y()));
+    }
+    bgi::rtree<point_t, bgi::quadratic<16> > tree(rtree_points);
+
+    double mirror_x_score = 0;
+    double mirror_y_score = 0;
+    for (auto p: points) {
+      int mx = mean_x * 2 - p.x();
+      int my = p.y();
+      std::vector<point_t> results;
+      tree.query(bgi::nearest(point_t(mx, my), 1), std::back_inserter(results));
+      mirror_x_score += (results[0].x() - mx) * (results[0].x() - mx) +
+                        (results[0].y() - my) * (results[0].y() - my);
+      mx = p.x();
+      my = mean_y * 2 - p.y();
+      results.clear();
+      tree.query(bgi::nearest(point_t(mx, my), 1), std::back_inserter(results));
+      mirror_y_score += (results[0].x() - mx) * (results[0].x() - mx) +
+                        (results[0].y() - my) * (results[0].y() - my);
+    }
+    if (mirror_x_score < mirror_y_score) {
+      is_horizontal = false;
+      coor = std::round(mean_x);
+    } else {
+      is_horizontal = true;
+      coor = std::round(mean_y);
+    }
   }
-
-  void get_self_symmetry_axis(const std::vector<frPoint> &points,
-                              bool &is_horizontal, int &coor);
-
-  struct SelfSymmetryDebug {
-    static const std::string& netName() {
-      static const std::string name = "Symmtry5";
-      return name;
-    }
-
-    static bool isDebugNet(const frNet *net) {
-      return net != nullptr && net->getName() == netName();
-    }
-  };
 
 }
 

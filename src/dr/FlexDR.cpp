@@ -1410,9 +1410,7 @@ void FlexDR::init() {
     cout <<endl <<"start routing data preparation" <<endl;
   }
   //initFromTA(); // this does not help much for conservative boundary patch metal in initDR
-  reportSelfSymmetryDRGuideRoutes();
   initGCell2BoundaryPin();
-  reportSelfSymmetryDRBoundaryPins();
   //if (VERBOSE > 0) {
   //  cout <<endl <<"init dr objs ..." <<endl;
   //}
@@ -1423,7 +1421,6 @@ void FlexDR::init() {
   init_via2viaMinLen();
   init_via2viaMinLenNew();
   init_via2turnMinLen();
-  snapshotSelfSymmetryDRRoutes();
 
   if (VERBOSE > 0) {
     t.print();
@@ -1790,8 +1787,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
                           frUInt4 workerDRCCost, frUInt4 workerMarkerCost, 
                           frUInt4 workerMarkerBloatWidth, frUInt4 workerMarkerBloatDepth,
                           bool enableDRC, int ripupMode, bool followGuide, 
-                          int fixMode, bool TEST,
-                          const FlexDRSearchRepairPhase *phase) {
+                          int fixMode, bool TEST) {
   if (iter > END_ITERATION) {
     return;
   }
@@ -1799,34 +1795,22 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     return;
   } 
 
-  const auto targetNets = phase == nullptr ? nullptr : phase->targetNets;
-  const auto &stageName = phase == nullptr ? string() : phase->stageName;
-  auto ordinaryNetsInPhase = phase == nullptr ? nullptr : phase->ordinaryNetsInPhase;
-  auto removeBoundaryPinsOnInit = phase == nullptr ? true : phase->removeBoundaryPinsOnInit;
-  auto skipConnectivityCheck = phase == nullptr ? false : phase->skipConnectivityCheck;
-  auto selfSymmetryDRPhaseMode = phase == nullptr ?
-      SelfSymmetryDRPhaseMode::Full : phase->selfSymmetryDRPhaseMode;
-
   frTime t;
   //bool TEST = false;
   //bool TEST = true;
   if (VERBOSE > 0) {
-    if (stageName.empty()) {
-      cout <<endl <<"start " <<iter;
-      string suffix;
-      if (iter == 1 || (iter > 20 && iter % 10 == 1)) {
-        suffix = "st";
-      } else if (iter == 2 || (iter > 20 && iter % 10 == 2)) {
-        suffix = "nd";
-      } else if (iter == 3 || (iter > 20 && iter % 10 == 3)) {
-        suffix = "rd";
-      } else {
-        suffix = "th";
-      }
-      cout <<suffix <<" optimization iteration ..." <<endl;
+    cout <<endl <<"start " <<iter;
+    string suffix;
+    if (iter == 1 || (iter > 20 && iter % 10 == 1)) {
+      suffix = "st";
+    } else if (iter == 2 || (iter > 20 && iter % 10 == 2)) {
+      suffix = "nd";
+    } else if (iter == 3 || (iter > 20 && iter % 10 == 3)) {
+      suffix = "rd";
     } else {
-      cout <<endl <<"start " <<stageName <<" ..." <<endl;
+      suffix = "th";
     }
+    cout <<suffix <<" optimization iteration ..." <<endl;
   }
   frBox dieBox;
   getDesign()->getTopBlock()->getBoundaryBBox(dieBox);
@@ -1841,28 +1825,6 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
   int tot = (((int)xgp.getCount() - 1 - offset) / clipSize + 1) * (((int)ygp.getCount() - 1 - offset) / clipSize + 1);
   int prev_perc = 0;
   bool isExceed = false;
-  auto recordWorkerComplete = [&](FlexDRWorker *worker) {
-    if (ordinaryNetsInPhase != nullptr) {
-      *ordinaryNetsInPhase += worker->getOrdinaryNetsInTargetPhase();
-    }
-    cnt++;
-    if (VERBOSE > 1) {
-      if (cnt * 1.0 / tot >= prev_perc / 100.0 + 0.1 && prev_perc < 90) {
-        if (prev_perc == 0 && t.isExceed(0)) {
-          isExceed = true;
-        }
-        prev_perc += 10;
-        if (isExceed) {
-          if (enableDRC) {
-            cout <<"    completing " <<prev_perc <<"% with " <<getDesign()->getTopBlock()->getNumMarkers() <<" violations" <<endl;
-          } else {
-            cout <<"    completing " <<prev_perc <<"% with " <<numQuickMarkers <<" quick violations" <<endl;
-          }
-          cout <<"    " <<t <<endl <<flush;
-        }
-      }
-    }
-  };
   if (TEST) {
     cout <<"search and repair test mode" <<endl <<flush;
     //FlexDRWorker worker(getDesign());
@@ -1903,12 +1865,9 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     worker.setRipupMode(ripupMode);
     worker.setFollowGuide(followGuide);
     worker.setFixMode(fixMode);
-    worker.setTargetNets(targetNets);
-    worker.setSelfSymmetryDRPhaseMode(selfSymmetryDRPhaseMode);
     //worker.setNetOrderingMode(netOrderingMode);
     worker.setCost(workerDRCCost, workerMarkerCost, workerMarkerBloatWidth, workerMarkerBloatDepth);
     worker.main_mt();
-    recordWorkerComplete(&worker);
     numQuickMarkers += worker.getNumQuickMarkers();
     cout <<"done"  <<endl <<flush;
   /*} else if (MAX_THREADS == 1) {
@@ -1952,7 +1911,6 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
         worker.setEnableDRC(enableDRC);
         worker.setRipupMode(ripupMode);
         worker.setFollowGuide(followGuide);
-        worker.setTargetNets(targetNets);
         //worker.setNetOrderingMode(netOrderingMode);
         worker.setFixMode(fixMode);
         worker.setCost(workerDRCCost, workerMarkerCost, workerMarkerBloatWidth, workerMarkerBloatDepth);
@@ -2036,8 +1994,6 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
         worker->setEnableDRC(enableDRC);
         worker->setRipupMode(ripupMode);
         worker->setFollowGuide(followGuide);
-        worker->setTargetNets(targetNets);
-        worker->setSelfSymmetryDRPhaseMode(selfSymmetryDRPhaseMode);
         //worker->setNetOrderingMode(netOrderingMode);
         worker->setFixMode(fixMode);
         worker->setCost(workerDRCCost, workerMarkerCost, workerMarkerBloatWidth, workerMarkerBloatDepth);
@@ -2059,44 +2015,49 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     // if (iter >= 2) {
     //   omp_set_num_threads(1);
     // }
-    const bool runWorkersSerially = !stageName.empty();
-    if (VERBOSE > 1 && runWorkersSerially) {
-      cout << "self-symmetry dr phase: serial tiled workers\n";
-    }
 
     // parallel execution
     for (auto &workerBatch: workers) {
       for (auto &workersInBatch: workerBatch) {
-        if (runWorkersSerially) {
-          for (int i = 0; i < (int)workersInBatch.size(); i++) {
-            workersInBatch[i]->main_mt();
-            recordWorkerComplete(workersInBatch[i].get());
-            workersInBatch[i]->end();
-          }
-        } else {
-          // multi thread
-          #pragma omp parallel for schedule(dynamic)
-          for (int i = 0; i < (int)workersInBatch.size(); i++) {
-            workersInBatch[i]->main_mt();
-            #pragma omp critical
-            {
-              recordWorkerComplete(workersInBatch[i].get());
+        // multi thread
+        #pragma omp parallel for schedule(dynamic)
+        for (int i = 0; i < (int)workersInBatch.size(); i++) {
+          workersInBatch[i]->main_mt();
+          #pragma omp critical 
+          {
+            cnt++;
+            if (VERBOSE > 0) {
+              if (cnt * 1.0 / tot >= prev_perc / 100.0 + 0.1 && prev_perc < 90) {
+                if (prev_perc == 0 && t.isExceed(0)) {
+                  isExceed = true;
+                }
+                prev_perc += 10;
+                //if (true) {
+                if (isExceed) {
+                  if (enableDRC) {
+                    cout <<"    completing " <<prev_perc <<"% with " <<getDesign()->getTopBlock()->getNumMarkers() <<" violations" <<endl;
+                  } else {
+                    cout <<"    completing " <<prev_perc <<"% with " <<numQuickMarkers <<" quick violations" <<endl;
+                  }
+                  cout <<"    " <<t <<endl <<flush;
+                }
+              }
             }
           }
-          // single thread
-          for (int i = 0; i < (int)workersInBatch.size(); i++) {
-            workersInBatch[i]->end();
-          }
+        }
+        // single thread
+        for (int i = 0; i < (int)workersInBatch.size(); i++) {
+          workersInBatch[i]->end();
         }
         workersInBatch.clear();
       }
     }
   }
   //cout <<"  number of violations = " <<numMarkers <<endl;
-  if (!iter && removeBoundaryPinsOnInit) {
+  if (!iter) {
     removeGCell2BoundaryPin();
   }
-  if (VERBOSE > 1) {
+  if (VERBOSE > 0) {
     if (cnt * 1.0 / tot >= prev_perc / 100.0 + 0.1 && prev_perc >= 90) {
       if (prev_perc == 0 && t.isExceed(0)) {
         isExceed = true;
@@ -2113,11 +2074,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
       }
     }
   }
-  if (VERBOSE > 1 && skipConnectivityCheck) {
-    cout << "self-symmetry dr phase: connectivity check skipped\n";
-  } else if (!skipConnectivityCheck) {
-    checkConnectivity(iter, targetNets);
-  }
+  checkConnectivity(iter);
   numViols.push_back(getDesign()->getTopBlock()->getNumMarkers());
   if (VERBOSE > 0) {
     if (enableDRC) {
@@ -2133,9 +2090,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     t.print();
     cout <<flush;
   }
-  if (VERBOSE > 1) {
-    end();
-  }
+  end();
 }
 
 void FlexDR::end() {
@@ -2387,134 +2342,124 @@ int FlexDR::main() {
 
   // need three different offsets to resolve boundary corner issues
 
-  bool selfSymmetryPhaseRouted = runSelfSymmetryDRPhase();
-  set<frNet*, frBlockObjectComp> ordinaryNets;
-  const set<frNet*, frBlockObjectComp> *ordinaryTargetNets = nullptr;
-  if (selfSymmetryPhaseRouted) {
-    collectOrdinaryDRTargetNets(ordinaryNets);
-    ordinaryTargetNets = &ordinaryNets;
-    if (VERBOSE > 1) {
-      cout << "ordinary_dr_target_nets: " << ordinaryNets.size() << "\n";
-    }
-  }
-  FlexDRSearchRepairPhase ordinaryPhase;
-  ordinaryPhase.targetNets = ordinaryTargetNets;
-
   int iterNum = 0;
-  searchRepair(iterNum++/*  0 */,  7,  0, 3, DRCCOST, 0/*MAARKERCOST*/,  0, 0, true, 2, true, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/*  1 */,  7, -2, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 2, true, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/*  1 */,  7, -5, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 2, true, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/*  3 */,  7,  0, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/*  4 */,  7, -1, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/*  5 */,  7, -2, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/*  6 */,  7, -3, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/*  7 */,  7, -4, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/*  8 */,  7, -5, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/*  9 */,  7, -6, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 10 */,  7,  0, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 11 */,  7, -1, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 12 */,  7, -2, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 13 */,  7, -3, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 14 */,  7, -4, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 15 */,  7, -5, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 16 */,  7, -6, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* ra'*/,  7, -3, 8, DRCCOST, MARKERCOST,  0, 0, true, 1, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 17 */,  7,  0, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 18 */,  7, -1, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 19 */,  7, -2, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 20 */,  7, -3, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 21 */,  7, -4, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 22 */,  7, -5, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 23 */,  7, -6, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* ra'*/,  5, -2, 8, DRCCOST, MARKERCOST,  0, 0, true, 1, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 24 */,  7,  0, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 25 */,  7, -1, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 26 */,  7, -2, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 27 */,  7, -3, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 28 */,  7, -4, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 29 */,  7, -5, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 30 */,  7, -6, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  searchRepair(iterNum++/*  0 */,  7,  0, 3, DRCCOST, 0/*MAARKERCOST*/,  0, 0, true, 2, true, 9); // true search and repair
+  searchRepair(iterNum++/*  1 */,  7, -2, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 2, true, 9); // true search and repair
+  searchRepair(iterNum++/*  1 */,  7, -5, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 2, true, 9); // true search and repair
+  searchRepair(iterNum++/*  3 */,  7,  0, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/*  4 */,  7, -1, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/*  5 */,  7, -2, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/*  6 */,  7, -3, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/*  7 */,  7, -4, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/*  8 */,  7, -5, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/*  9 */,  7, -6, 8, DRCCOST, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 10 */,  7,  0, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 11 */,  7, -1, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 12 */,  7, -2, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 13 */,  7, -3, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 14 */,  7, -4, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 15 */,  7, -5, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 16 */,  7, -6, 8, DRCCOST*2, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* ra'*/,  7, -3, 8, DRCCOST, MARKERCOST,  0, 0, true, 1, false, 9); // true search and repair
+  searchRepair(iterNum++/* 17 */,  7,  0, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 18 */,  7, -1, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 19 */,  7, -2, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 20 */,  7, -3, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 21 */,  7, -4, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 22 */,  7, -5, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 23 */,  7, -6, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* ra'*/,  5, -2, 8, DRCCOST, MARKERCOST,  0, 0, true, 1, false, 9); // true search and repair
+  searchRepair(iterNum++/* 24 */,  7,  0, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 25 */,  7, -1, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 26 */,  7, -2, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 27 */,  7, -3, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 28 */,  7, -4, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 29 */,  7, -5, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 30 */,  7, -6, 8, DRCCOST*8, MARKERCOST*2,  0, 0, true, 0, false, 9); // true search and repair
   //
-  //searchRepair(iterNum++/*  0 */,  7,  0, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 2, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  //searchRepair(iterNum++/*  1 */,  7, -2, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 2, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  //searchRepair(iterNum++/*  1 */,  7, -5, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 2, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* ra'*/,  3, -1, 8, DRCCOST, DRCCOST,  0, 0, true, 1, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 31 */,  7,  0, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 32 */,  7, -1, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 33 */,  7, -2, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 34 */,  7, -3, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 35 */,  7, -4, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 36 */,  7, -5, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 37 */,  7, -6, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* ra'*/,  3, -2, 8, DRCCOST, MARKERCOST,  0, 0, true, 1, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 38 */,  7,  0, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 39 */,  7, -1, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 40 */,  7, -2, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 41 */,  7, -3, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 42 */,  7, -4, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 43 */,  7, -5, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 44 */,  7, -6, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* ra'*/,  3, -0, 8, DRCCOST, MARKERCOST,  0, 0, true, 1, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 45 */,  7,  0, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 46 */,  7, -1, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 47 */,  7, -2, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 48 */,  7, -3, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 49 */,  7, -4, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 50 */,  7, -5, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 51 */,  7, -6, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* ra'*/,  3, -1, 8, DRCCOST, MARKERCOST,  0, 0, true, 1, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 52 */,  7,  0, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 53 */,  7, -1, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 54 */,  7, -2, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 55 */,  7, -3, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 56 */,  7, -4, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 57 */,  7, -5, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
-  searchRepair(iterNum++/* 58 */,  7, -6, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  //searchRepair(iterNum++/*  0 */,  7,  0, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 2, false, 9); // true search and repair
+  //searchRepair(iterNum++/*  1 */,  7, -2, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 2, false, 9); // true search and repair
+  //searchRepair(iterNum++/*  1 */,  7, -5, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 2, false, 9); // true search and repair
+  searchRepair(iterNum++/* ra'*/,  3, -1, 8, DRCCOST, DRCCOST,  0, 0, true, 1, false, 9); // true search and repair
+  searchRepair(iterNum++/* 31 */,  7,  0, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 32 */,  7, -1, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 33 */,  7, -2, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 34 */,  7, -3, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 35 */,  7, -4, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 36 */,  7, -5, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 37 */,  7, -6, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* ra'*/,  3, -2, 8, DRCCOST, MARKERCOST,  0, 0, true, 1, false, 9); // true search and repair
+  searchRepair(iterNum++/* 38 */,  7,  0, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 39 */,  7, -1, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 40 */,  7, -2, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 41 */,  7, -3, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 42 */,  7, -4, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 43 */,  7, -5, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 44 */,  7, -6, 16, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* ra'*/,  3, -0, 8, DRCCOST, MARKERCOST,  0, 0, true, 1, false, 9); // true search and repair
+  searchRepair(iterNum++/* 45 */,  7,  0, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 46 */,  7, -1, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 47 */,  7, -2, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 48 */,  7, -3, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 49 */,  7, -4, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 50 */,  7, -5, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 51 */,  7, -6, 32, DRCCOST*32, MARKERCOST*8,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* ra'*/,  3, -1, 8, DRCCOST, MARKERCOST,  0, 0, true, 1, false, 9); // true search and repair
+  searchRepair(iterNum++/* 52 */,  7,  0, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 53 */,  7, -1, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 54 */,  7, -2, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 55 */,  7, -3, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 56 */,  7, -4, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 57 */,  7, -5, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9); // true search and repair
+  searchRepair(iterNum++/* 58 */,  7, -6, 64, DRCCOST*64, MARKERCOST*16,  0, 0, true, 0, false, 9); // true search and repair
   
+
+
+  // int iterNum = 0;
   // // int iterNum = 1;
   // // end();
-  // searchRepair(iterNum++/*  0 */,  7,  0, 3, DRCCOST, 0/*MAARKERCOST*/,  0, 0, true, 1, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/*  0 */,  7,  0, 3, DRCCOST, 0/*MAARKERCOST*/,  0, 0, true, 1, false, 9); // true search and repair
   // // initDR(7, true);
   // // end();
-  // searchRepair(iterNum++/*  1 */,  7, -3, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 1, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/*  1 */,  7, -3, 3, DRCCOST, DRCCOST/*MAARKERCOST*/,  0, 0, true, 1, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/*  2 */,  7, -6, 8, DRCCOST*1, MARKERCOST / 2,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/*  2 */,  7, -6, 8, DRCCOST*1, MARKERCOST / 2,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/*  3 */,  7, -2, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/*  3 */,  7, -2, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/*  4 */,  7, -5, 8, DRCCOST*8, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/*  4 */,  7, -5, 8, DRCCOST*8, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/*  5 */,  7, -1, 8, DRCCOST*16, MARKERCOST,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/*  5 */,  7, -1, 8, DRCCOST*16, MARKERCOST,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/*  6 */,  7, -4, 8, DRCCOST*16, MARKERCOST*2,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/*  6 */,  7, -4, 8, DRCCOST*16, MARKERCOST*2,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/*  7 */,  7,  0, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/*  7 */,  7,  0, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/*  8 */,  7, -3, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/*  8 */,  7, -3, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/*  9 */,  7, -6, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/*  9 */,  7, -6, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/* 10 */,  7, -2, 8, DRCCOST*16, MARKERCOST*2,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/* 10 */,  7, -2, 8, DRCCOST*16, MARKERCOST*2,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/* 11 */,  7, -5, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/* 11 */,  7, -5, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/* 12 */,  7, -1, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/* 12 */,  7, -1, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/* 13 */,  7, -4, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/* 13 */,  7, -4, 8, DRCCOST*16, MARKERCOST*4,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/* 14 */,  7,  0, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/* 14 */,  7,  0, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/* 15 */,  7, -3, 8, DRCCOST*16, MARKERCOST*2,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/* 15 */,  7, -3, 8, DRCCOST*16, MARKERCOST*2,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/* 16 */,  7, -6, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/* 16 */,  7, -6, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/* 17 */,  7, -2, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/* 17 */,  7, -2, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/* 18 */,  7, -5, 8, DRCCOST*16, MARKERCOST*2,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/* 18 */,  7, -5, 8, DRCCOST*16, MARKERCOST*2,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/* 19 */,  7, -1, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/* 19 */,  7, -1, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9); // true search and repair
   // // end();
-  // searchRepair(iterNum++/* 20 */,  7, -4, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(iterNum++/* 20 */,  7, -4, 8, DRCCOST*16, MARKERCOST*1,  0, 0, true, 0, false, 9); // true search and repair
 
 
 
@@ -2524,7 +2469,7 @@ int FlexDR::main() {
   //   }
   //   end();
   //   int offset = (iterNum % 2) ? -4 : 0;
-  //   searchRepair(iterNum,  7,  offset, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 3, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  //   searchRepair(iterNum,  7,  offset, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 3); // true search and repair
   //   if ((double)numViols.back() / numViols[numViols.size() - 5] > 0.95) {
   //     break;
   //   }
@@ -2535,21 +2480,20 @@ int FlexDR::main() {
   //   }
   //   end();
   //   int offset = (iterNum % 2) ? -4 : 0;
-  //   searchRepair(iterNum,  7,  offset, 8, DRCCOST*4, MARKERCOST,  60, 4, true, 0, false, 3, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  //   searchRepair(iterNum,  7,  offset, 8, DRCCOST*4, MARKERCOST,  60, 4, true, 0, false, 3); // true search and repair
   //   if ((double)numViols.back() / numViols[numViols.size() - 5] > 0.95) {
   //     break;
   //   }
   // }
-  // searchRepair(6,  7,  0, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 3, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(6,  7,  0, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 3); // true search and repair
   // end();
-  // searchRepair(7,  7, -4, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 3, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(7,  7, -4, 8, DRCCOST*4, MARKERCOST,  0, 0, true, 0, false, 3); // true search and repair
   // end();
-  // searchRepair(8,  7,  0, 8, DRCCOST*4, MARKERCOST,  60, 4, true, 0, false, 3, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(8,  7,  0, 8, DRCCOST*4, MARKERCOST,  60, 4, true, 0, false, 3); // true search and repair
   // end();
-  // searchRepair(9,  7, -4, 8, DRCCOST*4, MARKERCOST,  60, 4, true, 0, false, 3, false, ordinaryTargetNets == nullptr ? nullptr : &ordinaryPhase); // true search and repair
+  // searchRepair(9,  7, -4, 8, DRCCOST*4, MARKERCOST,  60, 4, true, 0, false, 3); // true search and repair
   
 
-  reportSelfSymmetryDRChecker();
   if (DRC_RPT_FILE != string("")) {
     reportDRC();
   }
@@ -2571,3 +2515,4 @@ int FlexDR::main() {
   }
   return 0;
 }
+

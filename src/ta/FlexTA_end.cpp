@@ -27,124 +27,9 @@
  */
 
 #include "ta/FlexTA.h"
-#include "gr/FlexGR_self_sym_utils.h"
 
 using namespace std;
 using namespace fr;
-
-namespace {
-
-  bool isSelfSymmetryTAAxisRouteDummy(const frPoint &begin,
-                                      const frPoint &end) {
-    auto delta = end.x() - begin.x() + end.y() - begin.y();
-    return delta == 0 || delta == 1;
-  }
-
-  bool isSelfSymmetryTAAxisAlignedSegment(
-      const frPoint &begin,
-      const frPoint &end,
-      const SelfSymmetryAxisContext &axisCtx) {
-    if (axisCtx.isAxisHorizontal) {
-      return begin.y() == end.y() && begin.x() != end.x();
-    }
-    return begin.x() == end.x() && begin.y() != end.y();
-  }
-
-  frNode* getSelfSymmetryTAReferenceNode(frNet *net) {
-    if (net == nullptr) {
-      return nullptr;
-    }
-    auto rootNode = net->getRootGCellNode();
-    if (rootNode == nullptr) {
-      rootNode = net->getRoot();
-    }
-    if (rootNode == nullptr && !net->getNodes().empty()) {
-      rootNode = net->getNodes().front().get();
-    }
-    return rootNode;
-  }
-
-  bool snapSelfSymmetryTAAxisRoute(frPathSeg *pathSeg,
-                                   const SelfSymmetryAxisContext &axisCtx) {
-    if (pathSeg == nullptr) {
-      return false;
-    }
-
-    frPoint begin;
-    frPoint end;
-    pathSeg->getPoints(begin, end);
-    frPoint newBegin(begin);
-    frPoint newEnd(end);
-
-    if (isSelfSymmetryTAAxisRouteDummy(begin, end)) {
-      return false;
-    }
-    if (!isSelfSymmetryTAAxisAlignedSegment(begin, end, axisCtx)) {
-      return false;
-    }
-
-    if (axisCtx.isAxisHorizontal) {
-      if (begin.y() == axisCtx.axis && end.y() == axisCtx.axis) {
-        return false;
-      }
-      newBegin.set(begin.x(), axisCtx.axis);
-      newEnd.set(end.x(), axisCtx.axis);
-    } else {
-      if (begin.x() == axisCtx.axis && end.x() == axisCtx.axis) {
-        return false;
-      }
-      newBegin.set(axisCtx.axis, begin.y());
-      newEnd.set(axisCtx.axis, end.y());
-    }
-
-    pathSeg->setPoints(newBegin, newEnd);
-    return true;
-  }
-
-  void snapSelfSymmetryTAAxisGuides(frDesign *design) {
-    auto block = design == nullptr ? nullptr : design->getTopBlock();
-    if (block == nullptr) {
-      return;
-    }
-
-    for (auto &uNet: block->getNets()) {
-      auto net = uNet.get();
-      auto constraint = net == nullptr ?
-                        nullptr :
-                        net->getSelfSymmetryConstraintPtr();
-      if (constraint == nullptr) {
-        continue;
-      }
-
-      auto refNode = getSelfSymmetryTAReferenceNode(net);
-      frPoint refLoc;
-      if (refNode != nullptr) {
-        refNode->getLoc(refLoc);
-      }
-      auto axisCtx = SelfSymmetryAxisContext::fromReferencePoint(
-          design, *constraint, refLoc);
-      if (!axisCtx.valid || axisCtx.axisSnapFailed) {
-        continue;
-      }
-      axisCtx.rootSide =
-          normalizeSelfSymmetryRootSide(axisCtx.sideOfPoint(refLoc));
-
-      for (auto &uGuide: net->getGuides()) {
-        auto guide = uGuide.get();
-        if (guide == nullptr) {
-          continue;
-        }
-        for (auto &connFig: guide->getRoutes()) {
-          if (connFig->typeId() != frcPathSeg) {
-            continue;
-          }
-          auto pathSeg = static_cast<frPathSeg*>(connFig.get());
-          snapSelfSymmetryTAAxisRoute(pathSeg, axisCtx);
-        }
-      }
-    }
-  }
-}
 
 void FlexTAWorker::saveToGuides() {
   for (auto &iroute: iroutes) {
@@ -168,8 +53,4 @@ void FlexTAWorker::end() {
   //if (getTAIter() <= 0) {
     saveToGuides();
   //}
-}
-
-void FlexTA::snapSelfSymmetryAxisGuides() {
-  snapSelfSymmetryTAAxisGuides(getDesign());
 }

@@ -565,12 +565,6 @@ void FlexGRWorker::initNetObjs_roots_pathSeg(grPathSeg* pathSeg,
     }
   }
 
-  if (is2DRouting &&
-      net->getSelfSymmetryConstraintPtr() &&
-      (parent == net->getRoot() || parent == net->getRootGCellNode())) {
-    netRoots[net].push_back(parent);
-  }
-
   // old
   // vertical seg
   // if (begin.x() == end.x()) {
@@ -1071,9 +1065,6 @@ void FlexGRWorker::initNet_initRoot(grNet* net) {
     if (rootLoc != globalRootLoc) {
       cout << "Error: local root and global root location mismatch\n";
     }
-  } else if (is2DRouting && rootNode->getType() == frNodeTypeEnum::frcSteiner &&
-             net->getFrNet()->getSelfSymmetryConstraintPtr()) {
-    return;
   } else {
     cout << "Error: root should not be steiner\n";
   }
@@ -1230,11 +1221,7 @@ void FlexGRWorker::initNet_initPinGCellNodes(grNet* net) {
   net->setPinGCellNodePairs(pinGCellNodePairs);
   net->setGCell2PinNodes(gcell2PinNodes);
   net->setPinGCellNodes(pinGCellNodes);
-  if (pinGCellNodes.size() == 1 &&
-      isSelfSymmetry2DAxisInRouteBox(net->getFrNet()) &&
-      hasSelfSymmetry2DAxisContact(net)) {
-    net->setTrivial(false);
-  } else if (pinGCellNodes.size() == 1) {
+  if (pinGCellNodes.size() == 1) {
     net->setTrivial(true);
   } else if (pinGCellNodes.size() > 1) {
     net->setTrivial(false);
