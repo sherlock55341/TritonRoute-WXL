@@ -41,12 +41,20 @@
 
 namespace fr {
 
+  constexpr unsigned SELF_SYMMETRY_M1_VIA_PENALTY_COUNT = 4;
+
   inline int normalizeSelfSymmetryRootSide(int side) {
     return side == 0 ? -1 : side;
   }
 
   inline long long getSelfSymmetryAbsDiff(frCoord lhs, frCoord rhs) {
     return lhs >= rhs ? (long long)(lhs - rhs) : (long long)(rhs - lhs);
+  }
+
+  inline unsigned saturateSelfSymmetryCost(unsigned long long cost) {
+    return cost > std::numeric_limits<unsigned>::max() ?
+           std::numeric_limits<unsigned>::max() :
+           (unsigned)cost;
   }
 
   inline bool isSelfSymmetryRoutingTrackForAxis(frTrackPattern *trackPattern,
@@ -228,6 +236,10 @@ namespace fr {
       return 0;
     }
 
+    frCoord axisCoord(const frPoint &gcellIdx) const {
+      return isAxisHorizontal ? gcellIdx.y() : gcellIdx.x();
+    }
+
     frPoint mirrorPoint(const frPoint &point) const {
       frPoint mirroredPoint(point);
       if (isAxisHorizontal) {
@@ -236,6 +248,18 @@ namespace fr {
         mirroredPoint.set(axis + (axis - point.x()), point.y());
       }
       return mirroredPoint;
+    }
+
+    frPoint mirrorGCell(const frPoint &gcellIdx) const {
+      frPoint mirroredGCellIdx(gcellIdx);
+      if (isAxisHorizontal) {
+        mirroredGCellIdx.set(gcellIdx.x(),
+                             axisGCellIdx + (axisGCellIdx - gcellIdx.y()));
+      } else {
+        mirroredGCellIdx.set(axisGCellIdx + (axisGCellIdx - gcellIdx.x()),
+                             gcellIdx.y());
+      }
+      return mirroredGCellIdx;
     }
   };
 

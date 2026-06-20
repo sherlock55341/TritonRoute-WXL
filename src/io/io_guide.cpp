@@ -28,10 +28,81 @@
 
 //#include <chrono>
 #include "io/io.h"
+#include "gr/FlexGR_self_sym_utils.h"
 
 using namespace std;
 using namespace fr;
 /* note: M1 guide special treatment. search "no M1 cross-gcell routing allowed" */
+
+namespace {
+
+  void addSelfSymmetryMirrorGuides(frDesign *design, frNet *net) {
+    auto constraint = net ? net->getSelfSymmetryConstraintPtr() : nullptr;
+    if (design == nullptr || constraint == nullptr) {
+      return;
+    }
+    auto block = design->getTopBlock();
+    auto guideCnt = net->getGuides().size();
+    vector<frGuide*> guides;
+    guides.reserve(guideCnt);
+    for (auto &guide: net->getGuides()) {
+      guides.push_back(guide.get());
+    }
+
+    for (auto guide: guides) {
+      frPoint bp;
+      frPoint ep;
+      guide->getPoints(bp, ep);
+      auto axisCtx = SelfSymmetryAxisContext::fromReferencePoint(
+          design, *constraint, bp);
+      if (!axisCtx.valid) {
+        continue;
+      }
+      frPoint bpIdx;
+      frPoint epIdx;
+      block->getGCellIdx(bp, bpIdx);
+      block->getGCellIdx(ep, epIdx);
+      auto mirrorBpIdx = axisCtx.mirrorGCell(bpIdx);
+      auto mirrorEpIdx = axisCtx.mirrorGCell(epIdx);
+      if (mirrorBpIdx == bpIdx && mirrorEpIdx == epIdx) {
+        continue;
+      }
+      frPoint mirrorBp;
+      frPoint mirrorEp;
+      block->getGCellCenter(mirrorBpIdx, mirrorBp);
+      block->getGCellCenter(mirrorEpIdx, mirrorEp);
+      if (mirrorEp < mirrorBp) {
+        swap(mirrorBp, mirrorEp);
+      }
+      bool exists = false;
+      for (auto &existingGuide: net->getGuides()) {
+        frPoint existingBp;
+        frPoint existingEp;
+        existingGuide->getPoints(existingBp, existingEp);
+        if (existingEp < existingBp) {
+          swap(existingBp, existingEp);
+        }
+        if (existingBp == mirrorBp && existingEp == mirrorEp &&
+            existingGuide->getBeginLayerNum() == guide->getBeginLayerNum() &&
+            existingGuide->getEndLayerNum() == guide->getEndLayerNum()) {
+          exists = true;
+          break;
+        }
+      }
+      if (exists) {
+        continue;
+      }
+
+      auto mirrorGuide = make_unique<frGuide>();
+      mirrorGuide->setPoints(mirrorBp, mirrorEp);
+      mirrorGuide->setBeginLayerNum(guide->getBeginLayerNum());
+      mirrorGuide->setEndLayerNum(guide->getEndLayerNum());
+      mirrorGuide->addToNet(net);
+      net->addGuide(mirrorGuide);
+    }
+  }
+
+}
 
 void io::Parser::genGuides_merge(vector<frRect> &rects, vector<map<frCoord, boost::icl::interval_set<frCoord> > > &intvs) {
   //bool enableOutput = true;
@@ -688,46 +759,6 @@ void io::Parser::genGuides(frNet *net, vector<frRect> &rects) {
   genGuides_initPin2GCellMap(net, pin2GCellMap);
   //cout <<"init pin2gcell done" <<endl <<flush;
 
-  if (net->getSelfSymmetryConstraintPtr()) {
-    set<frBlockObject*, frBlockObjectComp> sourcePins;
-    for (auto &uNode: net->getNodes()) {
-      auto node = uNode.get();
-      auto pin = node->getPin();
-      if (pin == nullptr) {
-        continue;
-      }
-      if (node == net->getRoot() || node->getParent() != nullptr ||
-          !node->getChildren().empty()) {
-        sourcePins.insert(pin);
-      }
-    }
-
-    for (auto it = pin2GCellMap.begin(); it != pin2GCellMap.end(); ) {
-      if (sourcePins.find(it->first) == sourcePins.end()) {
-        it = pin2GCellMap.erase(it);
-      }
-      else {
-        it++;
-      }
-    }
-    for (auto it = gCell2PinMap.begin(); it != gCell2PinMap.end(); ) {
-      for (auto pinIt = it->second.begin(); pinIt != it->second.end(); ) {
-        if (sourcePins.find(*pinIt) == sourcePins.end()) {
-          pinIt = it->second.erase(pinIt);
-        }
-        else {
-          pinIt++;
-        }
-      }
-      if (it->second.empty()) {
-        it = gCell2PinMap.erase(it);
-      }
-      else {
-        it++;
-      }
-    }
-  }
-
   bool retry = false;
   while(1) {
     genGuides_split(rects, intvs, gCell2PinMap, pin2GCellMap, retry); //split on LU intersecting guides and pins
@@ -804,12 +835,14 @@ void io::Parser::genGuides(frNet *net, vector<frRect> &rects) {
     if (genGuides_astar(net, adjVisited, adjPrevIdx, nodeMap, gCnt, nCnt, false, retry)) {
       //cout <<"astar done" <<endl <<flush;
       genGuides_final(net, rects, adjVisited, adjPrevIdx, gCnt, nCnt, pin2GCellMap);
+      addSelfSymmetryMirrorGuides(design, net);
       break;
     } else {
       if (retry) {
         if (!ALLOW_PIN_AS_FEEDTHROUGH) {
           if (genGuides_astar(net, adjVisited, adjPrevIdx, nodeMap, gCnt, nCnt, true, retry)) {
             genGuides_final(net, rects, adjVisited, adjPrevIdx, gCnt, nCnt, pin2GCellMap);
+            addSelfSymmetryMirrorGuides(design, net);
             break;
           } else {
             cout <<"Error: critical error guide not connected, exit now 1!" <<endl;
@@ -1207,13 +1240,6 @@ bool io::Parser::genGuides_astar(frNet* net, vector<bool> &adjVisited, vector<in
   // fallback to feedthrough in next iter
   if (pinVisited != nCnt - gCnt && !ALLOW_PIN_AS_FEEDTHROUGH && !forceFeedThrough && retry) {
     cout <<"Warning: " <<net->getName() <<" " <<nCnt - gCnt - pinVisited <<" pin not visited, fall back to feedrough mode" <<endl;
-    //if (enableOutput) {
-    //  for (int i = gCnt; i < nCnt; i++) {
-    //    if (!adjVisited[i]) {
-    //      cout <<"  pin id = " <<i <<endl;
-    //    }
-    //  }
-    //}
   }
   // fallback to feedthrough in next iter
   //if (pinVisited != nCnt - gCnt && !retry) {

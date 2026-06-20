@@ -27,7 +27,7 @@ readLefDef
 
 相关入口：
 
-- `src/io/io.cpp`: 读完 LEF/DEF 后注入 self-symmetry constraint。
+- `src/FlexRoute.cpp`: PA 后按 net 名前缀识别 self-symmetry net，并注入 constraint。
 - `src/db/obj/frNet.h`: 保存 constraint 并提供 nullable accessor。
 - `src/gr/FlexGR_*self_sym*`: GR topology、mirror shadow、2D/3D repair。
 - `src/ta/FlexTA_end.cpp`: TA route 写回 guide，并做 axis guide snap。
@@ -36,28 +36,29 @@ readLefDef
 ## Constraint Source
 
 Self-symmetry 不是从标准 DEF/LEF constraint 语法读入的。当前代码在
-`io::Parser::readLefDef()` 读完 DEF 后按 net 名硬编码注入：
+`FlexRoute::init()` 完成 LEF/DEF 读取和 PA 后调用 `initSelfSymmetryConstraints()`。
+所有 net 名以 `Symmtry` 为前缀的 net 都会作为 self-symmetry candidate：
 
 ```cpp
-const vector<SelfSymmetrySpec> selfSymmetrySpecs = {
-    {"Symmtry1", false, 17400},
-    {"Symmtry2", false, 23400},
-    {"Symmtry3", true, 45790},
-    {"Symmtry4", true, 59850},
-    {"Symmtry5", true, 72000},
-};
+static const string prefix = "Symmtry";
+return net != nullptr &&
+       net->getName().compare(0, prefix.size(), prefix) == 0;
 ```
 
-字段含义：
+约束不是按 net list 或固定 axis 表注入。每个 candidate net 会收集其 RPin access
+point 的全局坐标，然后调用 `get_self_symmetry_axis(points, isHorizontal, axis)`
+自动推导 axis：
 
+- 先用三阶矩判断更像 vertical-axis symmetry 还是 horizontal-axis symmetry。
+- 若矩判断不明显，则用 R-tree 最近镜像点打分，选择 mirror error 更小的一侧。
 - `isAxisHorizontal = false`: vertical axis，`axis` 是 physical `x` 坐标。
 - `isAxisHorizontal = true`: horizontal axis，`axis` 是 physical `y` 坐标。
-- `axis`: DBU 坐标。
+- `axis`: DBU 坐标，后续 GR/TA/DR 会按 routing track/gcell 语义 snap。
 
-注入前做两类检查：
+注入前做轻量检查：
 
 - axis 必须在 die box 内。
-- axis 必须把该 net 的 instance origins 分到两侧；如果只有一侧有 instance，直接报错退出。
+- RPin/access point 缺失的 candidate 会跳过；axis 在 die 外会报错退出。
 
 通过后设置：
 
@@ -66,8 +67,8 @@ net->setSelfSymmetryConstraint(selfSymmetryConstraint);
 net->setConstraint(frNetRoutingConstraint::frcSelfSymmetry);
 ```
 
-注意：外部 net 名拼写是 `Symmtry1..5`，不是 `Symmetry`。不要改名，否则 hardcoded lookup
-和 debug 过滤都会失效。
+注意：外部 net 名前缀拼写是 `Symmtry`，不是 `Symmetry`。只要前缀匹配就会进入
+self-symmetry flow，例如 `Symmtry1`、`Symmtry31`、`Symmtry32_1`。
 
 ## DB Model
 
@@ -410,12 +411,10 @@ self-symmetry net。
 
 ## Reports And Debug
 
-常见 self-symmetry report：
+当前默认 flow 不应产生 `[gr-debug]`、`[gr-cost]`、`[gr-stage]` 或
+`[guide-debug]` 这类实验调试日志。需要定位对称性问题时，常看的 report / trace
+包括：
 
-- GR topology dump for `Symmtry5`
-  - `@@@ self-symmetry topology @@@`
-  - `root-side reaches axis`
-  - `source tree parent-child`
 - GR 2D search-repair
   - `@@@ self-symmetry search-repair 2d @@@`
   - axis contact、shadow cell counts、mirror cost queries
@@ -441,7 +440,8 @@ self-symmetry net。
   - `self_markers`
   - `changed_by_current_dr`
 
-`SelfSymmetryDebug::netName()` 当前硬编码为 `Symmtry5`。
+旧调试路径里曾有只针对 `Symmtry5` 的 topology dump；这不是当前默认验收路径。
+当前 self-symmetry 目标由 `Symmtry` 前缀统一决定。
 
 ## Validation
 
@@ -478,8 +478,9 @@ rg -n "self-symmetry topology|root-side reaches axis|self-symmetry mirror repair
 
 ## Current Caveats
 
-- Constraint 来源仍是 hardcoded net list，不是通用 parser 支持。
-- `Symmtry` 拼写是现有输入契约。
+- Constraint 来源仍是项目约定，不是通用 parser 支持；当前约定是 net 名前缀
+  `Symmtry`。
+- `Symmtry` 拼写是现有输入契约，不是 `Symmetry`。
 - strict symmetry 不压过 DRC/legal；mirror guide miss 是允许并需要报告的偏差。
 - GR mirror shadow demand 的跨 worker/window outside shadow 路径仍是需要重点验证的风险点。
 - Pattern route 不是当前 self-symmetry 主要选择点。

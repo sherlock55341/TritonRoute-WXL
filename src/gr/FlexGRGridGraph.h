@@ -52,7 +52,7 @@ namespace fr {
       prevDirs(), srcs(), dsts(),
       xCoords(), yCoords(), zCoords(), zHeights(), zDirs(),
       ggCongCost(0), ggHistCost(0),
-      wavefront(), is2DRouting(false) {}
+      wavefront(), is2DRouting(false), activeNet(nullptr) {}
     // getters
     frTechObject* getTech() const {
       return design->getTech();
@@ -64,6 +64,12 @@ namespace fr {
 
     FlexGRWorker* getGRWorker() const {
       return grWorker;
+    }
+    void setActiveNet(frNet* in) {
+      activeNet = in;
+    }
+    frNet* getActiveNet() const {
+      return activeNet;
     }
 
     bool is2D() {
@@ -627,6 +633,7 @@ namespace fr {
 
     // flags
     bool                              is2DRouting;
+    frNet*                            activeNet;
 
     // internal getters
     bool getBit(frMIdx idx, frMIdx pos) const {

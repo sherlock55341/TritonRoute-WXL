@@ -87,7 +87,7 @@ frLayerNum ONGRIDONLY_VIA_TOPLAYERNUM             = std::numeric_limits<frLayerN
 
 frLayerNum VIA_ACCESS_LAYERNUM = 2;
 
-int END_ITERATION = 2;
+int END_ITERATION = std::numeric_limits<int>::max();
 
 frUInt4 TAVIACOST       = 1;
 frUInt4 TAPINCOST       = 4;

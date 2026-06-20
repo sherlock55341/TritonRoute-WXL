@@ -40,6 +40,11 @@
 
 namespace fr {
 
+  enum class FlexGRSelfSymmetryMode {
+    Auto,
+    Mirror
+  };
+
   class FlexGR {
   public:
     // constructors
@@ -85,6 +90,7 @@ namespace fr {
     void initCMap();
     void initFLUTE();
     bool readFLUTE_readLUT();
+    bool hasSelfSymmetryNets() const;
     void initLayerPitch();
 
     void ra();
@@ -94,7 +100,8 @@ namespace fr {
                            int mode);
     void searchRepair(int iter, int size, int offset, int mazeEndIter, 
                       unsigned workerCongCost, unsigned workerHistCost,
-                      double congThresh, bool is2DRouting, int mode, bool TEST);
+                      double congThresh, bool is2DRouting, int mode, bool TEST,
+                      FlexGRSelfSymmetryMode selfSymmetryMode = FlexGRSelfSymmetryMode::Auto);
 
     void end();
 
@@ -147,8 +154,6 @@ namespace fr {
     // temp
     void initGR_patternRoute_layerAssignment();
     void initGR_patternRoute_layerAssignment_net(frNet* net);
-
-    // search and repair
 
     // topology
     void genMSTTopology(std::vector<frNode*> &nodes);
@@ -217,6 +222,7 @@ namespace fr {
                  design(grIn->getDesign()), gr(grIn), routeGCellIdxLL(), routeGCellIdxUR(),
                  extBox(), routeBox(), grIter(0), mazeEndIter(1), workerCongCost(0), workerHistCost(0), 
                  congThresh(1.0), is2DRouting(false), ripupMode(0),
+                 selfSymmetryMode(FlexGRSelfSymmetryMode::Auto),
                  nets(), owner2nets(), /*owner2extBoundPtNodes(), owner2routeBoundPtNodes(), owner2pinGCellNodes(),*/
                  gridGraph(grIn->getDesign(), this), rq(this) {}
     // setters
@@ -252,6 +258,9 @@ namespace fr {
     }
     void setRipupMode(int in) {
       ripupMode = in;
+    }
+    void setSelfSymmetryMode(FlexGRSelfSymmetryMode in) {
+      selfSymmetryMode = in;
     }
 
     // getters
@@ -306,6 +315,18 @@ namespace fr {
     bool is2D() const {
       return is2DRouting;
     }
+    bool isSelfSymmetryAuto() const {
+      return selfSymmetryMode == FlexGRSelfSymmetryMode::Auto;
+    }
+    bool isSelfSymmetryMirror() const {
+      return selfSymmetryMode == FlexGRSelfSymmetryMode::Mirror;
+    }
+    bool isTarget(frNet* net) const {
+      if (selfSymmetryMode == FlexGRSelfSymmetryMode::Auto) {
+        return true;
+      }
+      return net && net->getSelfSymmetryConstraintPtr();
+    }
     frRegionQuery* getRegionQuery() const {
       return design->getRegionQuery();
     }
@@ -354,6 +375,7 @@ namespace fr {
     double     congThresh;
     bool       is2DRouting;
     int        ripupMode;
+    FlexGRSelfSymmetryMode selfSymmetryMode;
 
     // local storage
     std::vector<std::unique_ptr<grNet> >   nets;

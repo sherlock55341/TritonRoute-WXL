@@ -74,7 +74,8 @@ void FlexGRWorker::route() {
     route_mazeIterInit();
     route_getRerouteNets(rerouteNets);
     for (auto net: rerouteNets) {
-      if (ripupMode == 0 || (ripupMode == 1 && mazeNetHasCong(net))) {
+      if (ripupMode == 0 ||
+          (ripupMode == 1 && (isSelfSymmetryMirror() || mazeNetHasCong(net)))) {
         mazeNetInit(net);
         bool isRouted = routeNet(net);
       }
@@ -161,7 +162,7 @@ void FlexGRWorker::route_getRerouteNets(vector<grNet*> &rerouteNets) {
   rerouteNets.clear();
   if (ripupMode == 0) {
     for (auto &net: nets) {
-      if (net->isRipup() && !net->isTrivial()) {
+      if (isTarget(net->getFrNet()) && net->isRipup() && !net->isTrivial()) {
         rerouteNets.push_back(net.get());
         net->setModified(true);
         net->getFrNet()->setModified(true);
@@ -178,8 +179,12 @@ void FlexGRWorker::route_getRerouteNets(vector<grNet*> &rerouteNets) {
     }
   } else if (ripupMode == 1) {
     for (auto &net: nets) {
-      if (!net->isTrivial()) {
+      if (isTarget(net->getFrNet()) && !net->isTrivial()) {
         rerouteNets.push_back(net.get());
+        if (isSelfSymmetryMirror()) {
+          net->setModified(true);
+          net->getFrNet()->setModified(true);
+        }
       }
     }
   }
@@ -446,6 +451,7 @@ bool FlexGRWorker::routeNet(grNet* net) {
     cout << "    #pin = " << mazeIdx2unConnPinGCellNode.size() << endl;
   }
 
+  gridGraph.setActiveNet(net->getFrNet());
   routeNet_setSrc(net, unConnPinGCellNodes, mazeIdx2unConnPinGCellNode, connComps, ccMazeIdx1, ccMazeIdx2, centerPt);
   
   if (enableOutput) {
@@ -466,6 +472,7 @@ bool FlexGRWorker::routeNet(grNet* net) {
       auto leaf = routeNet_postAstarUpdate(path, connComps, unConnPinGCellNodes, mazeIdx2unConnPinGCellNode);
       routeNet_postAstarWritePath(net, path, leaf, mazeIdx2endPointNode);
     } else {
+      gridGraph.setActiveNet(nullptr);
       return false;
     }
   }
@@ -475,6 +482,7 @@ bool FlexGRWorker::routeNet(grNet* net) {
   }
 
   routeNet_postRouteAddCong(net);
+  gridGraph.setActiveNet(nullptr);
   return true;
 }
 

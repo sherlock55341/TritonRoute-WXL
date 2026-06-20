@@ -509,14 +509,18 @@ void FlexGRWorker::initNets_roots(set<frNet*, frBlockObjectComp> &nets,
     if (rptr->typeId() == grcPathSeg) {
       auto cptr = static_cast<grPathSeg*>(rptr);
       if (cptr->hasNet()) {
-        initNetObjs_roots_pathSeg(cptr, nets, netRoots);
+        if (isTarget(cptr->getNet())) {
+          initNetObjs_roots_pathSeg(cptr, nets, netRoots);
+        }
       } else {
         cout << "Error: initNetObjs hasNet() empty" <<endl;
       }
     } else if (rptr->typeId() == grcVia) {
       auto cptr = static_cast<grVia*>(rptr);
       if (cptr->hasNet()) {
-        initNetObjs_roots_via(cptr, nets, netRoots);
+        if (isTarget(cptr->getNet())) {
+          initNetObjs_roots_via(cptr, nets, netRoots);
+        }
       } else {
         cout << "Error: initNetObjs hasNet() empty" <<endl;
       }

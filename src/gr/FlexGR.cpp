@@ -28,7 +28,11 @@
 
 #include <iostream>
 #include "FlexGR.h"
+#include "gr/FlexGR_self_sym_utils.h"
+#include "db/infra/frTransform.h"
+#include "db/obj/frAccess.h"
 #include "db/obj/frGuide.h"
+#include "db/obj/frInstTerm.h"
 #include <fstream>
 #include "db/grObj/grShape.h"
 #include "db/grObj/grVia.h"
@@ -39,6 +43,147 @@
 
 using namespace std;
 using namespace fr;
+
+namespace {
+
+  bool isSelfSymmetryGuideNet(frNet *net) {
+    static const string prefix = "Symmtry";
+    return net != nullptr &&
+           net->getName().compare(0, prefix.size(), prefix) == 0;
+  }
+
+  frPoint getRPinGlobalAccessPoint(frRPin *rpin) {
+    frPoint pt;
+    rpin->getAccessPoint()->getPoint(pt);
+    if (rpin->getFrTerm()->typeId() == frcInstTerm) {
+      auto inst = static_cast<frInstTerm*>(rpin->getFrTerm())->getInst();
+      frTransform shiftXform;
+      inst->getTransform(shiftXform);
+      shiftXform.set(frOrient(frcR0));
+      pt.transform(shiftXform);
+    } else if (rpin->getFrTerm()->typeId() == frcTerm) {
+      ;
+    } else {
+      cout << "Error: unknown rpin term type in getRPinGlobalAccessPoint\n";
+      exit(1);
+    }
+    return pt;
+  }
+
+  void writeSelfSymmetryPrefAPFile(frDesign *design, const string &guideFile) {
+    if (design == nullptr || guideFile.empty()) {
+      return;
+    }
+    auto pos = guideFile.find_last_of('.');
+    auto apFile = pos == string::npos ? guideFile + ".ap" :
+                                      guideFile.substr(0, pos) + ".ap";
+    ofstream outputAP(apFile.c_str());
+    if (!outputAP.is_open()) {
+      return;
+    }
+    outputAP << "# net x y layer\n";
+    for (auto &net: design->getTopBlock()->getNets()) {
+      if (!isSelfSymmetryGuideNet(net.get())) {
+        continue;
+      }
+      for (auto &rpin: net->getRPins()) {
+        if (rpin->getAccessPoint() == nullptr || rpin->getFrTerm() == nullptr) {
+          continue;
+        }
+        auto pt = getRPinGlobalAccessPoint(rpin.get());
+        outputAP << net->getName() << " "
+                 << pt.x() << " " << pt.y() << " "
+                 << design->getTech()->getLayer(rpin->getAccessPoint()->getLayerNum())->getName()
+                 << "\n";
+      }
+    }
+  }
+
+  void writeSelfSymmetryAxisFile(frDesign *design, const string &guideFile) {
+    if (design == nullptr || guideFile.empty()) {
+      return;
+    }
+    auto pos = guideFile.find_last_of('.');
+    auto axisFile = pos == string::npos ? guideFile + ".axis" :
+                                        guideFile.substr(0, pos) + ".axis";
+    ofstream outputAxis(axisFile.c_str());
+    if (!outputAxis.is_open()) {
+      return;
+    }
+    outputAxis << "# net axis_name axis\n";
+    for (auto &net: design->getTopBlock()->getNets()) {
+      if (!isSelfSymmetryGuideNet(net.get())) {
+        continue;
+      }
+      auto constraint = net->getSelfSymmetryConstraintPtr();
+      if (constraint == nullptr) {
+        continue;
+      }
+      outputAxis << net->getName() << " "
+                 << (constraint->isAxisHorizontal ? "y" : "x") << " "
+                 << constraint->axis << "\n";
+    }
+  }
+
+  void addSelfSymmetryMirrorGuide(frDesign *design,
+                                  frNet *net,
+                                  const frGuide *guide) {
+    auto constraint = net ? net->getSelfSymmetryConstraintPtr() : nullptr;
+    if (design == nullptr || constraint == nullptr || guide == nullptr) {
+      return;
+    }
+    frPoint bp;
+    frPoint ep;
+    guide->getPoints(bp, ep);
+    auto block = design->getTopBlock();
+    auto axisCtx = SelfSymmetryAxisContext::fromReferencePoint(
+        design, *constraint, bp);
+    if (!axisCtx.valid) {
+      return;
+    }
+    frPoint bpIdx;
+    frPoint epIdx;
+    block->getGCellIdx(bp, bpIdx);
+    block->getGCellIdx(ep, epIdx);
+    auto mirrorBpIdx = axisCtx.mirrorGCell(bpIdx);
+    auto mirrorEpIdx = axisCtx.mirrorGCell(epIdx);
+    if (mirrorBpIdx == bpIdx && mirrorEpIdx == epIdx) {
+      return;
+    }
+    frBox mirrorBpBox;
+    frBox mirrorEpBox;
+    block->getGCellBox(mirrorBpIdx, mirrorBpBox);
+    block->getGCellBox(mirrorEpIdx, mirrorEpBox);
+    frPoint mirrorBp((mirrorBpBox.left() + mirrorBpBox.right()) / 2,
+                     (mirrorBpBox.bottom() + mirrorBpBox.top()) / 2);
+    frPoint mirrorEp((mirrorEpBox.left() + mirrorEpBox.right()) / 2,
+                     (mirrorEpBox.bottom() + mirrorEpBox.top()) / 2);
+    if (mirrorEp < mirrorBp) {
+      swap(mirrorBp, mirrorEp);
+    }
+    for (auto &existingGuide: net->getGuides()) {
+      frPoint existingBp;
+      frPoint existingEp;
+      existingGuide->getPoints(existingBp, existingEp);
+      if (existingEp < existingBp) {
+        swap(existingBp, existingEp);
+      }
+      if (existingBp == mirrorBp && existingEp == mirrorEp &&
+          existingGuide->getBeginLayerNum() == guide->getBeginLayerNum() &&
+          existingGuide->getEndLayerNum() == guide->getEndLayerNum()) {
+        return;
+      }
+    }
+
+    auto mirrorGuide = make_unique<frGuide>();
+    mirrorGuide->setPoints(mirrorBp, mirrorEp);
+    mirrorGuide->setBeginLayerNum(guide->getBeginLayerNum());
+    mirrorGuide->setEndLayerNum(guide->getEndLayerNum());
+    mirrorGuide->addToNet(net);
+    net->addGuide(mirrorGuide);
+  }
+
+}
 
 void FlexGR::main() {
   init();
@@ -75,6 +220,7 @@ void FlexGR::main() {
   // reportCong2D();
   searchRepair(/*iter*/2, /*size*/200, /*offset*/-150, /*mazeEndIter*/2, /*workerCongCost*/2 * CONGCOST, /*workerHistCost*/2 * HISTCOST, /*congThresh*/0.8, /*is2DRouting*/true, /*mode*/1, /*TEST*/false);
   // reportCong2D();
+  searchRepair(/*iter*/0, /*size*/200, /*offset*/0, /*mazeEndIter*/1, /*workerCongCost*/2 * CONGCOST, /*workerHistCost*/2 * HISTCOST, /*congThresh*/0.8, /*is2DRouting*/true, /*mode*/1, /*TEST*/false, FlexGRSelfSymmetryMode::Mirror);
   
   reportCong2D();
   
@@ -86,6 +232,7 @@ void FlexGR::main() {
   // reportCong3D();
 
   searchRepair(/*iter*/0, /*size*/10, /*offset*/0, /*mazeEndIter*/2, /*workerCongCost*/4 * CONGCOST, /*workerHistCost*/0.25 * HISTCOST, /*congThresh*/1.0, /*is2DRouting*/false, 1, /*TEST*/false);
+  searchRepair(/*iter*/0, /*size*/10, /*offset*/0, /*mazeEndIter*/1, /*workerCongCost*/4 * CONGCOST, /*workerHistCost*/0.25 * HISTCOST, /*congThresh*/1.0, /*is2DRouting*/false, 1, /*TEST*/false, FlexGRSelfSymmetryMode::Mirror);
   reportCong3D();
 
   writeToGuide();
@@ -188,9 +335,29 @@ void FlexGR::searchRepairMacro(int iter, int size, int mazeEndIter, unsigned wor
   uworkers.clear();
 }
 
+bool FlexGR::hasSelfSymmetryNets() const {
+  auto block = design ? design->getTopBlock() : nullptr;
+  if (block == nullptr) {
+    return false;
+  }
+  for (auto &uNet: block->getNets()) {
+    auto net = uNet.get();
+    if (net && net->getSelfSymmetryConstraintPtr()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter, 
                           unsigned workerCongCost, unsigned workerHistCost, 
-                          double congThresh, bool is2DRouting, int mode, bool TEST) {
+                          double congThresh, bool is2DRouting, int mode, bool TEST,
+                          FlexGRSelfSymmetryMode selfSymmetryMode) {
+  if (selfSymmetryMode == FlexGRSelfSymmetryMode::Mirror &&
+      !hasSelfSymmetryNets()) {
+    return;
+  }
+
   frTime t;
 
   if (VERBOSE > 0) {
@@ -239,6 +406,7 @@ void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     worker.setCongThresh(congThresh);
     worker.set2D(is2DRouting);
     worker.setRipupMode(mode);
+    worker.setSelfSymmetryMode(selfSymmetryMode);
 
     worker.initBoundary();
     worker.main_mt();
@@ -283,6 +451,7 @@ void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
         worker->setCongThresh(congThresh);
         worker->set2D(is2DRouting);
         worker->setRipupMode(mode);
+        worker->setSelfSymmetryMode(selfSymmetryMode);
 
         int batchIdx = (xIdx % batchStepX) * batchStepY + yIdx % batchStepY;
         if (workers[batchIdx].empty() || (int)workers[batchIdx].back().size() >= BATCHSIZE) {
@@ -1950,8 +2119,6 @@ void FlexGR::layerAssign_net(frNet *net) {
     }
 
   }
-
-
   // // sanity check
   // // int nodeIdx = 0;
   // int numRPins = 0;
@@ -2472,7 +2639,9 @@ void FlexGR::writeToGuide() {
         routeGuide->setBeginLayerNum(layerNum);
         routeGuide->setEndLayerNum(layerNum);
         routeGuide->addToNet(net);
+        auto routeGuidePtr = routeGuide.get();
         net->addGuide(routeGuide);
+        addSelfSymmetryMirrorGuide(design, net, routeGuidePtr);
       } else {
         cout << "Error: unsupported gr type\n";
       }
@@ -2493,7 +2662,9 @@ void FlexGR::writeToGuide() {
       viaGuide->setBeginLayerNum(beginLayerNum);
       viaGuide->setEndLayerNum(endLayerNum);
       viaGuide->addToNet(net);
+      auto viaGuidePtr = viaGuide.get();
       net->addGuide(viaGuide);
+      addSelfSymmetryMirrorGuide(design, net, viaGuidePtr);
     }
 
     // pure local net
@@ -2530,7 +2701,9 @@ void FlexGR::writeToGuide() {
         viaGuide->setBeginLayerNum(layerNum);
         viaGuide->setEndLayerNum(layerNum + 2);
         viaGuide->addToNet(net);
+        auto viaGuidePtr = viaGuide.get();
         net->addGuide(viaGuide);
+        addSelfSymmetryMirrorGuide(design, net, viaGuidePtr);
       }
     }
   }
@@ -2540,6 +2713,8 @@ void FlexGR::writeGuideFile() {
   if (OUTGUIDE_FILE == string("")) {
     OUTGUIDE_FILE = string("./route.guide");
   }
+  writeSelfSymmetryPrefAPFile(design, OUTGUIDE_FILE);
+  writeSelfSymmetryAxisFile(design, OUTGUIDE_FILE);
   ofstream outputGuide(OUTGUIDE_FILE.c_str());
   if (outputGuide.is_open()) {
     for (auto &net: design->getTopBlock()->getNets()) {

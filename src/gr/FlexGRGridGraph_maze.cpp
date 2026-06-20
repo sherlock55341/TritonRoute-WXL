@@ -28,10 +28,221 @@
 
 #include "gr/FlexGRGridGraph.h"
 #include "gr/FlexGR.h"
+#include "gr/FlexGR_self_sym_utils.h"
 #include <cmath>
 
 using namespace std;
 using namespace fr;
+
+namespace {
+
+  bool isSelfSymmetryCardinalDir(frDirEnum dir) {
+    return dir == frDirEnum::E || dir == frDirEnum::N ||
+           dir == frDirEnum::S || dir == frDirEnum::W;
+  }
+
+  unsigned long long getInvalidMirrorPenalty(long long edgeLen) {
+    return (unsigned long long)std::max(1ll, edgeLen) *
+           ((unsigned long long)MARKERCOST * 8);
+  }
+
+  unsigned long long getViaStepCost(frCoord edgeLen) {
+    return (unsigned long long)edgeLen * (1 + 128);
+  }
+
+  bool getSelfSymmetryEdgeGCells(FlexGRGridGraph* gridGraph,
+                                 frMIdx x,
+                                 frMIdx y,
+                                 frDirEnum dir,
+                                 frPoint &beginGCellIdx,
+                                 frPoint &endGCellIdx) {
+    if (!gridGraph || !isSelfSymmetryCardinalDir(dir)) {
+      return false;
+    }
+
+    auto worker = gridGraph->getGRWorker();
+    if (!worker) {
+      return false;
+    }
+    auto x2 = x;
+    auto y2 = y;
+    switch (dir) {
+      case frDirEnum::E:
+        ++x2;
+        break;
+      case frDirEnum::S:
+        --y2;
+        break;
+      case frDirEnum::W:
+        --x2;
+        break;
+      case frDirEnum::N:
+        ++y2;
+        break;
+      default:
+        return false;
+    }
+
+    auto routeGCellIdxLL = worker->getRouteGCellIdxLL();
+    beginGCellIdx.set(x + routeGCellIdxLL.x(), y + routeGCellIdxLL.y());
+    endGCellIdx.set(x2 + routeGCellIdxLL.x(), y2 + routeGCellIdxLL.y());
+    return true;
+  }
+
+  int getSelfSymmetryEdgeSide(FlexGRGridGraph* gridGraph,
+                              const SelfSymmetryAxisContext &axisCtx,
+                              frMIdx x,
+                              frMIdx y,
+                              frDirEnum dir) {
+    frPoint beginGCellIdx;
+    frPoint endGCellIdx;
+    if (!getSelfSymmetryEdgeGCells(gridGraph, x, y, dir,
+                                   beginGCellIdx, endGCellIdx)) {
+      return 0;
+    }
+
+    auto beginCoord = axisCtx.axisCoord(beginGCellIdx);
+    auto endCoord = axisCtx.axisCoord(endGCellIdx);
+    if (beginCoord == axisCtx.axisGCellIdx &&
+        endCoord == axisCtx.axisGCellIdx) {
+      return 0;
+    }
+    if (beginCoord < axisCtx.axisGCellIdx &&
+        endCoord < axisCtx.axisGCellIdx) {
+      return -1;
+    }
+    if (beginCoord > axisCtx.axisGCellIdx &&
+        endCoord > axisCtx.axisGCellIdx) {
+      return 1;
+    }
+    return 0;
+  }
+
+  bool getSelfSymmetryAxisContext(FlexGRGridGraph* gridGraph,
+                                  frNet* net,
+                                  SelfSymmetryAxisContext &axisCtx) {
+    if (!gridGraph || !net || !net->getSelfSymmetryConstraintPtr()) {
+      return false;
+    }
+
+    auto worker = gridGraph->getGRWorker();
+    if (!worker) {
+      return false;
+    }
+    auto constraint = net->getSelfSymmetryConstraint();
+    auto routeBox = worker->getRouteBox();
+    frPoint axisProbe;
+    if (constraint.isAxisHorizontal) {
+      axisProbe.set(routeBox.left(), constraint.axis);
+    } else {
+      axisProbe.set(constraint.axis, routeBox.bottom());
+    }
+    axisCtx = SelfSymmetryAxisContext::fromAxisProbe(
+        gridGraph->getDesign(), constraint, axisProbe);
+    return axisCtx.valid;
+  }
+
+  int getSelfSymmetryRootSide(FlexGRGridGraph* gridGraph,
+                              frNet* net,
+                              const SelfSymmetryAxisContext &axisCtx) {
+    auto block = gridGraph && gridGraph->getDesign() ?
+                 gridGraph->getDesign()->getTopBlock() : nullptr;
+    auto rootGCellNode = net ? net->getRootGCellNode() : nullptr;
+    if (!block || !rootGCellNode) {
+      return normalizeSelfSymmetryRootSide(0);
+    }
+
+    frPoint rootGCellIdx;
+    block->getGCellIdx(rootGCellNode->getLoc(), rootGCellIdx);
+    auto rootCoord = axisCtx.axisCoord(rootGCellIdx);
+    if (rootCoord < axisCtx.axisGCellIdx) {
+      return -1;
+    }
+    if (rootCoord > axisCtx.axisGCellIdx) {
+      return 1;
+    }
+    return normalizeSelfSymmetryRootSide(0);
+  }
+
+  bool getSelfSymmetryMirrorEdge(FlexGRGridGraph* gridGraph,
+                                 frNet* net,
+                                 frMIdx x,
+                                 frMIdx y,
+                                 frMIdx z,
+                                 frDirEnum dir,
+                                 frMIdx &mirrorX,
+                                 frMIdx &mirrorY,
+                                 frMIdx &mirrorZ,
+                                 frDirEnum &mirrorDir) {
+    if (!gridGraph || !net || !net->getSelfSymmetryConstraintPtr() ||
+        !isSelfSymmetryCardinalDir(dir)) {
+      return false;
+    }
+
+    auto worker = gridGraph->getGRWorker();
+    if (!worker) {
+      return false;
+    }
+    auto constraint = net->getSelfSymmetryConstraint();
+    auto routeGCellIdxLL = worker->getRouteGCellIdxLL();
+    auto routeGCellIdxUR = worker->getRouteGCellIdxUR();
+    auto routeBox = worker->getRouteBox();
+    frPoint axisProbe;
+    if (constraint.isAxisHorizontal) {
+      axisProbe.set(routeBox.left(), constraint.axis);
+    } else {
+      axisProbe.set(constraint.axis, routeBox.bottom());
+    }
+    auto axisCtx = SelfSymmetryAxisContext::fromAxisProbe(
+        gridGraph->getDesign(), constraint, axisProbe);
+    if (!axisCtx.valid) {
+      return false;
+    }
+
+    frPoint beginGCellIdx;
+    frPoint endGCellIdx;
+    if (!getSelfSymmetryEdgeGCells(gridGraph, x, y, dir,
+                                   beginGCellIdx, endGCellIdx)) {
+      return false;
+    }
+    if (axisCtx.axisCoord(beginGCellIdx) == axisCtx.axisGCellIdx &&
+        axisCtx.axisCoord(endGCellIdx) == axisCtx.axisGCellIdx) {
+      return false;
+    }
+
+    auto mirrorBegin = axisCtx.mirrorGCell(beginGCellIdx);
+    auto mirrorEnd = axisCtx.mirrorGCell(endGCellIdx);
+    auto getDir = [](const frPoint &begin, const frPoint &end) {
+      if (begin.x() != end.x()) {
+        return begin.x() < end.x() ? frDirEnum::E : frDirEnum::W;
+      }
+      if (begin.y() != end.y()) {
+        return begin.y() < end.y() ? frDirEnum::N : frDirEnum::S;
+      }
+      return frDirEnum::UNKNOWN;
+    };
+    mirrorDir = getDir(mirrorBegin, mirrorEnd);
+    if (!isSelfSymmetryCardinalDir(mirrorDir)) {
+      return false;
+    }
+    if (mirrorBegin.x() < routeGCellIdxLL.x() ||
+        mirrorBegin.x() > routeGCellIdxUR.x() ||
+        mirrorBegin.y() < routeGCellIdxLL.y() ||
+        mirrorBegin.y() > routeGCellIdxUR.y() ||
+        mirrorEnd.x() < routeGCellIdxLL.x() ||
+        mirrorEnd.x() > routeGCellIdxUR.x() ||
+        mirrorEnd.y() < routeGCellIdxLL.y() ||
+        mirrorEnd.y() > routeGCellIdxUR.y()) {
+      return false;
+    }
+
+    mirrorX = mirrorBegin.x() - routeGCellIdxLL.x();
+    mirrorY = mirrorBegin.y() - routeGCellIdxLL.y();
+    mirrorZ = z;
+    return true;
+  }
+
+}
 
 bool FlexGRGridGraph::search(vector<FlexMazeIdx> &connComps, grNode* nextPinNode,
                              vector<FlexMazeIdx> &path, FlexMazeIdx &ccMazeIdx1, 
@@ -107,6 +318,9 @@ bool FlexGRGridGraph::search(vector<FlexMazeIdx> &connComps, grNode* nextPinNode
 
 frCost FlexGRGridGraph::getEstCost(const FlexMazeIdx &src, const FlexMazeIdx &dstMazeIdx1,
                                    const FlexMazeIdx &dstMazeIdx2, const frDirEnum &dir) {
+  if (activeNet && activeNet->getSelfSymmetryConstraintPtr()) {
+    return 0;
+  }
   bool enableOutput = false;
   if (enableOutput) {
     cout <<"est from (" <<src.x() <<", " <<src.y() <<", " <<src.z() <<") "
@@ -435,11 +649,98 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
 
   overflowCost = (rawDemand >= rawSupply * grWorker->getCongThresh());
 
-  nextPathCost += getEdgeLength(gridX, gridY, gridZ, dir)
-                  + (congCost   ? getCongCost(rawDemand, rawSupply * grWorker->getCongThresh()) * getEdgeLength(gridX, gridY, gridZ, dir) : 0)
-                  + (histCost   ? 4 * getCongCost(rawDemand, rawSupply * grWorker->getCongThresh()) * getHistoryCost(gridX, gridY, gridZ) *  getEdgeLength(gridX, gridY, gridZ, dir) : 0)
-                  + (blockCost  ? BLOCKCOST                         * getEdgeLength(gridX, gridY, gridZ, dir) * 100  : 0)
-                  + (overflowCost ? 128 * getEdgeLength(gridX, gridY, gridZ, dir) : 0);
+  auto edgeLength = getEdgeLength(gridX, gridY, gridZ, dir);
+  auto congStepCost = congCost ?
+                      getCongCost(rawDemand,
+                                  rawSupply * grWorker->getCongThresh()) *
+                      edgeLength : 0;
+  auto histStepCost = histCost ?
+                      4 * getCongCost(rawDemand,
+                                      rawSupply * grWorker->getCongThresh()) *
+                      getHistoryCost(gridX, gridY, gridZ) * edgeLength : 0;
+  auto blockStepCost = blockCost ? BLOCKCOST * edgeLength * 100 : 0;
+  auto overflowStepCost = overflowCost ? 128 * edgeLength : 0;
+  auto stepCost = edgeLength + congStepCost + histStepCost +
+                  blockStepCost + overflowStepCost;
+  auto selfSymmetryEdgeSide = 0;
+  auto selfSymmetryRootSide = 0;
+  if (activeNet && activeNet->getSelfSymmetryConstraintPtr() &&
+      grWorker->isSelfSymmetryAuto() && isSelfSymmetryCardinalDir(dir)) {
+    SelfSymmetryAxisContext axisCtx;
+    if (getSelfSymmetryAxisContext(this, activeNet, axisCtx)) {
+      selfSymmetryEdgeSide =
+          getSelfSymmetryEdgeSide(this, axisCtx, gridX, gridY, dir);
+      selfSymmetryRootSide =
+          getSelfSymmetryRootSide(this, activeNet, axisCtx);
+      if (selfSymmetryEdgeSide == -selfSymmetryRootSide) {
+        stepCost = saturateSelfSymmetryCost(
+            (unsigned long long)stepCost * 4);
+      }
+    }
+  }
+  if (activeNet && activeNet->getSelfSymmetryConstraintPtr() &&
+      !grWorker->is2D() && isSelfSymmetryCardinalDir(dir) &&
+      getLayerNum(gridZ) == VIA_ACCESS_LAYERNUM) {
+    frMIdx xDim = 0;
+    frMIdx yDim = 0;
+    frMIdx zDim = 0;
+    getDim(xDim, yDim, zDim);
+    if (gridZ + 1 < zDim) {
+      auto m1PenaltyCost =
+          getViaStepCost(getEdgeLength(gridX, gridY, gridZ, frDirEnum::U)) *
+          SELF_SYMMETRY_M1_VIA_PENALTY_COUNT;
+      stepCost = saturateSelfSymmetryCost(
+          (unsigned long long)stepCost + m1PenaltyCost);
+    }
+  }
+  nextPathCost += stepCost;
+  if (activeNet && activeNet->getSelfSymmetryConstraintPtr() &&
+      isSelfSymmetryCardinalDir(dir)) {
+    frMIdx mirrorX = 0;
+    frMIdx mirrorY = 0;
+    frMIdx mirrorZ = 0;
+    frDirEnum mirrorDir = frDirEnum::UNKNOWN;
+    auto edgeLen = getEdgeLength(gridX, gridY, gridZ, dir);
+    bool addMirrorCost = grWorker->isSelfSymmetryMirror() ||
+                         (grWorker->isSelfSymmetryAuto() &&
+                          selfSymmetryEdgeSide == selfSymmetryRootSide &&
+                          selfSymmetryEdgeSide != 0);
+    if (addMirrorCost &&
+        getSelfSymmetryMirrorEdge(this, activeNet, gridX, gridY, gridZ, dir,
+                                  mirrorX, mirrorY, mirrorZ, mirrorDir)) {
+      auto tmpMirrorX = mirrorX;
+      auto tmpMirrorY = mirrorY;
+      auto tmpMirrorZ = mirrorZ;
+      auto tmpMirrorDir = mirrorDir;
+      correct(tmpMirrorX, tmpMirrorY, tmpMirrorZ, tmpMirrorDir);
+      if (tmpMirrorDir != frDirEnum::U && tmpMirrorDir != frDirEnum::D) {
+        auto mirrorRawDemand = getRawDemand(tmpMirrorX, tmpMirrorY,
+                                            tmpMirrorZ, tmpMirrorDir);
+        auto mirrorRawSupply = getRawSupply(tmpMirrorX, tmpMirrorY,
+                                            tmpMirrorZ, tmpMirrorDir);
+        auto mirrorCost =
+            getCongCost(mirrorRawDemand,
+                        mirrorRawSupply * grWorker->getCongThresh()) *
+            edgeLen * 5;
+        if (getHistoryCost(tmpMirrorX, tmpMirrorY, tmpMirrorZ)) {
+          mirrorCost += 4 *
+                        getCongCost(mirrorRawDemand,
+                                    mirrorRawSupply * grWorker->getCongThresh()) *
+                        getHistoryCost(tmpMirrorX, tmpMirrorY, tmpMirrorZ) *
+                        edgeLen;
+        }
+        if (hasBlock(tmpMirrorX, tmpMirrorY, tmpMirrorZ, tmpMirrorDir)) {
+          mirrorCost += BLOCKCOST * edgeLen * 100;
+        }
+        if (mirrorRawDemand >= mirrorRawSupply * grWorker->getCongThresh()) {
+          mirrorCost += 128 * edgeLen;
+        }
+        nextPathCost += mirrorCost;
+      }
+    } else if (addMirrorCost && grWorker->isSelfSymmetryMirror()) {
+      nextPathCost += saturateSelfSymmetryCost(getInvalidMirrorPenalty(edgeLen));
+    }
+  }
   // discourage using layer below VIA_ACCESS_LAYERNUM
   // if ((tmpZ + 1) * 2 <= VIA_ACCESS_LAYERNUM && !grWorker->is2D() && (dir != frDirEnum::U && dir != frDirEnum::D)) {
   //   nextPathCost += BLOCKCOST * getEdgeLength(gridX, gridY, gridZ, dir) * 100;
