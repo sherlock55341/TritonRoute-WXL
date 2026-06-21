@@ -159,6 +159,7 @@ void FlexGRGridGraph::resetStatus() {
   resetSrc();
   resetDst();
   resetPrevNodeDir();
+  resetSelfSymmetryPrevPlanarEdges();
 }
 
 void FlexGRGridGraph::resetSrc() {
@@ -171,4 +172,10 @@ void FlexGRGridGraph::resetDst() {
 
 void FlexGRGridGraph::resetPrevNodeDir() {
   prevDirs.assign(prevDirs.size(), 0);
+}
+
+void FlexGRGridGraph::resetSelfSymmetryPrevPlanarEdges() {
+  for (auto &bit: bits) {
+    bit &= ~((1ull << 6) | (1ull << 7));
+  }
 }

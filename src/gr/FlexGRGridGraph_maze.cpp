@@ -669,8 +669,7 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
         if (selfSymmetryEdgeSide == selfSymmetryLeadSide ||
             selfSymmetryEdgeSide == 0) {
           auto hasPrevEdge =
-              grWorker->hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ,
-                                                      dir);
+              hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ, dir);
           if (!hasPrevEdge) {
             stepCost += BLOCKCOST * edgeLength * 100;
           }
@@ -683,7 +682,7 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
                                         selfSymmetryMirrorDir);
           if (selfSymmetryMirrorEdgeValid) {
             selfSymmetryMirrorPrevEdge =
-                grWorker->hasSelfSymmetryPrevPlanarEdge(
+                hasSelfSymmetryPrevPlanarEdge(
                     selfSymmetryMirrorX, selfSymmetryMirrorY,
                     selfSymmetryMirrorZ, selfSymmetryMirrorDir);
           }
@@ -730,7 +729,7 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
       }
       if (selfSymmetryMirrorEdgeValid && !selfSymmetryMirrorPrevEdge) {
         selfSymmetryMirrorPrevEdge =
-            grWorker->hasSelfSymmetryPrevPlanarEdge(
+            hasSelfSymmetryPrevPlanarEdge(
                 selfSymmetryMirrorX, selfSymmetryMirrorY, selfSymmetryMirrorZ,
                 selfSymmetryMirrorDir);
       }

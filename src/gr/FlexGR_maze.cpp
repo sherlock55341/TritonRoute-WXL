@@ -253,7 +253,6 @@ void FlexGRWorker::mazeNetInit(grNet* net) {
 }
 
 void FlexGRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(grNet* net) {
-  selfSymmetryPrevPlanarEdges.clear();
   if (!isSelfSymmetryMirror() || !net || !net->getFrNet() ||
       !net->getFrNet()->getSelfSymmetryConstraintPtr()) {
     return;
@@ -272,13 +271,13 @@ void FlexGRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(grNet* net) {
 
     if (bi.x() == ei.x()) {
       for (auto yIdx = min(bi.y(), ei.y()); yIdx < max(bi.y(), ei.y()); yIdx++) {
-        selfSymmetryPrevPlanarEdges.insert(
-            make_pair(FlexMazeIdx(bi.x(), yIdx, bi.z()), frDirEnum::N));
+        gridGraph.setSelfSymmetryPrevPlanarEdge(bi.x(), yIdx, bi.z(),
+                                                frDirEnum::N);
       }
     } else if (bi.y() == ei.y()) {
       for (auto xIdx = min(bi.x(), ei.x()); xIdx < max(bi.x(), ei.x()); xIdx++) {
-        selfSymmetryPrevPlanarEdges.insert(
-            make_pair(FlexMazeIdx(xIdx, bi.y(), bi.z()), frDirEnum::E));
+        gridGraph.setSelfSymmetryPrevPlanarEdge(xIdx, bi.y(), bi.z(),
+                                                frDirEnum::E);
       }
     } else {
       cout << "Error: non-colinear pathSeg in mazeNetInit_selfSymmetryPrevPlanarEdges" << endl;

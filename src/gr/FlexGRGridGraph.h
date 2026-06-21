@@ -172,6 +172,22 @@ namespace fr {
       }
     }
 
+    bool hasSelfSymmetryPrevPlanarEdge(frMIdx x, frMIdx y, frMIdx z, frDirEnum dir) const {
+      correct(x, y, z, dir);
+      if (isValid(x, y, z)) {
+        auto idx = getIdx(x, y, z);
+        switch (dir) {
+          case frDirEnum::E:
+            return getBit(idx, 6);
+          case frDirEnum::N:
+            return getBit(idx, 7);
+          default:
+            return false;
+        }
+      }
+      return false;
+    }
+
     bool hasHistoryCost(frMIdx x, frMIdx y, frMIdx z) const {
       auto idx = getIdx(x, y, z);
       return (getBits(idx, 8, GRGRIDGRAPHHISTCOSTSIZE));
@@ -393,6 +409,21 @@ namespace fr {
       }
     }
 
+    void setSelfSymmetryPrevPlanarEdge(frMIdx x, frMIdx y, frMIdx z, frDirEnum dir) {
+      correct(x, y, z, dir);
+      if (isValid(x, y, z)) {
+        auto idx = getIdx(x, y, z);
+        switch (dir) {
+          case frDirEnum::E:
+            return setBit(idx, 6);
+          case frDirEnum::N:
+            return setBit(idx, 7);
+          default:
+            ;
+        }
+      }
+    }
+
     void setHistoryCost(frMIdx x, frMIdx y, frMIdx z, unsigned histCostIn) {
       if (isValid(x, y, z)) {
         auto idx = getIdx(x, y, z);
@@ -580,6 +611,7 @@ namespace fr {
     void print();
     void resetStatus();
     void resetPrevNodeDir();
+    void resetSelfSymmetryPrevPlanarEdges();
     void resetSrc();
     void resetDst();
     bool search(std::vector<FlexMazeIdx> &connComps, grNode* nextPinNode, std::vector<FlexMazeIdx> &path,
@@ -613,7 +645,7 @@ namespace fr {
 
     // [0] hasEEdge; [1] hasNEdge; [2] hasUEdge
     // [3] blockE;   [4] blockN;   [5] blockU
-    // [6] empty;    [7] empty
+    // [6] selfSymPrevE; [7] selfSymPrevN
     // [15-8]  history cost
     // [31-24] supply H; [23-16] supply V // last bit is fractional
     // [63-48] demand H; [47-32] demand V // last bit is fractional
