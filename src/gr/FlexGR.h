@@ -183,6 +183,7 @@ namespace fr {
     // utility
     void writeToGuide();
     void writeGuideFile();
+    void writeGuideStageFile(const std::string &stage);
     void getBatchInfo(int &batchStepX, int &batchStepY);
   };
 

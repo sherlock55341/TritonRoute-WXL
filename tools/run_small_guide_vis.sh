@@ -17,10 +17,14 @@ lef:/home/cyzhao/benchmark/primarius/outdata/ispd18_test1.input.lef
 def:/home/cyzhao/benchmark/primarius/outdata/pattern_route_lay.def
 output:guide_symmetry_check/small.def
 outputguide:guide_symmetry_check/small.guide
+outputguideStagePrefix:guide_symmetry_check/small
 threads:1
 verbose:2
 drouteEndIterNum:3
 PARAMS
+fi
+if ! grep -q '^outputguideStagePrefix:' "${params}"; then
+  echo 'outputguideStagePrefix:guide_symmetry_check/small' >> "${params}"
 fi
 
 (
@@ -30,7 +34,7 @@ fi
 
 rm -rf "${vis_dir}"
 python3 "${script_dir}/visualize_guide_symmetry.py" \
-  "${run_dir}/small.guide" \
+  "${run_dir}/small" \
   -o "${vis_dir}"
 
 echo "small guide visualization:"

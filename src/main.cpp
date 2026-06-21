@@ -56,6 +56,7 @@ int readParams(const string &fileName) {
         else if (field == "outputTA") { OUTTA_FILE = value; ++readParamCnt;}
         else if (field == "output")   { OUT_FILE = value; ++readParamCnt;}
         else if (field == "outputguide") { OUTGUIDE_FILE = value; ++readParamCnt;}
+        else if (field == "outputguideStagePrefix") { OUTGUIDE_STAGE_PREFIX = value; ++readParamCnt;}
         else if (field == "outputMaze") { OUT_MAZE_FILE = value; ++readParamCnt;}
         else if (field == "outputDRC") { DRC_RPT_FILE = value; ++readParamCnt;}
         else if (field == "outputCMap") { CMAP_FILE = value; ++readParamCnt;}

@@ -315,9 +315,96 @@ def write_index(path, title, rows):
     path.write_text(index)
 
 
+STAGES = [
+    ("2d_auto", "2d auto"),
+    ("2d_mirror", "2d mirror"),
+    ("layerassign", "layerassign"),
+    ("3d_auto", "3d auto"),
+    ("3d_mirror", "3d mirror"),
+]
+
+
+def load_stage(prefix, stage):
+    guide = Path(f"{prefix}.{stage}.guide")
+    if not guide.exists():
+        return None
+    return {
+        "guide": guide,
+        "nets": parse_guide(guide),
+        "aps": parse_ap(default_ap_path(guide)),
+        "axes": parse_axis(default_axis_path(guide)),
+    }
+
+
+def write_stage_index(path, title, rows):
+    items = []
+    for row in rows:
+        cells = [f"<td>{html.escape(row['name'])}</td>"]
+        for stage, label in STAGES:
+            svg = row.get(stage)
+            if svg:
+                cells.append(f"<td><a href='{html.escape(svg)}'>{html.escape(label)}</a></td>")
+            else:
+                cells.append("<td class='missing'>missing</td>")
+        items.append("<tr>" + "".join(cells) + "</tr>")
+    headers = "".join(f"<th>{html.escape(label)}</th>" for _, label in STAGES)
+    index = f'''<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{html.escape(title)}</title>
+  <style>
+    body {{ font: 14px system-ui, sans-serif; margin: 24px; color: #0f172a; }}
+    table {{ border-collapse: collapse; width: 100%; }}
+    th, td {{ border-bottom: 1px solid #e2e8f0; padding: 7px 8px; text-align: left; }}
+    th {{ background: #f8fafc; position: sticky; top: 0; }}
+    a {{ color: #2563eb; text-decoration: none; }}
+    .missing {{ color: #94a3b8; }}
+  </style>
+</head>
+<body>
+  <h1>{html.escape(title)}</h1>
+  <table>
+    <thead><tr><th>Net</th>{headers}</tr></thead>
+    <tbody>
+      {chr(10).join(items)}
+    </tbody>
+  </table>
+</body>
+</html>
+'''
+    path.write_text(index)
+
+
+def visualize_prefix(prefix, out_dir):
+    stages = [(stage, label, load_stage(prefix, stage)) for stage, label in STAGES]
+    net_names = set()
+    for _, _, data in stages:
+        if data:
+            net_names.update(n for n in data["nets"] if n.startswith("Symmtry"))
+    rows = []
+    for name in sorted(net_names, key=natural_key):
+        row = {"name": name}
+        for stage, _, data in stages:
+            if not data or name not in data["nets"]:
+                continue
+            rects = data["nets"][name]
+            if not rects or name not in data["axes"]:
+                continue
+            orient, axis2 = data["axes"][name]
+            matched, unmatched = eval_axis(rects, orient, axis2)
+            svg_name = f"{Path(prefix).name}_{stage}_{name}.svg"
+            write_svg(out_dir / svg_name, name, rects, data["aps"].get(name, []),
+                      orient, axis2, matched, unmatched, False)
+            row[stage] = svg_name
+        rows.append(row)
+    write_stage_index(out_dir / "index.html", "Small Guide Symmetry Stages", rows)
+    print(f"Wrote stage visualization for {len(rows)} nets and {out_dir / 'index.html'}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Visualize Symmtry* guide symmetry as SVG/HTML.")
-    parser.add_argument("guides", nargs="+", help="Guide files to visualize")
+    parser.add_argument("guides", nargs="+", help="Guide files, or one small-case prefix")
     parser.add_argument("-o", "--out-dir", default="build/guide_symmetry_check/vis",
                         help="Output directory")
     parser.add_argument("--with-mirror", action="store_true",
@@ -330,6 +417,9 @@ def main():
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    if len(args.guides) == 1 and not args.guides[0].endswith(".guide"):
+        visualize_prefix(args.guides[0], out_dir)
+        return
     rows = []
     explicit_aps = {}
     for ap_path in args.ap:
