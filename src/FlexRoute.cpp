@@ -27,8 +27,6 @@
  */
 
 #include <iostream>
-#include <limits>
-#include <numeric>
 #include <vector>
 #include "global.h"
 #include "FlexRoute.h"
@@ -58,31 +56,6 @@ namespace {
            net->getName().compare(0, prefix.size(), prefix) == 0;
   }
 
-  bool getOldHardcodedSelfSymmetryAxis(const string &name,
-                                       bool &isHorizontal,
-                                       int &axis) {
-    struct AxisSpec {
-      const char *name;
-      bool isHorizontal;
-      int axis;
-    };
-    static const AxisSpec specs[] = {
-        {"Symmtry1", false, 17400},
-        {"Symmtry2", false, 23400},
-        {"Symmtry3", true, 45790},
-        {"Symmtry4", true, 59850},
-        {"Symmtry5", true, 72000},
-    };
-    for (auto &spec: specs) {
-      if (name == spec.name) {
-        isHorizontal = spec.isHorizontal;
-        axis = spec.axis;
-        return true;
-      }
-    }
-    return false;
-  }
-
   frPoint getRPinGlobalAccessPoint(frRPin *rpin) {
     frPoint pt;
     auto ap = rpin->getAccessPoint();
@@ -100,55 +73,6 @@ namespace {
       exit(1);
     }
     return pt;
-  }
-
-  void reportSelfSymmetryAxis(frNet *net,
-                              const vector<frPoint> &points,
-                              bool isHorizontal,
-                              int axis) {
-    bool oldIsHorizontal = false;
-    int oldAxis = 0;
-    if (net == nullptr ||
-        !getOldHardcodedSelfSymmetryAxis(net->getName(), oldIsHorizontal,
-                                         oldAxis)) {
-      return;
-    }
-
-    int minX = numeric_limits<int>::max();
-    int minY = numeric_limits<int>::max();
-    int maxX = numeric_limits<int>::min();
-    int maxY = numeric_limits<int>::min();
-    long long sumX = 0;
-    long long sumY = 0;
-    for (auto &pt: points) {
-      minX = min(minX, pt.x());
-      minY = min(minY, pt.y());
-      maxX = max(maxX, pt.x());
-      maxY = max(maxY, pt.y());
-      sumX += pt.x();
-      sumY += pt.y();
-    }
-    auto meanX = static_cast<double>(sumX) / points.size();
-    auto meanY = static_cast<double>(sumY) / points.size();
-    auto axisName = isHorizontal ? "y" : "x";
-    auto oldAxisName = oldIsHorizontal ? "y" : "x";
-
-    cout << "[selfsym-axis] net=" << net->getName()
-         << " auto=" << axisName << "=" << axis
-         << " old_hardcoded=" << oldAxisName << "=" << oldAxis;
-    if (isHorizontal == oldIsHorizontal) {
-      cout << " delta=" << axis - oldAxis;
-    } else {
-      cout << " delta=orientation-mismatch";
-    }
-    cout << " ap_count=" << points.size()
-         << " ap_bbox=(" << minX << "," << minY << ")-("
-         << maxX << "," << maxY << ")"
-         << " ap_mean=(" << meanX << "," << meanY << ")"
-         << "\n";
-    for (auto &pt: points) {
-      cout << "[selfsym-axis]   ap=(" << pt.x() << "," << pt.y() << ")\n";
-    }
   }
 
   void initSelfSymmetryConstraints(frDesign *design) {
@@ -180,7 +104,6 @@ namespace {
       bool isHorizontal = false;
       int axis = 0;
       get_self_symmetry_axis(points, isHorizontal, axis);
-      reportSelfSymmetryAxis(net, points, isHorizontal, axis);
 
       auto axisName = isHorizontal ? "y" : "x";
       bool axisInDie = isHorizontal ?
