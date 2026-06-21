@@ -43,10 +43,6 @@ namespace fr {
 
   constexpr unsigned SELF_SYMMETRY_M1_VIA_PENALTY_COUNT = 4;
 
-  inline int normalizeSelfSymmetryRootSide(int side) {
-    return side == 0 ? -1 : side;
-  }
-
   inline long long getSelfSymmetryAbsDiff(frCoord lhs, frCoord rhs) {
     return lhs >= rhs ? (long long)(lhs - rhs) : (long long)(rhs - lhs);
   }
@@ -171,13 +167,11 @@ namespace fr {
     frCoord axis = 0;
     frCoord axisSnapDelta = 0;
     frCoord axisGCellIdx = 0;
-    int rootSide = 0;
 
     static SelfSymmetryAxisContext fromAxisProbe(
         frDesign *design,
         const frSelfSymmetryConstraint &constraint,
-        const frPoint &axisProbe,
-        int rootSideIn = 0) {
+        const frPoint &axisProbe) {
       SelfSymmetryAxisContext ctx;
       auto block = design ? design->getTopBlock() : nullptr;
       if (block == nullptr) {
@@ -207,22 +201,20 @@ namespace fr {
       ctx.axisGCellIdx = constraint.isAxisHorizontal ?
                          axisGCellLocation.y() :
                          axisGCellLocation.x();
-      ctx.rootSide = rootSideIn;
       return ctx;
     }
 
     static SelfSymmetryAxisContext fromReferencePoint(
         frDesign *design,
         const frSelfSymmetryConstraint &constraint,
-        const frPoint &referencePoint,
-        int rootSideIn = 0) {
+        const frPoint &referencePoint) {
       frPoint axisProbe;
       if (constraint.isAxisHorizontal) {
         axisProbe.set(referencePoint.x(), constraint.axis);
       } else {
         axisProbe.set(constraint.axis, referencePoint.y());
       }
-      return fromAxisProbe(design, constraint, axisProbe, rootSideIn);
+      return fromAxisProbe(design, constraint, axisProbe);
     }
 
     int sideOfPoint(const frPoint &point) const {

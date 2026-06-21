@@ -103,17 +103,22 @@ namespace {
 
     auto beginCoord = axisCtx.axisCoord(beginGCellIdx);
     auto endCoord = axisCtx.axisCoord(endGCellIdx);
-    if (beginCoord == axisCtx.axisGCellIdx &&
-        endCoord == axisCtx.axisGCellIdx) {
+    auto getSide = [&axisCtx](frCoord coord) {
+      if (coord < axisCtx.axisGCellIdx) {
+        return -1;
+      }
+      if (coord > axisCtx.axisGCellIdx) {
+        return 1;
+      }
       return 0;
+    };
+    auto beginSide = getSide(beginCoord);
+    auto endSide = getSide(endCoord);
+    if (beginSide != 0 && (endSide == 0 || endSide == beginSide)) {
+      return beginSide;
     }
-    if (beginCoord < axisCtx.axisGCellIdx &&
-        endCoord < axisCtx.axisGCellIdx) {
-      return -1;
-    }
-    if (beginCoord > axisCtx.axisGCellIdx &&
-        endCoord > axisCtx.axisGCellIdx) {
-      return 1;
+    if (endSide != 0 && beginSide == 0) {
+      return endSide;
     }
     return 0;
   }
@@ -140,28 +145,6 @@ namespace {
     axisCtx = SelfSymmetryAxisContext::fromAxisProbe(
         gridGraph->getDesign(), constraint, axisProbe);
     return axisCtx.valid;
-  }
-
-  int getSelfSymmetryRootSide(FlexGRGridGraph* gridGraph,
-                              frNet* net,
-                              const SelfSymmetryAxisContext &axisCtx) {
-    auto block = gridGraph && gridGraph->getDesign() ?
-                 gridGraph->getDesign()->getTopBlock() : nullptr;
-    auto rootGCellNode = net ? net->getRootGCellNode() : nullptr;
-    if (!block || !rootGCellNode) {
-      return normalizeSelfSymmetryRootSide(0);
-    }
-
-    frPoint rootGCellIdx;
-    block->getGCellIdx(rootGCellNode->getLoc(), rootGCellIdx);
-    auto rootCoord = axisCtx.axisCoord(rootGCellIdx);
-    if (rootCoord < axisCtx.axisGCellIdx) {
-      return -1;
-    }
-    if (rootCoord > axisCtx.axisGCellIdx) {
-      return 1;
-    }
-    return normalizeSelfSymmetryRootSide(0);
   }
 
   bool getSelfSymmetryMirrorEdge(FlexGRGridGraph* gridGraph,
@@ -663,18 +646,35 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
   auto stepCost = edgeLength + congStepCost + histStepCost +
                   blockStepCost + overflowStepCost;
   auto selfSymmetryEdgeSide = 0;
-  auto selfSymmetryRootSide = 0;
+  constexpr int selfSymmetryLeadSide = -1;
+  SelfSymmetryAxisContext selfSymmetryAxisCtx;
   if (activeNet && activeNet->getSelfSymmetryConstraintPtr() &&
-      grWorker->isSelfSymmetryAuto() && isSelfSymmetryCardinalDir(dir)) {
-    SelfSymmetryAxisContext axisCtx;
-    if (getSelfSymmetryAxisContext(this, activeNet, axisCtx)) {
+      isSelfSymmetryCardinalDir(dir) &&
+      (grWorker->isSelfSymmetryAuto() || grWorker->isSelfSymmetryMirror())) {
+    if (getSelfSymmetryAxisContext(this, activeNet, selfSymmetryAxisCtx)) {
       selfSymmetryEdgeSide =
-          getSelfSymmetryEdgeSide(this, axisCtx, gridX, gridY, dir);
-      selfSymmetryRootSide =
-          getSelfSymmetryRootSide(this, activeNet, axisCtx);
-      if (selfSymmetryEdgeSide == -selfSymmetryRootSide) {
+          getSelfSymmetryEdgeSide(this, selfSymmetryAxisCtx, gridX, gridY, dir);
+      if (grWorker->isSelfSymmetryAuto() &&
+          selfSymmetryEdgeSide == -selfSymmetryLeadSide) {
         stepCost = saturateSelfSymmetryCost(
             (unsigned long long)stepCost * 4);
+      } else if (grWorker->isSelfSymmetryMirror()) {
+        if ((selfSymmetryEdgeSide == selfSymmetryLeadSide ||
+             selfSymmetryEdgeSide == 0) &&
+            !grWorker->hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ, dir)) {
+          stepCost += BLOCKCOST * edgeLength * 100;
+        } else if (selfSymmetryEdgeSide == -selfSymmetryLeadSide) {
+          frMIdx mirrorX = 0;
+          frMIdx mirrorY = 0;
+          frMIdx mirrorZ = 0;
+          frDirEnum mirrorDir = frDirEnum::UNKNOWN;
+          if (!getSelfSymmetryMirrorEdge(this, activeNet, gridX, gridY, gridZ, dir,
+                                         mirrorX, mirrorY, mirrorZ, mirrorDir) ||
+              !grWorker->hasSelfSymmetryPrevPlanarEdge(mirrorX, mirrorY, mirrorZ,
+                                                       mirrorDir)) {
+            stepCost += 128 * edgeLength;
+          }
+        }
       }
     }
   }
@@ -703,7 +703,7 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
     auto edgeLen = getEdgeLength(gridX, gridY, gridZ, dir);
     bool addMirrorCost = grWorker->isSelfSymmetryMirror() ||
                          (grWorker->isSelfSymmetryAuto() &&
-                          selfSymmetryEdgeSide == selfSymmetryRootSide &&
+                          selfSymmetryEdgeSide == selfSymmetryLeadSide &&
                           selfSymmetryEdgeSide != 0);
     if (addMirrorCost &&
         getSelfSymmetryMirrorEdge(this, activeNet, gridX, gridY, gridZ, dir,

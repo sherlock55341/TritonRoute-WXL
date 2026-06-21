@@ -30,6 +30,7 @@
 #define _FR_FLEXGR_H_
 
 #include <memory>
+#include <set>
 #include "frDesign.h"
 #include "FlexGRCMap.h"
 #include "db/grObj/grNet.h"
@@ -224,6 +225,7 @@ namespace fr {
                  extBox(), routeBox(), grIter(0), mazeEndIter(1), workerCongCost(0), workerHistCost(0), 
                  congThresh(1.0), is2DRouting(false), ripupMode(0),
                  selfSymmetryMode(FlexGRSelfSymmetryMode::Auto),
+                 selfSymmetryPrevPlanarEdges(),
                  nets(), owner2nets(), /*owner2extBoundPtNodes(), owner2routeBoundPtNodes(), owner2pinGCellNodes(),*/
                  gridGraph(grIn->getDesign(), this), rq(this) {}
     // setters
@@ -322,6 +324,22 @@ namespace fr {
     bool isSelfSymmetryMirror() const {
       return selfSymmetryMode == FlexGRSelfSymmetryMode::Mirror;
     }
+    bool hasSelfSymmetryPrevPlanarEdge(frMIdx x, frMIdx y, frMIdx z, frDirEnum dir) const {
+      switch (dir) {
+        case frDirEnum::W:
+          --x;
+          dir = frDirEnum::E;
+          break;
+        case frDirEnum::S:
+          --y;
+          dir = frDirEnum::N;
+          break;
+        default:
+          ;
+      }
+      return selfSymmetryPrevPlanarEdges.find(std::make_pair(FlexMazeIdx(x, y, z), dir)) !=
+             selfSymmetryPrevPlanarEdges.end();
+    }
     bool isTarget(frNet* net) const {
       if (selfSymmetryMode == FlexGRSelfSymmetryMode::Auto) {
         return true;
@@ -377,6 +395,7 @@ namespace fr {
     bool       is2DRouting;
     int        ripupMode;
     FlexGRSelfSymmetryMode selfSymmetryMode;
+    std::set<std::pair<FlexMazeIdx, frDirEnum> > selfSymmetryPrevPlanarEdges;
 
     // local storage
     std::vector<std::unique_ptr<grNet> >   nets;
@@ -443,6 +462,7 @@ namespace fr {
     void route_getRerouteNets(std::vector<grNet*> &rerouteNets);
     void mazeNetInit(grNet* net);
     bool mazeNetHasCong(grNet* net);
+    void mazeNetInit_selfSymmetryPrevPlanarEdges(grNet* net);
     void mazeNetInit_addHistCost(grNet* net);
     void mazeNetInit_decayHistCost(grNet* net);
     void mazeNetInit_removeNetObjs(grNet* net);

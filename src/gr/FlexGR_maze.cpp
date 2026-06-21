@@ -247,8 +247,43 @@ void FlexGRWorker::mazeNetInit(grNet* net) {
   } else if (ripupMode == 1) {
     mazeNetInit_addHistCost(net);
   }
+  mazeNetInit_selfSymmetryPrevPlanarEdges(net);
   mazeNetInit_removeNetObjs(net);
   mazeNetInit_removeNetNodes(net);
+}
+
+void FlexGRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(grNet* net) {
+  selfSymmetryPrevPlanarEdges.clear();
+  if (!isSelfSymmetryMirror() || !net || !net->getFrNet() ||
+      !net->getFrNet()->getSelfSymmetryConstraintPtr()) {
+    return;
+  }
+
+  for (auto &uptr: net->getRouteConnFigs()) {
+    if (uptr->typeId() != grcPathSeg) {
+      continue;
+    }
+    auto pathSeg = static_cast<grPathSeg*>(uptr.get());
+    frPoint bp, ep;
+    FlexMazeIdx bi, ei;
+    pathSeg->getPoints(bp, ep);
+    gridGraph.getMazeIdx(bp, pathSeg->getLayerNum(), bi);
+    gridGraph.getMazeIdx(ep, pathSeg->getLayerNum(), ei);
+
+    if (bi.x() == ei.x()) {
+      for (auto yIdx = min(bi.y(), ei.y()); yIdx < max(bi.y(), ei.y()); yIdx++) {
+        selfSymmetryPrevPlanarEdges.insert(
+            make_pair(FlexMazeIdx(bi.x(), yIdx, bi.z()), frDirEnum::N));
+      }
+    } else if (bi.y() == ei.y()) {
+      for (auto xIdx = min(bi.x(), ei.x()); xIdx < max(bi.x(), ei.x()); xIdx++) {
+        selfSymmetryPrevPlanarEdges.insert(
+            make_pair(FlexMazeIdx(xIdx, bi.y(), bi.z()), frDirEnum::E));
+      }
+    } else {
+      cout << "Error: non-colinear pathSeg in mazeNetInit_selfSymmetryPrevPlanarEdges" << endl;
+    }
+  }
 }
 
 void FlexGRWorker::mazeNetInit_addHistCost(grNet* net) {
