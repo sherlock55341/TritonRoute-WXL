@@ -508,6 +508,12 @@ bool FlexGRWorker::routeNet(grNet* net) {
     if (enableOutput) {
       cout << "      dst at (" << nextPinGCellNode->getLoc().x() << ", " << nextPinGCellNode->getLoc().y() << ", " << nextPinGCellNode->getLayerNum() << ")\n";
     }
+    auto loc = nextPinGCellNode->getLoc();
+    auto lNum = nextPinGCellNode->getLayerNum();
+    FlexMazeIdx nextDstMazeIdx;
+    gridGraph.getMazeIdx(loc, lNum, nextDstMazeIdx);
+    gridGraph.resetDst();
+    gridGraph.setDst(nextDstMazeIdx);
     if (gridGraph.search(connComps, nextPinGCellNode, path, ccMazeIdx1, ccMazeIdx2, centerPt)) {
       auto leaf = routeNet_postAstarUpdate(path, connComps, unConnPinGCellNodes, mazeIdx2unConnPinGCellNode);
       routeNet_postAstarWritePath(net, path, leaf, mazeIdx2endPointNode);
@@ -535,7 +541,6 @@ void FlexGRWorker::routeNet_prep(grNet* net, set<grNode*, frBlockObjectComp> &un
     auto lNum = pinGCellNode->getLayerNum();
     FlexMazeIdx mi;
     gridGraph.getMazeIdx(loc, lNum, mi);
-    gridGraph.setDst(mi);
 
     unConnPinGCellNodes.insert(pinGCellNode);
     if (mazeIdx2unConnPinGCellNode.find(mi) != mazeIdx2unConnPinGCellNode.end()) {
@@ -652,7 +657,6 @@ void FlexGRWorker::routeNet_setSrc(grNet* net,
 
   mazeIdx2unConnPinGCellNode.erase(mi);
   gridGraph.setSrc(mi);
-  gridGraph.resetDst(mi);
 
   connComps.push_back(mi);
   ccMazeIdx1.set(min(ccMazeIdx1.x(), mi.x()),
@@ -794,8 +798,65 @@ void FlexGRWorker::routeNet_postAstarWritePath(grNet* net, vector<FlexMazeIdx> &
   if (enableOutput) {
     cout << "  start routeNet_postAstarWritePath\n";
   }
-  
+
   auto &workerRegionQuery = getWorkerRegionQuery();
+
+  if (points.size() == 1) {
+    if (leaf == nullptr) {
+      cout << "Error: zero-length path leaf is nullptr\n";
+      return;
+    }
+
+    auto mi = points.front();
+    grNode* parent = nullptr;
+    auto endPointIt = mazeIdx2endPointNode.find(mi);
+    if (endPointIt != mazeIdx2endPointNode.end() &&
+        endPointIt->second != leaf) {
+      parent = endPointIt->second;
+    }
+
+    if (parent == nullptr) {
+      frPoint loc;
+      gridGraph.getPoint(mi.x(), mi.y(), loc);
+      frLayerNum lNum = gridGraph.getLayerNum(mi.z());
+      frBox queryBox(loc, loc);
+      vector<grConnFig*> result;
+      workerRegionQuery.query(queryBox, lNum, result);
+      for (auto rptr: result) {
+        if (rptr->typeId() != grcPathSeg) {
+          continue;
+        }
+        auto pathSeg = static_cast<grPathSeg*>(rptr);
+        if (!pathSeg->hasGrNet() || pathSeg->getGrNet() != net) {
+          continue;
+        }
+
+        auto child = pathSeg->getGrChild();
+        auto pathParent = pathSeg->getGrParent();
+        if (child->getLoc() == loc) {
+          parent = child;
+        } else if (pathParent->getLoc() == loc) {
+          parent = pathParent;
+        } else {
+          parent = routeNet_postAstarWritePath_splitPathSeg(child,
+                                                            pathParent,
+                                                            loc);
+        }
+        mazeIdx2endPointNode[mi] = parent;
+        break;
+      }
+    }
+
+    if (parent == nullptr || parent == leaf) {
+      cout << "Error: zero-length path endpoint not found\n";
+      return;
+    }
+
+    leaf->setParent(parent);
+    parent->addChild(leaf);
+    return;
+  }
+
   grNode* child = nullptr;
   grNode* parent = nullptr;
 
