@@ -1,7 +1,8 @@
 # GR Self-Symmetry Cost Design
 
-This note records the current GR maze cost policy for self-symmetric nets. The
-implementation lives in `FlexGRGridGraph::getNextPathCost()`.
+This note records the current GR search-repair schedule and maze cost policy for
+self-symmetric nets. The cost implementation lives in
+`FlexGRGridGraph::getNextPathCost()`.
 
 ## Goal
 
@@ -10,6 +11,22 @@ Self-symmetric nets are routed in two conceptual passes:
 - `Auto`: find the first half of the route, including useful axis routing.
 - `Mirror`: reuse the auto-pass route as the reference and route the mirrored
   half with strong preference for the planned mirrored geometry.
+
+The scheduled 3D global-routing flow has one extra ordinary-net cleanup stage:
+
+```text
+2D auto      -> all nets
+2D mirror    -> self-symmetric nets only
+layerassign  -> all nets
+3D auto      -> ordinary nets only
+3D mirror    -> self-symmetric nets only
+```
+
+The `3d_auto` stage is intentionally `OrdinaryOnly`: it can repair regular nets
+after layer assignment, but it must not rip up, boundary-split, or otherwise
+rewrite self-symmetric nets. Self-symmetric 3D repair is handled by `3d_mirror`,
+using the preserved layer-assigned self-symmetric route as its previous-route
+reference.
 
 The cost rules are intentionally local to candidate planar edges. They should
 make the desired topology cheaper without replacing the maze router with a hard
@@ -73,7 +90,19 @@ Design intent:
 
 ## Search-Repair Participation
 
-In `ripupMode == 1`, self-symmetric nets must enter every search-repair pass,
+Workers use `FlexGRSelfSymmetryMode` to decide which nets are targets:
+
+- `Auto`: every net is a target.
+- `OrdinaryOnly`: only nets without a self-symmetry constraint are targets.
+- `Mirror`: only nets with a self-symmetry constraint are targets.
+
+`initNets_roots()` and `route_getRerouteNets()` both use this target filter.
+`initBoundary()` also uses it before splitting path segments at worker
+boundaries, because boundary splitting mutates the top-level GR topology before
+the later reroute filter runs. Without that guard, an ordinary-only pass could
+still change self-symmetric nets even though it never routes them.
+
+In `ripupMode == 1`, self-symmetric nets must enter mirror search-repair passes,
 even when `mazeNetHasCong()` is false. Otherwise a clean but topologically bad
 route would never see the self-symmetry cost bias.
 
@@ -136,8 +165,14 @@ geometry makes an already-routed axis segment incorrectly expensive.
 
 The main auto/mirror planar edge rules are not gated by `is2D()`. They apply in
 both 2D and 3D GR whenever the candidate direction is `E`, `N`, `S`, or `W` and
-the active net has a self-symmetry constraint. In 3D auto mode, vias on the axis
-gcell also get the same 1/16 discount.
+the active net has a self-symmetry constraint. In an auto-mode 3D search-repair,
+vias on the axis gcell also get the same 1/16 discount.
+
+The current scheduled `3d_auto` stage does not use `Auto`; it uses
+`OrdinaryOnly`, so self-symmetric nets are not active there and these
+self-symmetry cost rules do not run for them. The next scheduled stage,
+`3d_mirror`, is the only 3D search-repair stage that rewrites self-symmetric
+nets.
 
 Via moves are not classified as lead/axis/mirror edges by the planar edge-side
 logic. There is a separate 3D-only self-symmetry penalty at
@@ -161,3 +196,6 @@ This is independent of the mirror-side edge penalty.
   the preferred side is blocked.
 - Keep the mirror pass tied to the recorded previous planar edge bits; that
   previous route is the contract between auto and mirror.
+- Keep the scheduled 3D auto pass ordinary-only. It may update ordinary nets,
+  but self-symmetric nets should remain byte-for-byte preserved from
+  `layerassign` until `3d_mirror` records their previous planar edges.

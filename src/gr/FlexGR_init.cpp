@@ -286,7 +286,9 @@ void FlexGRWorker::initBoundary() {
     if (rptr->typeId() == grcPathSeg) {
       auto cptr = static_cast<grPathSeg*>(rptr);
       if (cptr->hasNet()) {
-        initBoundary_splitPathSeg(cptr);
+        if (isTarget(cptr->getNet())) {
+          initBoundary_splitPathSeg(cptr);
+        }
       } else {
         cout << "Error: initNetObjs hasNet() empty" <<endl;
       }

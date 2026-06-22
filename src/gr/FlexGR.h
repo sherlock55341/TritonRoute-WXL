@@ -43,6 +43,7 @@ namespace fr {
 
   enum class FlexGRSelfSymmetryMode {
     Auto,
+    OrdinaryOnly,
     Mirror
   };
 
@@ -326,6 +327,9 @@ namespace fr {
     bool isTarget(frNet* net) const {
       if (selfSymmetryMode == FlexGRSelfSymmetryMode::Auto) {
         return true;
+      }
+      if (selfSymmetryMode == FlexGRSelfSymmetryMode::OrdinaryOnly) {
+        return net && !net->getSelfSymmetryConstraintPtr();
       }
       return net && net->getSelfSymmetryConstraintPtr();
     }

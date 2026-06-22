@@ -205,7 +205,7 @@ void FlexGR::main() {
 
   // reportCong3D();
 
-  searchRepair(/*iter*/0, /*size*/10, /*offset*/0, /*mazeEndIter*/2, /*workerCongCost*/4 * CONGCOST, /*workerHistCost*/0.25 * HISTCOST, /*congThresh*/1.0, /*is2DRouting*/false, 1, /*TEST*/false);
+  searchRepair(/*iter*/0, /*size*/10, /*offset*/0, /*mazeEndIter*/2, /*workerCongCost*/4 * CONGCOST, /*workerHistCost*/0.25 * HISTCOST, /*congThresh*/1.0, /*is2DRouting*/false, 1, /*TEST*/false, FlexGRSelfSymmetryMode::OrdinaryOnly);
   writeGuideStageFile("3d_auto");
   searchRepair(/*iter*/0, /*size*/10, /*offset*/0, /*mazeEndIter*/1, /*workerCongCost*/4 * CONGCOST, /*workerHistCost*/0.25 * HISTCOST, /*congThresh*/1.0, /*is2DRouting*/false, 1, /*TEST*/false, FlexGRSelfSymmetryMode::Mirror);
   writeGuideStageFile("3d_mirror");
