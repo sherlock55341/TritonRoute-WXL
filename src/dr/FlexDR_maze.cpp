@@ -1975,6 +1975,7 @@ void FlexDRWorker::route_2_init(deque<drNet*> &rerouteNets) {
 
 void FlexDRWorker::mazeNetInit(drNet* net) {
   gridGraph.resetStatus();
+  mazeNetInit_selfSymmetryPrevPlanarEdges(net);
   // sub term / instterm cost when net is about to route
   initMazeCost_terms(net->getFrNetTerms(), false, true);
   // sub via access cost when net is about to route
@@ -1989,6 +1990,39 @@ void FlexDRWorker::mazeNetInit(drNet* net) {
   initMazeCost_minCut_helper(net, true);
   initMazeCost_ap_helper(net, false);
   initMazeCost_boundary_helper(net, false);
+}
+
+void FlexDRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(drNet* net) {
+  if (!net || !net->getFrNet() ||
+      !net->getFrNet()->getSelfSymmetryConstraintPtr()) {
+    return;
+  }
+
+  for (auto &uptr: net->getRouteConnFigs()) {
+    if (uptr->typeId() != drcPathSeg) {
+      continue;
+    }
+    auto pathSeg = static_cast<drPathSeg*>(uptr.get());
+    if (!pathSeg->hasMazeIdx()) {
+      continue;
+    }
+
+    FlexMazeIdx bi, ei;
+    pathSeg->getMazeIdx(bi, ei);
+    if (bi.x() == ei.x()) {
+      for (auto yIdx = min(bi.y(), ei.y()); yIdx < max(bi.y(), ei.y()); yIdx++) {
+        gridGraph.setSelfSymmetryPrevPlanarEdge(bi.x(), yIdx, bi.z(),
+                                                frDirEnum::N);
+      }
+    } else if (bi.y() == ei.y()) {
+      for (auto xIdx = min(bi.x(), ei.x()); xIdx < max(bi.x(), ei.x()); xIdx++) {
+        gridGraph.setSelfSymmetryPrevPlanarEdge(xIdx, bi.y(), bi.z(),
+                                                frDirEnum::E);
+      }
+    } else {
+      cout << "Error: non-colinear pathSeg in mazeNetInit_selfSymmetryPrevPlanarEdges" << endl;
+    }
+  }
 }
 
 void FlexDRWorker::mazeNetEnd(drNet* net) {
@@ -3844,7 +3878,7 @@ bool FlexDRWorker::routeNet(drNet* net) {
     // } else {
     //   cout << "next pin is boundary pin\n";
     // }    
-    if (gridGraph.search(connComps, nextPin, path, ccMazeIdx1, ccMazeIdx2, centerPt)) {
+    if (gridGraph.search(net, connComps, nextPin, path, ccMazeIdx1, ccMazeIdx2, centerPt)) {
       routeNet_postAstarUpdate(path, connComps, unConnPins, mazeIdx2unConnPins, isFirstConn);
       routeNet_postAstarWritePath(net, path, realPinAPMazeIdx/*, apSVia*/);
       routeNet_postAstarPatchMinAreaVio(net, path, areaMap);

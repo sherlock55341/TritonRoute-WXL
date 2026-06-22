@@ -43,6 +43,7 @@
 
 namespace fr {
   class FlexDRWorker;
+  class drNet;
   class FlexGridGraph {
   public:
     // constructors
@@ -109,6 +110,21 @@ namespace fr {
     // unsafe access, no check
     bool isSVia(frMIdx x, frMIdx y, frMIdx z) const {
       return getBit(getIdx(x, y, z), 9);
+    }
+    bool hasSelfSymmetryPrevPlanarEdge(frMIdx x, frMIdx y, frMIdx z, frDirEnum dir) const {
+      correct(x, y, z, dir);
+      if (isValid(x, y, z)) {
+        auto idx = getIdx(x, y, z);
+        switch (dir) {
+          case frDirEnum::E:
+            return getBit(idx, 6);
+          case frDirEnum::N:
+            return getBit(idx, 7);
+          default:
+            return false;
+        }
+      }
+      return false;
     }
     // unsafe access, no check
     // bool hasShapePlanar(frMIdx x, frMIdx y, frMIdx z) const {
@@ -441,6 +457,20 @@ namespace fr {
             return resetBit(idx, 4);
           case frDirEnum::U:
             return resetBit(idx, 5);
+          default:
+            ;
+        }
+      }
+    }
+    void setSelfSymmetryPrevPlanarEdge(frMIdx x, frMIdx y, frMIdx z, frDirEnum dir) {
+      correct(x, y, z, dir);
+      if (isValid(x, y, z)) {
+        auto idx = getIdx(x, y, z);
+        switch (dir) {
+          case frDirEnum::E:
+            return setBit(idx, 6);
+          case frDirEnum::N:
+            return setBit(idx, 7);
           default:
             ;
         }
@@ -794,9 +824,10 @@ namespace fr {
     void resetStatus();
     void resetAStarCosts();
     void resetPrevNodeDir();
+    void resetSelfSymmetryPrevPlanarEdges();
     void resetSrc();
     void resetDst();
-    bool search(std::vector<FlexMazeIdx> &connComps, drPin* nextPin, std::vector<FlexMazeIdx> &path,
+    bool search(drNet* net, std::vector<FlexMazeIdx> &connComps, drPin* nextPin, std::vector<FlexMazeIdx> &path,
                 FlexMazeIdx &ccMazeIdx1, FlexMazeIdx &ccMazeIdx2, const frPoint &centerPt);
     void setCost(frUInt4 drcCostIn, frUInt4 markerCostIn) {
       ggDRCCost    = drcCostIn;
@@ -852,7 +883,7 @@ namespace fr {
     // new // X == planar
     // [0] hasEEdge; [1] hasNEdge; [2] hasUpEdge
     // [3] blockE;   [4] blockN;   [5] blockU
-    // [6] empty;    [7] empty;    [8] empty
+    // [6] self symmetry previous E planar edge; [7] self symmetry previous N planar edge; [8] empty
     // [9] hasSpecialVia
     // [10] shape X cost; [11] override U shape cost; 
     // [12] is W/E on grid; [13] is N/S on grid; [14] is U on grid
@@ -877,6 +908,9 @@ namespace fr {
     std::vector<bool>                          zDirs; // is horz dir
     frUInt4                                    ggDRCCost;
     frUInt4                                    ggMarkerCost;
+    bool                                       selfSymmetrySearch = false;
+    bool                                       selfSymmetryAxisHorizontal = false;
+    frCoord                                    selfSymmetryAxis = 0;
     // temporary variables
     FlexWavefront                              wavefront;
     const std::vector<std::pair<frCoord, frCoord> >* halfViaEncArea; // std::pair<layer1area, layer2area>

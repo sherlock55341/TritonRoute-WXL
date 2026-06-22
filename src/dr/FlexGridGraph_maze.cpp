@@ -28,6 +28,7 @@
 
 #include "dr/FlexGridGraph.h"
 #include "dr/FlexDR.h"
+#include "gr/FlexGR_self_sym_utils.h"
 
 using namespace std;
 using namespace fr;
@@ -264,6 +265,9 @@ using namespace fr;
 
 /*inline*/ frCost FlexGridGraph::getEstCost(const FlexMazeIdx &src, const FlexMazeIdx &dstMazeIdx1,
                                 const FlexMazeIdx &dstMazeIdx2, const frDirEnum &dir) {
+  if (selfSymmetrySearch) {
+    return 0;
+  }
   //bool enableOutput = true;
   bool enableOutput = false;
   if (enableOutput) {
@@ -651,14 +655,33 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
   bool guideCost  = hasGuide(gridX, gridY, gridZ, dir);
 
   // temporarily disable guideCost
-  nextPathCost += getEdgeLength(gridX, gridY, gridZ, dir)
-                  + (gridCost   ? GRIDCOST         * getEdgeLength(gridX, gridY, gridZ, dir) : 0)
-                  + (drcCost    ? ggDRCCost        * getEdgeLength(gridX, gridY, gridZ, dir) : 0)
-                  + (markerCost ? ggMarkerCost     * getEdgeLength(gridX, gridY, gridZ, dir) : 0)
+  auto edgeLength = getEdgeLength(gridX, gridY, gridZ, dir);
+  auto stepCost = edgeLength
+                  + (gridCost   ? GRIDCOST     * edgeLength      : 0)
+                  + (drcCost    ? ggDRCCost    * edgeLength      : 0)
+                  + (markerCost ? ggMarkerCost * edgeLength      : 0)
                   // + (markerCost ? ggMarkerCost     * pathWidth                               : 0)
-                  + (shapeCost  ? SHAPECOST        * getEdgeLength(gridX, gridY, gridZ, dir) : 0)
-                  + (blockCost  ? BLOCKCOST        * pathWidth * 20                          : 0)
-                  + (!guideCost ? GUIDECOST        * getEdgeLength(gridX, gridY, gridZ, dir) : 0);
+                  + (shapeCost  ? SHAPECOST    * edgeLength      : 0)
+                  + (blockCost  ? BLOCKCOST    * pathWidth * 20 : 0)
+                  + (!guideCost ? GUIDECOST    * edgeLength      : 0);
+  if (selfSymmetrySearch) {
+    frPoint currPt;
+    getPoint(currPt, gridX, gridY);
+    bool isAxisEdge = false;
+    if (selfSymmetryAxisHorizontal) {
+      isAxisEdge = currPt.y() == selfSymmetryAxis &&
+                   (dir == frDirEnum::E || dir == frDirEnum::W ||
+                    dir == frDirEnum::U || dir == frDirEnum::D);
+    } else {
+      isAxisEdge = currPt.x() == selfSymmetryAxis &&
+                   (dir == frDirEnum::N || dir == frDirEnum::S ||
+                    dir == frDirEnum::U || dir == frDirEnum::D);
+    }
+    if (isAxisEdge) {
+      stepCost /= 16;
+    }
+  }
+  nextPathCost += stepCost;
   if (enableOutput) {
     cout <<"edge grid/shape/drc/marker/blk/length = " 
          <<hasGridCost(gridX, gridY, gridZ, dir)   <<"/"
@@ -797,11 +820,26 @@ void FlexGridGraph::traceBackPath(const FlexWavefrontGrid &currGrid, vector<Flex
 
 }
 
-bool FlexGridGraph::search(vector<FlexMazeIdx> &connComps, drPin* nextPin, vector<FlexMazeIdx> &path, 
+bool FlexGridGraph::search(drNet* net, vector<FlexMazeIdx> &connComps, drPin* nextPin, vector<FlexMazeIdx> &path,
                            FlexMazeIdx &ccMazeIdx1, FlexMazeIdx &ccMazeIdx2, const frPoint &centerPt) {
   //bool enableOutput = true;
   bool enableOutput = false;
   int stepCnt = 0;
+  selfSymmetrySearch = false;
+  selfSymmetryAxisHorizontal = false;
+  selfSymmetryAxis = 0;
+  auto frNet = net ? net->getFrNet() : nullptr;
+  if (frNet && frNet->getSelfSymmetryConstraintPtr()) {
+    auto constraint = frNet->getSelfSymmetryConstraint();
+    selfSymmetrySearch = true;
+    selfSymmetryAxisHorizontal = constraint.isAxisHorizontal;
+    selfSymmetryAxis = constraint.axis;
+    findNearestSelfSymmetryRoutingTrack(getDesign(),
+                                        constraint.isAxisHorizontal,
+                                        constraint.axis,
+                                        nullptr,
+                                        selfSymmetryAxis);
+  }
 
   // prep nextPinBox
   frMIdx xDim, yDim, zDim;
@@ -888,4 +926,3 @@ bool FlexGridGraph::search(vector<FlexMazeIdx> &connComps, drPin* nextPin, vecto
   }
   return false;
 }
-

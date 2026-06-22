@@ -733,6 +733,7 @@ namespace fr {
     void mazeIterInit_drcCost();
 
     void mazeNetInit(drNet* net);
+    void mazeNetInit_selfSymmetryPrevPlanarEdges(drNet* net);
     void mazeNetEnd(drNet* net);
     bool routeNet(drNet* net);
     void routeNet_prep(drNet* net, std::set<drPin*, frBlockObjectComp> &pins, 

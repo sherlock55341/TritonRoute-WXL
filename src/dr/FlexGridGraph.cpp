@@ -630,6 +630,7 @@ void FlexGridGraph::resetStatus() {
   resetDst();
   resetAStarCosts();
   resetPrevNodeDir();
+  resetSelfSymmetryPrevPlanarEdges();
 }
 
 void FlexGridGraph::resetSrc() {
@@ -655,6 +656,12 @@ void FlexGridGraph::resetPrevNodeDir() {
   //  }
   //}
   prevDirs.assign(prevDirs.size(), 0);
+}
+
+void FlexGridGraph::resetSelfSymmetryPrevPlanarEdges() {
+  for (auto &bit: bits) {
+    bit &= ~((1ull << 6) | (1ull << 7));
+  }
 }
 
 // print the grid graph with edge and vertex for debug purpose
@@ -715,4 +722,3 @@ void FlexGridGraph::print() {
     cout << "Error: Fail to open maze log\n";
   }
 }
-
