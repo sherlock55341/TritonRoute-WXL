@@ -123,6 +123,22 @@ namespace {
     return 0;
   }
 
+  bool isSelfSymmetryAxisGCell(FlexGRGridGraph* gridGraph,
+                               const SelfSymmetryAxisContext &axisCtx,
+                               frMIdx x,
+                               frMIdx y) {
+    if (!gridGraph) {
+      return false;
+    }
+    auto worker = gridGraph->getGRWorker();
+    if (!worker) {
+      return false;
+    }
+    auto routeGCellIdxLL = worker->getRouteGCellIdxLL();
+    frPoint gCellIdx(x + routeGCellIdxLL.x(), y + routeGCellIdxLL.y());
+    return axisCtx.axisCoord(gCellIdx) == axisCtx.axisGCellIdx;
+  }
+
   bool getSelfSymmetryAxisContext(FlexGRGridGraph* gridGraph,
                                   frNet* net,
                                   SelfSymmetryAxisContext &axisCtx) {
@@ -656,40 +672,51 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
   frMIdx selfSymmetryMirrorZ = 0;
   frDirEnum selfSymmetryMirrorDir = frDirEnum::UNKNOWN;
   if (activeNet && activeNet->getSelfSymmetryConstraintPtr() &&
-      isSelfSymmetryCardinalDir(dir) &&
       (grWorker->isSelfSymmetryAuto() || grWorker->isSelfSymmetryMirror())) {
     if (getSelfSymmetryAxisContext(this, activeNet, selfSymmetryAxisCtx)) {
-      selfSymmetryEdgeSide =
-          getSelfSymmetryEdgeSide(this, selfSymmetryAxisCtx, gridX, gridY, dir);
-      if (grWorker->isSelfSymmetryAuto() &&
-          selfSymmetryEdgeSide == -selfSymmetryLeadSide) {
-        stepCost = saturateSelfSymmetryCost(
-            (unsigned long long)stepCost * 4);
-      } else if (grWorker->isSelfSymmetryMirror()) {
-        if (selfSymmetryEdgeSide == selfSymmetryLeadSide ||
-            selfSymmetryEdgeSide == 0) {
-          auto hasPrevEdge =
-              hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ, dir);
-          if (!hasPrevEdge) {
-            stepCost += BLOCKCOST * edgeLength * 100;
-          }
-        } else if (selfSymmetryEdgeSide == -selfSymmetryLeadSide) {
-          selfSymmetryMirrorEdgeValid =
-              getSelfSymmetryMirrorEdge(this, activeNet, gridX, gridY, gridZ,
-                                        dir, selfSymmetryMirrorX,
-                                        selfSymmetryMirrorY,
-                                        selfSymmetryMirrorZ,
-                                        selfSymmetryMirrorDir);
-          if (selfSymmetryMirrorEdgeValid) {
-            selfSymmetryMirrorPrevEdge =
-                hasSelfSymmetryPrevPlanarEdge(
-                    selfSymmetryMirrorX, selfSymmetryMirrorY,
-                    selfSymmetryMirrorZ, selfSymmetryMirrorDir);
-          }
-          if (!selfSymmetryMirrorEdgeValid || !selfSymmetryMirrorPrevEdge) {
-            stepCost += 128 * edgeLength;
+      if (isSelfSymmetryCardinalDir(dir)) {
+        selfSymmetryEdgeSide =
+            getSelfSymmetryEdgeSide(this, selfSymmetryAxisCtx, gridX, gridY, dir);
+        if (grWorker->isSelfSymmetryAuto() &&
+            selfSymmetryEdgeSide == -selfSymmetryLeadSide) {
+          stepCost = saturateSelfSymmetryCost(
+              (unsigned long long)stepCost * 64);
+        } else if (grWorker->isSelfSymmetryAuto() &&
+                   selfSymmetryEdgeSide == 0) {
+          stepCost = saturateSelfSymmetryCost(
+              (unsigned long long)stepCost / 16);
+        } else if (grWorker->isSelfSymmetryMirror()) {
+          if (selfSymmetryEdgeSide == selfSymmetryLeadSide ||
+              selfSymmetryEdgeSide == 0) {
+            auto hasPrevEdge =
+                hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ, dir);
+            if (!hasPrevEdge) {
+              stepCost += BLOCKCOST * edgeLength * 100;
+            }
+          } else if (selfSymmetryEdgeSide == -selfSymmetryLeadSide) {
+            selfSymmetryMirrorEdgeValid =
+                getSelfSymmetryMirrorEdge(this, activeNet, gridX, gridY, gridZ,
+                                          dir, selfSymmetryMirrorX,
+                                          selfSymmetryMirrorY,
+                                          selfSymmetryMirrorZ,
+                                          selfSymmetryMirrorDir);
+            if (selfSymmetryMirrorEdgeValid) {
+              selfSymmetryMirrorPrevEdge =
+                  hasSelfSymmetryPrevPlanarEdge(
+                      selfSymmetryMirrorX, selfSymmetryMirrorY,
+                      selfSymmetryMirrorZ, selfSymmetryMirrorDir);
+            }
+            if (!selfSymmetryMirrorEdgeValid || !selfSymmetryMirrorPrevEdge) {
+              stepCost += 128 * edgeLength;
+            }
           }
         }
+      } else if (grWorker->isSelfSymmetryAuto() &&
+                 (dir == frDirEnum::U || dir == frDirEnum::D) &&
+                 isSelfSymmetryAxisGCell(this, selfSymmetryAxisCtx, gridX,
+                                         gridY)) {
+        stepCost = saturateSelfSymmetryCost(
+            (unsigned long long)stepCost / 16);
       }
     }
   }

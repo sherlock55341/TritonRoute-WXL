@@ -48,11 +48,18 @@ to the path cost.
 ## Auto Pass
 
 In `Auto` mode, the router is allowed to explore normally, but mirror-side
-planar edges are made more expensive:
+planar edges are made more expensive, while axis planar edges and axis vias are
+discounted:
 
 ```text
 if edgeSide == mirrorSide:
-  stepCost *= 4
+  stepCost *= 64
+
+if planar edgeSide == axis:
+  stepCost /= 16
+
+if via is on the axis gcell:
+  stepCost /= 16
 ```
 
 Design intent:
@@ -60,14 +67,25 @@ Design intent:
 - Prefer the lead side and the symmetry axis during the first route.
 - Do not forbid mirror-side edges, because congestion or blockages may still
   require them.
-- Keep axis routing cheap in auto mode. If the auto pass used the axis, the
-  mirror pass should later recognize it as previous route and preserve that low
-  effective cost.
+- Make axis routing significantly cheap in auto mode. If the auto pass used the
+  axis, the mirror pass should later recognize it as previous route and preserve
+  that low effective cost.
+
+## Search-Repair Participation
+
+In `ripupMode == 1`, self-symmetric nets must enter every search-repair pass,
+even when `mazeNetHasCong()` is false. Otherwise a clean but topologically bad
+route would never see the self-symmetry cost bias.
+
+When a self-symmetric `grNet` is added to the reroute queue, both the `grNet`
+and its owning `frNet` must be marked modified. `FlexGRWorker::end()` only
+writes modified nets back to the top-level GR shapes; without this flag the maze
+can find a better axis route while the stage guide still shows the old route.
 
 ## Mirror Pass
 
 Before ripping up a self-symmetric net in mirror mode, the worker records the
-previous planar route edges in `selfSymmetryPrevPlanarEdges`. The mirror pass
+previous planar route edges in grid graph previous-edge bits. The mirror pass
 then uses that previous route as the reference.
 
 Mirror-mode step adjustments:
@@ -118,11 +136,12 @@ geometry makes an already-routed axis segment incorrectly expensive.
 
 The main auto/mirror planar edge rules are not gated by `is2D()`. They apply in
 both 2D and 3D GR whenever the candidate direction is `E`, `N`, `S`, or `W` and
-the active net has a self-symmetry constraint.
+the active net has a self-symmetry constraint. In 3D auto mode, vias on the axis
+gcell also get the same 1/16 discount.
 
-Via moves are not classified as lead/axis/mirror edges by this logic. There is a
-separate 3D-only self-symmetry penalty at `VIA_ACCESS_LAYERNUM` that discourages
-M1/via access for self-symmetric nets:
+Via moves are not classified as lead/axis/mirror edges by the planar edge-side
+logic. There is a separate 3D-only self-symmetry penalty at
+`VIA_ACCESS_LAYERNUM` that discourages M1/via access for self-symmetric nets:
 
 ```text
 if !is2D() and layer == VIA_ACCESS_LAYERNUM:
@@ -140,5 +159,5 @@ This is independent of the mirror-side edge penalty.
   classified relative to the active net axis.
 - Keep the auto pass permissive: it should bias the route, not hard-fail when
   the preferred side is blocked.
-- Keep the mirror pass tied to `selfSymmetryPrevPlanarEdges`; that previous
-  route is the contract between auto and mirror.
+- Keep the mirror pass tied to the recorded previous planar edge bits; that
+  previous route is the contract between auto and mirror.

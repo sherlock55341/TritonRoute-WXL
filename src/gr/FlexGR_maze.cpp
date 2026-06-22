@@ -75,7 +75,10 @@ void FlexGRWorker::route() {
     route_getRerouteNets(rerouteNets);
     for (auto net: rerouteNets) {
       if (ripupMode == 0 ||
-          (ripupMode == 1 && (isSelfSymmetryMirror() || mazeNetHasCong(net)))) {
+          (ripupMode == 1 && (isSelfSymmetryMirror() ||
+                              (net->getFrNet() &&
+                               net->getFrNet()->getSelfSymmetryConstraintPtr()) ||
+                              mazeNetHasCong(net)))) {
         mazeNetInit(net);
         bool isRouted = routeNet(net);
       }
@@ -179,11 +182,14 @@ void FlexGRWorker::route_getRerouteNets(vector<grNet*> &rerouteNets) {
     }
   } else if (ripupMode == 1) {
     for (auto &net: nets) {
-      if (isTarget(net->getFrNet()) && !net->isTrivial()) {
+      auto frNet = net->getFrNet();
+      bool isSelfSymmetryNet =
+          frNet && frNet->getSelfSymmetryConstraintPtr();
+      if (isTarget(frNet) && !net->isTrivial()) {
         rerouteNets.push_back(net.get());
-        if (isSelfSymmetryMirror()) {
+        if (isSelfSymmetryMirror() || isSelfSymmetryNet) {
           net->setModified(true);
-          net->getFrNet()->setModified(true);
+          frNet->setModified(true);
         }
       }
     }
