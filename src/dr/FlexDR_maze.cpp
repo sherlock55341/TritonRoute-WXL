@@ -2705,6 +2705,9 @@ void FlexDRWorker::route_queue_main(deque<pair<frBlockObject*, pair<bool, int> >
 
     if (obj->typeId() == drcNet && doRoute) {
       auto net = static_cast<drNet*>(obj);
+      if (route_queue_isSelfSymmetryRipupLocked(net)) {
+        continue;
+      }
       if (numReroute != net->getNumReroutes()) {
         // isRouteSkipped = true;
         // cout << "  skip route " << net->getFrNet()->getName() << "\n";
