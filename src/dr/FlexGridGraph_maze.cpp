@@ -33,6 +33,206 @@
 using namespace std;
 using namespace fr;
 
+namespace {
+
+  bool isSelfSymmetryCardinalDir(frDirEnum dir) {
+    return dir == frDirEnum::E || dir == frDirEnum::N ||
+           dir == frDirEnum::S || dir == frDirEnum::W;
+  }
+
+  unsigned long long getInvalidMirrorPenalty(long long edgeLen) {
+    return (unsigned long long)std::max(1ll, edgeLen) *
+           ((unsigned long long)MARKERCOST * 8);
+  }
+
+  bool getSelfSymmetryEdgePoints(FlexGridGraph* gridGraph,
+                                 frMIdx x,
+                                 frMIdx y,
+                                 frDirEnum dir,
+                                 frPoint &begin,
+                                 frPoint &end) {
+    if (!gridGraph || !isSelfSymmetryCardinalDir(dir)) {
+      return false;
+    }
+
+    frMIdx xDim = 0;
+    frMIdx yDim = 0;
+    frMIdx zDim = 0;
+    gridGraph->getDim(xDim, yDim, zDim);
+    if (x < 0 || x >= xDim || y < 0 || y >= yDim) {
+      return false;
+    }
+
+    auto x2 = x;
+    auto y2 = y;
+    switch (dir) {
+      case frDirEnum::E:
+        ++x2;
+        break;
+      case frDirEnum::S:
+        --y2;
+        break;
+      case frDirEnum::W:
+        --x2;
+        break;
+      case frDirEnum::N:
+        ++y2;
+        break;
+      default:
+        return false;
+    }
+    if (x2 < 0 || x2 >= xDim || y2 < 0 || y2 >= yDim) {
+      return false;
+    }
+
+    gridGraph->getPoint(begin, x, y);
+    gridGraph->getPoint(end, x2, y2);
+    return true;
+  }
+
+  frCoord getSelfSymmetryAxisCoord(const frPoint &point,
+                                   bool axisHorizontal) {
+    return axisHorizontal ? point.y() : point.x();
+  }
+
+  int getSelfSymmetryEdgeSide(FlexGridGraph* gridGraph,
+                              bool axisHorizontal,
+                              frCoord axis,
+                              frMIdx x,
+                              frMIdx y,
+                              frDirEnum dir) {
+    frPoint begin;
+    frPoint end;
+    if (!getSelfSymmetryEdgePoints(gridGraph, x, y, dir, begin, end)) {
+      return 0;
+    }
+
+    auto getSide = [axis](frCoord coord) {
+      if (coord < axis) {
+        return -1;
+      }
+      if (coord > axis) {
+        return 1;
+      }
+      return 0;
+    };
+    auto beginSide = getSide(getSelfSymmetryAxisCoord(begin, axisHorizontal));
+    auto endSide = getSide(getSelfSymmetryAxisCoord(end, axisHorizontal));
+    if (beginSide != 0 && (endSide == 0 || endSide == beginSide)) {
+      return beginSide;
+    }
+    if (endSide != 0 && beginSide == 0) {
+      return endSide;
+    }
+    return 0;
+  }
+
+  bool getSelfSymmetryMirrorCoord(frCoord coord,
+                                  frCoord axis,
+                                  frCoord &mirrorCoord) {
+    auto mirrored = (long long)axis * 2 - coord;
+    if (mirrored < std::numeric_limits<frCoord>::min() ||
+        mirrored > std::numeric_limits<frCoord>::max()) {
+      return false;
+    }
+    mirrorCoord = (frCoord)mirrored;
+    return true;
+  }
+
+  bool getSelfSymmetryMirrorPoint(const frPoint &point,
+                                  bool axisHorizontal,
+                                  frCoord axis,
+                                  frPoint &mirrorPoint) {
+    frCoord mirrorCoord = 0;
+    if (axisHorizontal) {
+      if (!getSelfSymmetryMirrorCoord(point.y(), axis, mirrorCoord)) {
+        return false;
+      }
+      mirrorPoint.set(point.x(), mirrorCoord);
+    } else {
+      if (!getSelfSymmetryMirrorCoord(point.x(), axis, mirrorCoord)) {
+        return false;
+      }
+      mirrorPoint.set(mirrorCoord, point.y());
+    }
+    return true;
+  }
+
+  bool getSelfSymmetryMirrorEdge(FlexGridGraph* gridGraph,
+                                 bool axisHorizontal,
+                                 frCoord axis,
+                                 frMIdx x,
+                                 frMIdx y,
+                                 frMIdx z,
+                                 frDirEnum dir,
+                                 frMIdx &mirrorX,
+                                 frMIdx &mirrorY,
+                                 frMIdx &mirrorZ,
+                                 frDirEnum &mirrorDir) {
+    if (!gridGraph || !isSelfSymmetryCardinalDir(dir)) {
+      return false;
+    }
+
+    frPoint begin;
+    frPoint end;
+    if (!getSelfSymmetryEdgePoints(gridGraph, x, y, dir, begin, end)) {
+      return false;
+    }
+    if (getSelfSymmetryAxisCoord(begin, axisHorizontal) == axis &&
+        getSelfSymmetryAxisCoord(end, axisHorizontal) == axis) {
+      return false;
+    }
+
+    frPoint mirrorBegin;
+    frPoint mirrorEnd;
+    if (!getSelfSymmetryMirrorPoint(begin, axisHorizontal, axis, mirrorBegin) ||
+        !getSelfSymmetryMirrorPoint(end, axisHorizontal, axis, mirrorEnd) ||
+        !gridGraph->hasMazeXIdx(mirrorBegin.x()) ||
+        !gridGraph->hasMazeYIdx(mirrorBegin.y()) ||
+        !gridGraph->hasMazeXIdx(mirrorEnd.x()) ||
+        !gridGraph->hasMazeYIdx(mirrorEnd.y())) {
+      return false;
+    }
+
+    frMIdx xDim = 0;
+    frMIdx yDim = 0;
+    frMIdx zDim = 0;
+    gridGraph->getDim(xDim, yDim, zDim);
+    if (z < 0 || z >= zDim) {
+      return false;
+    }
+
+    auto beginX = gridGraph->getMazeXIdx(mirrorBegin.x());
+    auto beginY = gridGraph->getMazeYIdx(mirrorBegin.y());
+    auto endX = gridGraph->getMazeXIdx(mirrorEnd.x());
+    auto endY = gridGraph->getMazeYIdx(mirrorEnd.y());
+
+    mirrorZ = z;
+    if (beginY == endY && beginX + 1 == endX) {
+      mirrorX = beginX;
+      mirrorY = beginY;
+      mirrorDir = frDirEnum::E;
+    } else if (beginY == endY && endX + 1 == beginX) {
+      mirrorX = endX;
+      mirrorY = endY;
+      mirrorDir = frDirEnum::E;
+    } else if (beginX == endX && beginY + 1 == endY) {
+      mirrorX = beginX;
+      mirrorY = beginY;
+      mirrorDir = frDirEnum::N;
+    } else if (beginX == endX && endY + 1 == beginY) {
+      mirrorX = endX;
+      mirrorY = endY;
+      mirrorDir = frDirEnum::N;
+    } else {
+      return false;
+    }
+
+    return gridGraph->hasEdge(mirrorX, mirrorY, mirrorZ, mirrorDir);
+  }
+
+}
+
 /*inline*/ void FlexGridGraph::expand(FlexWavefrontGrid &currGrid, const frDirEnum &dir, 
                                       const FlexMazeIdx &dstMazeIdx1, const FlexMazeIdx &dstMazeIdx2,
                                       const frPoint &centerPt) {
@@ -656,6 +856,9 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
 
   // temporarily disable guideCost
   auto edgeLength = getEdgeLength(gridX, gridY, gridZ, dir);
+  const bool useMirrorCost = selfSymmetrySearch && drWorker &&
+                             drWorker->getDRIter() >= 3 &&
+                             drWorker->getDRIter() <= 5;
   auto stepCost = edgeLength
                   + (gridCost   ? GRIDCOST     * edgeLength      : 0)
                   + (drcCost    ? ggDRCCost    * edgeLength      : 0)
@@ -664,7 +867,47 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
                   + (shapeCost  ? SHAPECOST    * edgeLength      : 0)
                   + (blockCost  ? BLOCKCOST    * pathWidth * 20 : 0)
                   + (!guideCost ? GUIDECOST    * edgeLength      : 0);
-  if (selfSymmetrySearch) {
+  int selfSymmetryEdgeSide = 0;
+  constexpr int selfSymmetryLeadSide = -1;
+  bool selfSymmetryMirrorEdgeValid = false;
+  bool selfSymmetryMirrorPrevEdge = false;
+  frMIdx selfSymmetryMirrorX = 0;
+  frMIdx selfSymmetryMirrorY = 0;
+  frMIdx selfSymmetryMirrorZ = 0;
+  frDirEnum selfSymmetryMirrorDir = frDirEnum::UNKNOWN;
+  if (useMirrorCost && isSelfSymmetryCardinalDir(dir)) {
+    selfSymmetryEdgeSide =
+        getSelfSymmetryEdgeSide(this, selfSymmetryAxisHorizontal,
+                                selfSymmetryAxis, gridX, gridY, dir);
+    if (selfSymmetryEdgeSide == selfSymmetryLeadSide ||
+        selfSymmetryEdgeSide == 0) {
+      if (!hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ, dir)) {
+        stepCost = saturateSelfSymmetryCost(
+            (unsigned long long)stepCost +
+            (unsigned long long)BLOCKCOST * edgeLength * 100);
+      }
+    } else if (selfSymmetryEdgeSide == -selfSymmetryLeadSide) {
+      selfSymmetryMirrorEdgeValid =
+          getSelfSymmetryMirrorEdge(this, selfSymmetryAxisHorizontal,
+                                    selfSymmetryAxis, gridX, gridY, gridZ,
+                                    dir, selfSymmetryMirrorX,
+                                    selfSymmetryMirrorY,
+                                    selfSymmetryMirrorZ,
+                                    selfSymmetryMirrorDir);
+      if (selfSymmetryMirrorEdgeValid) {
+        selfSymmetryMirrorPrevEdge =
+            hasSelfSymmetryPrevPlanarEdge(selfSymmetryMirrorX,
+                                          selfSymmetryMirrorY,
+                                          selfSymmetryMirrorZ,
+                                          selfSymmetryMirrorDir);
+      }
+      if (!selfSymmetryMirrorEdgeValid || !selfSymmetryMirrorPrevEdge) {
+        stepCost = saturateSelfSymmetryCost(
+            (unsigned long long)stepCost +
+            (unsigned long long)128 * edgeLength);
+      }
+    }
+  } else if (selfSymmetrySearch && !useMirrorCost) {
     frPoint currPt;
     getPoint(currPt, gridX, gridY);
     bool isAxisEdge = false;
@@ -682,6 +925,41 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
     }
   }
   nextPathCost += stepCost;
+  if (useMirrorCost && isSelfSymmetryCardinalDir(dir) &&
+      selfSymmetryEdgeSide == -selfSymmetryLeadSide) {
+    if (selfSymmetryMirrorEdgeValid) {
+      auto mirrorEdgeLength =
+          getEdgeLength(selfSymmetryMirrorX, selfSymmetryMirrorY,
+                        selfSymmetryMirrorZ, selfSymmetryMirrorDir);
+      auto mirrorPathWidth = getDesign()->getTech()
+          ->getLayer(getLayerNum(selfSymmetryMirrorZ))->getWidth();
+      unsigned long long mirrorCost =
+          (hasGridCost(selfSymmetryMirrorX, selfSymmetryMirrorY,
+                       selfSymmetryMirrorZ, selfSymmetryMirrorDir) ?
+               (unsigned long long)GRIDCOST * mirrorEdgeLength : 0) +
+          (hasDRCCost(selfSymmetryMirrorX, selfSymmetryMirrorY,
+                      selfSymmetryMirrorZ, selfSymmetryMirrorDir) ?
+               (unsigned long long)ggDRCCost * mirrorEdgeLength : 0) +
+          (hasMarkerCost(selfSymmetryMirrorX, selfSymmetryMirrorY,
+                         selfSymmetryMirrorZ, selfSymmetryMirrorDir) ?
+               (unsigned long long)ggMarkerCost * mirrorEdgeLength : 0) +
+          (hasShapeCost(selfSymmetryMirrorX, selfSymmetryMirrorY,
+                        selfSymmetryMirrorZ, selfSymmetryMirrorDir) ?
+               (unsigned long long)SHAPECOST * mirrorEdgeLength : 0) +
+          (isBlocked(selfSymmetryMirrorX, selfSymmetryMirrorY,
+                     selfSymmetryMirrorZ, selfSymmetryMirrorDir) ?
+               (unsigned long long)BLOCKCOST * mirrorPathWidth * 20 : 0) +
+          (!hasGuide(selfSymmetryMirrorX, selfSymmetryMirrorY,
+                     selfSymmetryMirrorZ, selfSymmetryMirrorDir) ?
+               (unsigned long long)GUIDECOST * mirrorEdgeLength : 0);
+      nextPathCost = saturateSelfSymmetryCost(
+          (unsigned long long)nextPathCost + mirrorCost);
+    } else {
+      nextPathCost = saturateSelfSymmetryCost(
+          (unsigned long long)nextPathCost +
+          getInvalidMirrorPenalty(edgeLength));
+    }
+  }
   if (enableOutput) {
     cout <<"edge grid/shape/drc/marker/blk/length = " 
          <<hasGridCost(gridX, gridY, gridZ, dir)   <<"/"
