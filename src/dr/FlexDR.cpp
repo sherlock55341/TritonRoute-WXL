@@ -145,6 +145,63 @@ int FlexDRWorker::main_mt() {
   return 0;
 }
 
+void FlexDR::updateSelfSymmetryPathSegCaches() {
+  auto getSide = [](frCoord coord, frCoord axis) {
+    if (coord < axis) {
+      return -1;
+    }
+    if (coord > axis) {
+      return 1;
+    }
+    return 0;
+  };
+  auto mirrorPoint = [](const frPoint &point,
+                        bool axisHorizontal,
+                        frCoord axis) {
+    frPoint mirroredPoint;
+    if (axisHorizontal) {
+      mirroredPoint.set(point.x(), axis + (axis - point.y()));
+    } else {
+      mirroredPoint.set(axis + (axis - point.x()), point.y());
+    }
+    return mirroredPoint;
+  };
+
+  for (auto &uNet: getDesign()->getTopBlock()->getNets()) {
+    auto net = uNet.get();
+    net->clearSelfSymmetryPathSegs();
+    auto constraint = net->getSelfSymmetryConstraintPtr();
+    if (!constraint) {
+      continue;
+    }
+
+    for (auto &shape: net->getShapes()) {
+      if (shape->typeId() != frcPathSeg) {
+        continue;
+      }
+      auto pathSeg = static_cast<frPathSeg*>(shape.get());
+      frPoint begin;
+      frPoint end;
+      pathSeg->getPoints(begin, end);
+      auto beginCoord = constraint->isAxisHorizontal ? begin.y() : begin.x();
+      auto endCoord = constraint->isAxisHorizontal ? end.y() : end.x();
+      auto beginSide = getSide(beginCoord, constraint->axis);
+      auto endSide = getSide(endCoord, constraint->axis);
+      if ((beginSide == -1 && endSide <= 0) ||
+          (endSide == -1 && beginSide == 0)) {
+        net->addSelfSymmetryPathSeg(*pathSeg);
+        frPathSeg mirroredPathSeg(*pathSeg);
+        mirroredPathSeg.setPoints(
+            mirrorPoint(begin, constraint->isAxisHorizontal, constraint->axis),
+            mirrorPoint(end, constraint->isAxisHorizontal, constraint->axis));
+        net->addSelfSymmetryPathSeg(mirroredPathSeg);
+      } else if (beginSide == 0 || endSide == 0 || beginSide != endSide) {
+        net->addSelfSymmetryPathSeg(*pathSeg);
+      }
+    }
+  }
+}
+
 void FlexDR::initFromTA() {
   bool enableOutput = false;
   // initialize lists
@@ -2075,6 +2132,7 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     }
   }
   checkConnectivity(iter);
+  updateSelfSymmetryPathSegCaches();
   numViols.push_back(getDesign()->getTopBlock()->getNumMarkers());
   if (VERBOSE > 0) {
     if (enableDRC) {
@@ -2515,4 +2573,3 @@ int FlexDR::main() {
   }
   return 0;
 }
-

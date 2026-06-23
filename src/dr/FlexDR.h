@@ -119,6 +119,7 @@ namespace fr {
     void init_via2turnMinLen();
 
     void removeGCell2BoundaryPin();
+    void updateSelfSymmetryPathSegCaches();
     void checkConnectivity(int iter = -1);
     void checkConnectivity_initDRObjs(frNet* net, std::vector<frConnFig*> &netDRObjs);
     void checkConnectivity_pin2epMap(frNet* net, std::vector<frConnFig*> &netDRObjs,
