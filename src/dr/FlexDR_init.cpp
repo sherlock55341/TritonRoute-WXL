@@ -32,6 +32,38 @@
 using namespace std;
 using namespace fr;
 
+namespace {
+bool clipPathSegToBox(frPoint &bp, frPoint &ep, const frBox &box) {
+  if (bp.x() == ep.x()) {
+    if (bp.x() < box.left() || bp.x() > box.right()) {
+      return false;
+    }
+    auto low = max(min(bp.y(), ep.y()), box.bottom());
+    auto high = min(max(bp.y(), ep.y()), box.top());
+    if (low >= high) {
+      return false;
+    }
+    bp.set(bp.x(), low);
+    ep.set(bp.x(), high);
+    return true;
+  }
+  if (bp.y() == ep.y()) {
+    if (bp.y() < box.bottom() || bp.y() > box.top()) {
+      return false;
+    }
+    auto low = max(min(bp.x(), ep.x()), box.left());
+    auto high = min(max(bp.x(), ep.x()), box.right());
+    if (low >= high) {
+      return false;
+    }
+    bp.set(low, bp.y());
+    ep.set(high, bp.y());
+    return true;
+  }
+  return false;
+}
+}
+
 void FlexDRWorker::initNetObjs_pathSeg(frPathSeg* pathSeg,
                                        set<frNet*, frBlockObjectComp> &nets, 
                                        map<frNet*, vector<unique_ptr<drConnFig> >, frBlockObjectComp> &netRouteObjs,
@@ -2457,6 +2489,77 @@ void FlexDRWorker::initTrackCoords_route(drNet* net,
                                          map<frCoord, map<frLayerNum, frTrackPattern*> > &yMap) {
   //auto rbox = getRouteBox();
   //auto ebox = getExtBox();
+  auto addPathSegTrackCoords = [&](const frPoint &bp,
+                                   const frPoint &ep,
+                                   frLayerNum lNum) {
+    // vertical
+    if (bp.x() == ep.x()) {
+      // non pref dir
+      if (getTech()->getLayer(lNum)->getDir() == frcHorzPrefRoutingDir) {
+        if (lNum + 2 <= getTech()->getTopLayerNum()) {
+          xMap[bp.x()][lNum + 2] = nullptr; // default add track to upper layer
+        } else if (lNum - 2 >= getTech()->getBottomLayerNum()) {
+          xMap[bp.x()][lNum - 2] = nullptr;
+        } else {
+          cout <<"Error: initTrackCoords cannot add non-pref track" <<endl;
+        }
+        // add bp, ep
+        //if (!isInitDR()) {
+          yMap[bp.y()][lNum] = nullptr;
+          yMap[ep.y()][lNum] = nullptr;
+        //}
+      // pref dir 
+      } else {
+        xMap[bp.x()][lNum] = nullptr;
+        // add bp, ep
+        //if (!isInitDR()) {
+          if (lNum + 2 <= getTech()->getTopLayerNum()) {
+            yMap[bp.y()][lNum + 2] = nullptr; // default add track to upper layer
+            yMap[ep.y()][lNum + 2] = nullptr; // default add track to upper layer
+          } else if (lNum - 2 >= getTech()->getBottomLayerNum()) {
+            yMap[bp.y()][lNum - 2] = nullptr;
+            yMap[ep.y()][lNum - 2] = nullptr;
+          } else {
+            cout <<"Error: initTrackCoords cannot add non-pref track" <<endl;
+          }
+        //}
+      }
+    // horizontal
+    } else if (bp.y() == ep.y()) {
+      // non pref dir
+      if (getTech()->getLayer(lNum)->getDir() == frcVertPrefRoutingDir) {
+        if (lNum + 2 <= getTech()->getTopLayerNum()) {
+          yMap[bp.y()][lNum + 2] = nullptr;
+        } else if (lNum - 2 >= getTech()->getBottomLayerNum()) {
+          yMap[bp.y()][lNum - 2] = nullptr;
+        } else {
+          cout <<"Error: initTrackCoords cannot add non-pref track" <<endl;
+        }
+        // add bp, ep
+        //if (!isInitDR()) {
+          xMap[bp.x()][lNum] = nullptr;
+          xMap[ep.x()][lNum] = nullptr;
+        //}
+      } else {
+        yMap[bp.y()][lNum] = nullptr;
+        // add bp, ep
+        //if (!isInitDR()) {
+          if (lNum + 2 <= getTech()->getTopLayerNum()) {
+            xMap[bp.x()][lNum + 2] = nullptr; // default add track to upper layer
+            xMap[ep.x()][lNum + 2] = nullptr; // default add track to upper layer
+          } else if (lNum - 2 >= getTech()->getBottomLayerNum()) {
+            xMap[bp.x()][lNum - 2] = nullptr;
+            xMap[ep.x()][lNum - 2] = nullptr;
+          } else {
+            cout <<"Error: initTrackCoords cannot add non-pref track" <<endl;
+          }
+        //}
+      }
+    } else {
+      cout <<"Error: initTrackCoords non-colinear pathseg" <<endl;
+    }
+  };
+
   // add for routes
   vector<drConnFig*> allObjs;
   for (auto &uConnFig: net->getExtConnFigs()) {
@@ -2471,71 +2574,7 @@ void FlexDRWorker::initTrackCoords_route(drNet* net,
       auto obj = static_cast<drPathSeg*>(uConnFig);
       frPoint bp, ep;
       obj->getPoints(bp, ep);
-      auto lNum = obj->getLayerNum();
-      // vertical
-      if (bp.x() == ep.x()) {
-        // non pref dir
-        if (getTech()->getLayer(lNum)->getDir() == frcHorzPrefRoutingDir) {
-          if (lNum + 2 <= getTech()->getTopLayerNum()) {
-            xMap[bp.x()][lNum + 2] = nullptr; // default add track to upper layer
-          } else if (lNum - 2 >= getTech()->getBottomLayerNum()) {
-            xMap[bp.x()][lNum - 2] = nullptr;
-          } else {
-            cout <<"Error: initTrackCoords cannot add non-pref track" <<endl;
-          }
-          // add bp, ep
-          //if (!isInitDR()) {
-            yMap[bp.y()][lNum] = nullptr;
-            yMap[ep.y()][lNum] = nullptr;
-          //}
-        // pref dir 
-        } else {
-          xMap[bp.x()][lNum] = nullptr;
-          // add bp, ep
-          //if (!isInitDR()) {
-            if (lNum + 2 <= getTech()->getTopLayerNum()) {
-              yMap[bp.y()][lNum + 2] = nullptr; // default add track to upper layer
-              yMap[ep.y()][lNum + 2] = nullptr; // default add track to upper layer
-            } else if (lNum - 2 >= getTech()->getBottomLayerNum()) {
-              yMap[bp.y()][lNum - 2] = nullptr;
-              yMap[ep.y()][lNum - 2] = nullptr;
-            } else {
-              cout <<"Error: initTrackCoords cannot add non-pref track" <<endl;
-            }
-          //}
-        }
-      // horizontal
-      } else {
-        // non pref dir
-        if (getTech()->getLayer(lNum)->getDir() == frcVertPrefRoutingDir) {
-          if (lNum + 2 <= getTech()->getTopLayerNum()) {
-            yMap[bp.y()][lNum + 2] = nullptr;
-          } else if (lNum - 2 >= getTech()->getBottomLayerNum()) {
-            yMap[bp.y()][lNum - 2] = nullptr;
-          } else {
-            cout <<"Error: initTrackCoords cannot add non-pref track" <<endl;
-          }
-          // add bp, ep
-          //if (!isInitDR()) {
-            xMap[bp.x()][lNum] = nullptr;
-            xMap[ep.x()][lNum] = nullptr;
-          //}
-        } else {
-          yMap[bp.y()][lNum] = nullptr;
-          // add bp, ep
-          //if (!isInitDR()) {
-            if (lNum + 2 <= getTech()->getTopLayerNum()) {
-              xMap[bp.x()][lNum + 2] = nullptr; // default add track to upper layer
-              xMap[ep.x()][lNum + 2] = nullptr; // default add track to upper layer
-            } else if (lNum - 2 >= getTech()->getBottomLayerNum()) {
-              xMap[bp.x()][lNum - 2] = nullptr;
-              xMap[ep.x()][lNum - 2] = nullptr;
-            } else {
-              cout <<"Error: initTrackCoords cannot add non-pref track" <<endl;
-            }
-          //}
-        }
-      }
+      addPathSegTrackCoords(bp, ep, obj->getLayerNum());
     } else if (uConnFig->typeId() == drcVia) {
       auto obj = static_cast<drVia*>(uConnFig);
       frPoint pt;
@@ -2559,6 +2598,18 @@ void FlexDRWorker::initTrackCoords_route(drNet* net,
     } else {
       cout <<"Error: initTrackCoords unsupported type" <<endl;
     }
+  }
+
+  if (!net->getFrNet() || !net->getFrNet()->getSelfSymmetryConstraintPtr()) {
+    return;
+  }
+  for (auto &pathSeg: net->getFrNet()->getSelfSymmetryPathSegs()) {
+    frPoint bp, ep;
+    pathSeg.getPoints(bp, ep);
+    if (!clipPathSegToBox(bp, ep, getExtBox())) {
+      continue;
+    }
+    addPathSegTrackCoords(bp, ep, pathSeg.getLayerNum());
   }
 }
     
