@@ -668,21 +668,9 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
   const bool usePrevEdgeCost = selfSymmetrySearch && drWorker &&
                                drWorker->getDRIter() >= 3 &&
                                drWorker->getDRIter() <= 5;
-  auto stepCost = edgeLength
-                  + (gridCost   ? GRIDCOST     * edgeLength      : 0)
-                  + (drcCost    ? ggDRCCost    * edgeLength      : 0)
-                  + (markerCost ? ggMarkerCost * edgeLength      : 0)
-                  // + (markerCost ? ggMarkerCost     * pathWidth                               : 0)
-                  + (shapeCost  ? SHAPECOST    * edgeLength      : 0)
-                  + (blockCost  ? BLOCKCOST    * pathWidth * 20 : 0)
-                  + (!guideCost ? GUIDECOST    * edgeLength      : 0);
-  if (usePrevEdgeCost && isSelfSymmetryCardinalDir(dir)) {
-    if (!hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ, dir)) {
-      stepCost = saturateSelfSymmetryCost(
-          (unsigned long long)stepCost +
-          (unsigned long long)BLOCKCOST * edgeLength * 100);
-    }
-  } else if (selfSymmetrySearch && drWorker && drWorker->getDRIter() <= 2) {
+  auto baseCost = edgeLength;
+  if (!usePrevEdgeCost && selfSymmetrySearch && drWorker &&
+      drWorker->getDRIter() <= 2) {
     frPoint currPt;
     getPoint(currPt, gridX, gridY);
     bool isAxisEdge = false;
@@ -696,7 +684,32 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
                     dir == frDirEnum::U || dir == frDirEnum::D);
     }
     if (isAxisEdge) {
-      stepCost /= 16;
+      if (dir == frDirEnum::U || dir == frDirEnum::D) {
+        baseCost /= 8;
+      } else {
+        auto layerDir = getDesign()->getTech()->getLayer(lNum)->getDir();
+        bool isPrefDir =
+            (layerDir == frPrefRoutingDirEnum::frcHorzPrefRoutingDir &&
+             (dir == frDirEnum::E || dir == frDirEnum::W)) ||
+            (layerDir == frPrefRoutingDirEnum::frcVertPrefRoutingDir &&
+             (dir == frDirEnum::N || dir == frDirEnum::S));
+        baseCost /= isPrefDir ? 8 : 2;
+      }
+    }
+  }
+  auto stepCost = baseCost
+                  + (gridCost   ? GRIDCOST     * edgeLength      : 0)
+                  + (drcCost    ? ggDRCCost    * edgeLength      : 0)
+                  + (markerCost ? ggMarkerCost * edgeLength      : 0)
+                  // + (markerCost ? ggMarkerCost     * pathWidth                               : 0)
+                  + (shapeCost  ? SHAPECOST    * edgeLength      : 0)
+                  + (blockCost  ? BLOCKCOST    * pathWidth * 20 : 0)
+                  + (!usePrevEdgeCost && !guideCost ? GUIDECOST * edgeLength : 0);
+  if (usePrevEdgeCost && isSelfSymmetryCardinalDir(dir)) {
+    if (!hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ, dir)) {
+      stepCost = saturateSelfSymmetryCost(
+          (unsigned long long)stepCost +
+          (unsigned long long)BLOCKCOST * edgeLength * 100);
     }
   }
   nextPathCost += stepCost;

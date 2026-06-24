@@ -4061,6 +4061,20 @@ void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, 
     for (auto &marker: markers) {
       route_queue_update_from_marker(&marker, uniqueVictims, uniqueAggressors, checks, routes);
     }
+    if (getDRIter() >= 3 && getDRIter() <= 5) {
+      for (auto &net: nets) {
+        auto frNet = net->getFrNet();
+        if (frNet && frNet->getSelfSymmetryConstraintPtr() &&
+            net->getNumReroutes() < getMazeEndIter()) {
+          auto route = make_pair(
+              static_cast<frBlockObject*>(net.get()),
+              make_pair(true, net->getNumReroutes()));
+          if (find(routes.begin(), routes.end(), route) == routes.end()) {
+            routes.push_back(route);
+          }
+        }
+      }
+    }
   } else if (getRipupMode() == 1 || getRipupMode() == 2) {
     // ripup all nets and clear objs here
     // nets are ripped up during initNets()
