@@ -115,10 +115,21 @@ namespace {
              << " is outside die box " << dieBox << "\n";
         exit(1);
       }
+      auto snappedAxis = axis;
+      if (!findNearestSelfSymmetryRoutingTrack(design,
+                                               isHorizontal,
+                                               axis,
+                                               &dieBox,
+                                               snappedAxis)) {
+        cout << "Error: " << net->getName() << " self-symmetry axis "
+             << axisName << "=" << axis
+             << " has no routing track inside die box " << dieBox << "\n";
+        exit(1);
+      }
 
       frSelfSymmetryConstraint selfSymmetryConstraint;
       selfSymmetryConstraint.isAxisHorizontal = isHorizontal;
-      selfSymmetryConstraint.axis = axis;
+      selfSymmetryConstraint.axis = snappedAxis;
       net->setSelfSymmetryConstraint(selfSymmetryConstraint);
       net->setConstraint(frNetRoutingConstraint::frcSelfSymmetry);
     }

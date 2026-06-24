@@ -852,11 +852,6 @@ bool FlexGridGraph::search(drNet* net, vector<FlexMazeIdx> &connComps, drPin* ne
     selfSymmetrySearch = true;
     selfSymmetryAxisHorizontal = constraint.isAxisHorizontal;
     selfSymmetryAxis = constraint.axis;
-    findNearestSelfSymmetryRoutingTrack(getDesign(),
-                                        constraint.isAxisHorizontal,
-                                        constraint.axis,
-                                        nullptr,
-                                        selfSymmetryAxis);
   }
 
   // prep nextPinBox

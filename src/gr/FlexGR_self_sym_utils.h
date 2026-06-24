@@ -161,11 +161,8 @@ namespace fr {
 
   struct SelfSymmetryAxisContext {
     bool valid = false;
-    bool axisSnapFailed = false;
     bool isAxisHorizontal = false;
-    frCoord originalAxis = 0;
     frCoord axis = 0;
-    frCoord axisSnapDelta = 0;
     frCoord axisGCellIdx = 0;
 
     static SelfSymmetryAxisContext fromAxisProbe(
@@ -177,27 +174,17 @@ namespace fr {
       if (block == nullptr) {
         return ctx;
       }
-      frCoord effectiveAxis = constraint.axis;
-      if (!findNearestSelfSymmetryRoutingTrack(design,
-                                               constraint.isAxisHorizontal,
-                                               constraint.axis,
-                                               nullptr,
-                                               effectiveAxis)) {
-        ctx.axisSnapFailed = true;
-      }
       frPoint effectiveAxisProbe(axisProbe);
       if (constraint.isAxisHorizontal) {
-        effectiveAxisProbe.set(axisProbe.x(), effectiveAxis);
+        effectiveAxisProbe.set(axisProbe.x(), constraint.axis);
       } else {
-        effectiveAxisProbe.set(effectiveAxis, axisProbe.y());
+        effectiveAxisProbe.set(constraint.axis, axisProbe.y());
       }
       frPoint axisGCellLocation;
       block->getGCellIdx(effectiveAxisProbe, axisGCellLocation);
       ctx.valid = true;
       ctx.isAxisHorizontal = constraint.isAxisHorizontal;
-      ctx.originalAxis = constraint.axis;
-      ctx.axis = effectiveAxis;
-      ctx.axisSnapDelta = ctx.axis - ctx.originalAxis;
+      ctx.axis = constraint.axis;
       ctx.axisGCellIdx = constraint.isAxisHorizontal ?
                          axisGCellLocation.y() :
                          axisGCellLocation.x();
