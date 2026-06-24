@@ -93,6 +93,8 @@ namespace fr {
     void initFLUTE();
     bool readFLUTE_readLUT();
     bool hasSelfSymmetryNets() const;
+    void updateSelfSymmetryPathSegCaches();
+    void clearSelfSymmetryPathSegCaches();
     void initLayerPitch();
 
     void ra();

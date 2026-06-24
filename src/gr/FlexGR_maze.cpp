@@ -264,16 +264,38 @@ void FlexGRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(grNet* net) {
     return;
   }
 
-  for (auto &uptr: net->getRouteConnFigs()) {
-    if (uptr->typeId() != grcPathSeg) {
-      continue;
-    }
-    auto pathSeg = static_cast<grPathSeg*>(uptr.get());
+  for (auto &pathSeg: net->getFrNet()->getSelfSymmetryPathSegs()) {
     frPoint bp, ep;
     FlexMazeIdx bi, ei;
-    pathSeg->getPoints(bp, ep);
-    gridGraph.getMazeIdx(bp, pathSeg->getLayerNum(), bi);
-    gridGraph.getMazeIdx(ep, pathSeg->getLayerNum(), ei);
+    pathSeg.getPoints(bp, ep);
+    if (bp.x() == ep.x()) {
+      if (bp.x() < getExtBox().left() || bp.x() > getExtBox().right()) {
+        continue;
+      }
+      auto low = max(min(bp.y(), ep.y()), getExtBox().bottom());
+      auto high = min(max(bp.y(), ep.y()), getExtBox().top());
+      if (low >= high) {
+        continue;
+      }
+      bp.set(bp.x(), low);
+      ep.set(bp.x(), high);
+    } else if (bp.y() == ep.y()) {
+      if (bp.y() < getExtBox().bottom() || bp.y() > getExtBox().top()) {
+        continue;
+      }
+      auto low = max(min(bp.x(), ep.x()), getExtBox().left());
+      auto high = min(max(bp.x(), ep.x()), getExtBox().right());
+      if (low >= high) {
+        continue;
+      }
+      bp.set(low, bp.y());
+      ep.set(high, bp.y());
+    } else {
+      cout << "Error: non-colinear pathSeg in mazeNetInit_selfSymmetryPrevPlanarEdges" << endl;
+      continue;
+    }
+    gridGraph.getMazeIdx(bp, pathSeg.getLayerNum(), bi);
+    gridGraph.getMazeIdx(ep, pathSeg.getLayerNum(), ei);
 
     if (bi.x() == ei.x()) {
       for (auto yIdx = min(bi.y(), ei.y()); yIdx < max(bi.y(), ei.y()); yIdx++) {

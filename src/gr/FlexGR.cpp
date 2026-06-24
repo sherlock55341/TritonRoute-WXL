@@ -35,6 +35,7 @@
 #include <fstream>
 #include "db/grObj/grShape.h"
 #include "db/grObj/grVia.h"
+#include "gr/FlexGR_self_sym_utils.h"
 #include <cmath>
 #include "db/infra/frTime.h"
 #include <omp.h>
@@ -214,6 +215,7 @@ void FlexGR::main() {
   writeToGuide();
 
   writeGuideFile();
+  clearSelfSymmetryPathSegCaches();
 
   // end();
 }
@@ -323,6 +325,99 @@ bool FlexGR::hasSelfSymmetryNets() const {
     }
   }
   return false;
+}
+
+void FlexGR::clearSelfSymmetryPathSegCaches() {
+  auto block = design ? design->getTopBlock() : nullptr;
+  if (block == nullptr) {
+    return;
+  }
+  for (auto &uNet: block->getNets()) {
+    uNet->clearSelfSymmetryPathSegs();
+  }
+}
+
+void FlexGR::updateSelfSymmetryPathSegCaches() {
+  auto block = design ? design->getTopBlock() : nullptr;
+  if (block == nullptr) {
+    return;
+  }
+
+  frBox dieBox;
+  block->getBoundaryBBox(dieBox);
+  for (auto &uNet: block->getNets()) {
+    auto net = uNet.get();
+    net->clearSelfSymmetryPathSegs();
+    auto constraint = net->getSelfSymmetryConstraintPtr();
+    if (constraint == nullptr) {
+      continue;
+    }
+
+    frPoint axisProbe;
+    if (constraint->isAxisHorizontal) {
+      axisProbe.set(dieBox.left(), constraint->axis);
+    } else {
+      axisProbe.set(constraint->axis, dieBox.bottom());
+    }
+    auto axisCtx = SelfSymmetryAxisContext::fromAxisProbe(
+        design, *constraint, axisProbe);
+    if (!axisCtx.valid) {
+      continue;
+    }
+
+    for (auto &uShape: net->getGRShapes()) {
+      if (uShape->typeId() != grcPathSeg) {
+        continue;
+      }
+      auto shapePathSeg = static_cast<grPathSeg*>(uShape.get());
+      frPoint begin;
+      frPoint end;
+      shapePathSeg->getPoints(begin, end);
+      if (begin.x() != end.x() && begin.y() != end.y()) {
+        cout << "Error: non-colinear pathSeg in updateSelfSymmetryPathSegCaches" << endl;
+        continue;
+      }
+
+      frPoint beginGCellIdx;
+      frPoint endGCellIdx;
+      block->getGCellIdx(begin, beginGCellIdx);
+      block->getGCellIdx(end, endGCellIdx);
+      auto beginCoord = axisCtx.axisCoord(beginGCellIdx);
+      auto endCoord = axisCtx.axisCoord(endGCellIdx);
+      auto getSide = [&axisCtx](frCoord coord) {
+        if (coord < axisCtx.axisGCellIdx) {
+          return -1;
+        }
+        if (coord > axisCtx.axisGCellIdx) {
+          return 1;
+        }
+        return 0;
+      };
+      auto beginSide = getSide(beginCoord);
+      auto endSide = getSide(endCoord);
+      bool isLeadOrAxis =
+          (beginSide == -1 && endSide <= 0) ||
+          (endSide == -1 && beginSide <= 0) ||
+          beginSide == 0 || endSide == 0 ||
+          beginSide != endSide;
+      if (!isLeadOrAxis) {
+        continue;
+      }
+
+      frPathSeg cachePathSeg;
+      cachePathSeg.setPoints(begin, end);
+      cachePathSeg.setLayerNum(shapePathSeg->getLayerNum());
+      net->addSelfSymmetryPathSeg(cachePathSeg);
+
+      if ((beginSide == -1 && endSide <= 0) ||
+          (endSide == -1 && beginSide == 0)) {
+        frPathSeg mirrorPathSeg(cachePathSeg);
+        mirrorPathSeg.setPoints(axisCtx.mirrorPoint(begin),
+                                axisCtx.mirrorPoint(end));
+        net->addSelfSymmetryPathSeg(mirrorPathSeg);
+      }
+    }
+  }
 }
 
 void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter, 
@@ -467,6 +562,7 @@ void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     }
   }
 
+  updateSelfSymmetryPathSegCaches();
   t.print();
   cout << endl << flush;
 
