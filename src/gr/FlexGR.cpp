@@ -395,25 +395,34 @@ void FlexGR::updateSelfSymmetryPathSegCaches() {
       };
       auto beginSide = getSide(beginCoord);
       auto endSide = getSide(endCoord);
-      bool isLeadOrAxis =
-          (beginSide == -1 && endSide <= 0) ||
-          (endSide == -1 && beginSide <= 0) ||
-          beginSide == 0 || endSide == 0 ||
-          beginSide != endSide;
-      if (!isLeadOrAxis) {
-        continue;
-      }
 
       frPathSeg cachePathSeg;
       cachePathSeg.setPoints(begin, end);
       cachePathSeg.setLayerNum(shapePathSeg->getLayerNum());
-      net->addSelfSymmetryPathSeg(cachePathSeg);
-
-      if ((beginSide == -1 && endSide <= 0) ||
-          (endSide == -1 && beginSide == 0)) {
+      if (beginSide == 0 && endSide == 0) {
+        net->addSelfSymmetryPathSeg(cachePathSeg);
+      } else if ((beginSide == -1 && endSide <= 0) ||
+                 (endSide == -1 && beginSide <= 0)) {
+        net->addSelfSymmetryPathSeg(cachePathSeg);
         frPathSeg mirrorPathSeg(cachePathSeg);
         mirrorPathSeg.setPoints(axisCtx.mirrorPoint(begin),
                                 axisCtx.mirrorPoint(end));
+        net->addSelfSymmetryPathSeg(mirrorPathSeg);
+      } else if (beginSide != endSide &&
+                 (beginSide == -1 || endSide == -1)) {
+        auto leadPoint = beginSide == -1 ? begin : end;
+        frPoint axisPoint;
+        if (constraint->isAxisHorizontal) {
+          axisPoint.set(leadPoint.x(), constraint->axis);
+        } else {
+          axisPoint.set(constraint->axis, leadPoint.y());
+        }
+        frPathSeg leadPathSeg(cachePathSeg);
+        leadPathSeg.setPoints(leadPoint, axisPoint);
+        net->addSelfSymmetryPathSeg(leadPathSeg);
+        frPathSeg mirrorPathSeg(leadPathSeg);
+        mirrorPathSeg.setPoints(axisCtx.mirrorPoint(leadPoint),
+                                axisCtx.mirrorPoint(axisPoint));
         net->addSelfSymmetryPathSeg(mirrorPathSeg);
       }
     }

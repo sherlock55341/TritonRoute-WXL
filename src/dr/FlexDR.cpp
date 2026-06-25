@@ -187,16 +187,33 @@ void FlexDR::updateSelfSymmetryPathSegCaches() {
       auto endCoord = constraint->isAxisHorizontal ? end.y() : end.x();
       auto beginSide = getSide(beginCoord, constraint->axis);
       auto endSide = getSide(endCoord, constraint->axis);
-      if ((beginSide == -1 && endSide <= 0) ||
-          (endSide == -1 && beginSide == 0)) {
+      if (beginSide == 0 && endSide == 0) {
+        net->addSelfSymmetryPathSeg(*pathSeg);
+      } else if ((beginSide == -1 && endSide <= 0) ||
+                 (endSide == -1 && beginSide <= 0)) {
         net->addSelfSymmetryPathSeg(*pathSeg);
         frPathSeg mirroredPathSeg(*pathSeg);
         mirroredPathSeg.setPoints(
             mirrorPoint(begin, constraint->isAxisHorizontal, constraint->axis),
             mirrorPoint(end, constraint->isAxisHorizontal, constraint->axis));
         net->addSelfSymmetryPathSeg(mirroredPathSeg);
-      } else if (beginSide == 0 || endSide == 0 || beginSide != endSide) {
-        net->addSelfSymmetryPathSeg(*pathSeg);
+      } else if (beginSide != endSide &&
+                 (beginSide == -1 || endSide == -1)) {
+        auto leadPoint = beginSide == -1 ? begin : end;
+        frPoint axisPoint;
+        if (constraint->isAxisHorizontal) {
+          axisPoint.set(leadPoint.x(), constraint->axis);
+        } else {
+          axisPoint.set(constraint->axis, leadPoint.y());
+        }
+        frPathSeg leadPathSeg(*pathSeg);
+        leadPathSeg.setPoints(leadPoint, axisPoint);
+        net->addSelfSymmetryPathSeg(leadPathSeg);
+        frPathSeg mirroredPathSeg(leadPathSeg);
+        mirroredPathSeg.setPoints(
+            mirrorPoint(leadPoint, constraint->isAxisHorizontal, constraint->axis),
+            mirrorPoint(axisPoint, constraint->isAxisHorizontal, constraint->axis));
+        net->addSelfSymmetryPathSeg(mirroredPathSeg);
       }
     }
   }
