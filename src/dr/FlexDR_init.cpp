@@ -4118,7 +4118,16 @@ void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, 
 void FlexDRWorker::route_queue_update_queue(const vector<pair<frBlockObject*, pair<bool, int> > > &checks,
                                             const vector<pair<frBlockObject*, pair<bool, int> > > &routes,
                                             deque<pair<frBlockObject*, pair<bool, int> > > &rerouteQueue) {
-  for (auto &route: routes) {
+  auto orderedRoutes = routes;
+  stable_partition(orderedRoutes.begin(), orderedRoutes.end(), [](auto &route) {
+    auto obj = route.first;
+    if (!obj || obj->typeId() != drcNet) {
+      return false;
+    }
+    auto net = static_cast<drNet*>(obj);
+    return net->getFrNet() && net->getFrNet()->getSelfSymmetryConstraintPtr();
+  });
+  for (auto &route: orderedRoutes) {
     rerouteQueue.push_back(route);
   }
   for (auto &check: checks) {

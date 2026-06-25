@@ -27,6 +27,7 @@
  */
 
 #include "gr/FlexGR.h"
+#include <algorithm>
 
 using namespace std;
 using namespace fr;
@@ -194,6 +195,10 @@ void FlexGRWorker::route_getRerouteNets(vector<grNet*> &rerouteNets) {
       }
     }
   }
+  stable_partition(rerouteNets.begin(), rerouteNets.end(), [](auto net) {
+    return net && net->getFrNet() &&
+           net->getFrNet()->getSelfSymmetryConstraintPtr();
+  });
 }
 
 bool FlexGRWorker::mazeNetHasCong(grNet* net) {
