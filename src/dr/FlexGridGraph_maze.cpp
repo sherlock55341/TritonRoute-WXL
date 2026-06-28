@@ -430,6 +430,11 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
     // original
     ++nextPathCost;
 
+    // turn near wide IO pin shape → heavy penalty
+    if (isTurnForbidden(gridX, gridY, gridZ)) {
+      nextPathCost += ggDRCCost * getEdgeLength(gridX, gridY, gridZ, dir);
+    }
+
     // test to give more penalty to turns
     // if (ggMarkerCost == 0) {
     //   nextPathCost += getEdgeLength(gridX, gridY, gridZ, dir);
@@ -733,7 +738,7 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
       (unsigned long long)safetyCost + geometryCost + symmetryPenalty);
   nextPathCost += stepCost;
   if (enableOutput) {
-    cout <<"edge grid/shape/drc/marker/blk/length = " 
+    cout <<"edge grid/shape/drc/marker/blk/length = "
          <<hasGridCost(gridX, gridY, gridZ, dir)   <<"/"
          <<hasShapeCost(gridX, gridY, gridZ, dir)  <<"/"
          <<hasDRCCost(gridX, gridY, gridZ, dir)    <<"/"

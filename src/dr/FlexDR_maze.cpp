@@ -1830,6 +1830,11 @@ bool FlexDRWorker::mazeIterInit_searchRepair(int mazeIter, vector<drNet*> &rerou
   //sort(rerouteNets.begin(), rerouteNets.end(), 
   //     [](drNet* const &a, drNet* const &b) {return *a < *b;});
   auto sol = mazeIterInit_sortRerouteNets(mazeIter, rerouteNets);
+  // stable_partition: self-symmetry nets first, ordinary nets after
+  if (sol) {
+    std::stable_partition(rerouteNets.begin(), rerouteNets.end(),
+      [](drNet* net) { return net->getFrNet() && net->getFrNet()->getSelfSymmetryConstraintPtr() != nullptr; });
+  }
   if (sol) {
     for (auto &net: rerouteNets) {
       net->setModified(true);
@@ -2730,6 +2735,8 @@ void FlexDRWorker::route_queue_main(deque<pair<frBlockObject*, pair<bool, int> >
 
     if (obj->typeId() == drcNet && doRoute) {
       auto net = static_cast<drNet*>(obj);
+      auto frNet = net->getFrNet();
+
       if (!isTargetNet(net->getFrNet())) {
         continue;
       }
@@ -3872,7 +3879,7 @@ bool FlexDRWorker::routeNet(drNet* net) {
   if (net->getPins().size() <= 1) {
     return true;
   }
-  
+
   if (TEST || enableOutput) {
     cout <<"route " <<net->getFrNet()->getName() <<endl;
   }

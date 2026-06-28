@@ -1925,6 +1925,7 @@ void FlexDRWorker::initNet_term(drNet* dNet, vector<frBlockObject*> &terms) {
 void FlexDRWorker::initNet_term_new(drNet* dNet, vector<frBlockObject*> &terms) {
   bool enableOutput = false;
   //bool enableOutput = true;
+
   for (auto term: terms) {
     auto dPin = make_unique<drPin>();
     dPin->setFrTerm(term);
@@ -1995,6 +1996,7 @@ void FlexDRWorker::initNet_term_new(drNet* dNet, vector<frBlockObject*> &terms) 
         } else {
           dAp->setPinCost(1);
         }
+
         // set min area
         if (ENABLE_BOUNDARY_MAR_FIX) {
           auto minAreaConstraint = getDesign()->getTech()->getLayer(bNum)->getAreaConstraint();
@@ -2018,7 +2020,7 @@ void FlexDRWorker::initNet_term_new(drNet* dNet, vector<frBlockObject*> &terms) 
               cout <<" (" <<bp.x() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<", "
                           <<bp.y() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<") skipped";
             }
-          } else if ((getRouteBox().right() == bp.x() && bLayer->getDir() == frcVertPrefRoutingDir && bLayer->getLef58RectOnlyConstraint()) || 
+          } else if ((getRouteBox().right() == bp.x() && bLayer->getDir() == frcVertPrefRoutingDir && bLayer->getLef58RectOnlyConstraint()) ||
                      (getRouteBox().top() == bp.y() && bLayer->getDir() == frcHorzPrefRoutingDir && bLayer->getLef58RectOnlyConstraint())) {
             if (enableOutput) {
               cout <<" (" <<bp.x() * 1.0 / getDesign()->getTopBlock()->getDBUPerUU() <<", "
@@ -3078,11 +3080,12 @@ void FlexDRWorker::initMazeCost_ap() {
         if (ap->hasAccessViaDef(frDirEnum::U)) {
           gridGraph.setSVia(mi.x(), mi.y(), mi.z());
           apSVia[mi] = ap.get();
-          if (ap->getAccessViaDef() != 
+          if (ap->getAccessViaDef() !=
               getDesign()->getTech()->getLayer(ap->getBeginLayerNum() + 1)->getDefaultViaDef()) {
             cnt++;
           }
         }
+
       }
     }
   }
@@ -4051,7 +4054,7 @@ bool FlexDRWorker::isSelfSymmetryNet(frNet* net) const {
 }
 
 bool FlexDRWorker::isTargetNet(frNet* net) const {
-  return getDRIter() <= 3 ? isSelfSymmetryNet(net) : !isSelfSymmetryNet(net);
+  return true; // all nets are targets, self-symmetry nets ordered first in queue
 }
 
 bool FlexDRWorker::route_queue_isSelfSymmetryRipupLocked(drNet* net) const {
@@ -5285,6 +5288,22 @@ void FlexDRWorker::initMazeCost_terms(const set<frBlockObject*> &objs, bool isAd
                 modMinSpacingCostVia(box, zIdx, type, false, false);
               }
               modEolSpacingCost(box, zIdx, type);
+
+              // IO pin wider than default wire → mark turn-forbidden zone
+              if (obj->typeId() == frcTerm && isAddPathCost) {
+                frCoord defaultWidth = getTech()->getLayer(layerNum)->getWidth();
+                if (box.width() > defaultWidth * 2 || box.length() > defaultWidth * 2) {
+                  FlexMazeIdx tfbMIdx1, tfbMIdx2;
+                  frBox turnFBBox(box.left() - defaultWidth * 2, box.bottom() - defaultWidth * 2,
+                                  box.right() + defaultWidth * 2, box.top() + defaultWidth * 2);
+                  gridGraph.getIdxBox(tfbMIdx1, tfbMIdx2, turnFBBox);
+                  for (int i = tfbMIdx1.x(); i <= tfbMIdx2.x(); i++) {
+                    for (int j = tfbMIdx1.y(); j <= tfbMIdx2.y(); j++) {
+                      gridGraph.setTurnForbidden(i, j, zIdx);
+                    }
+                  }
+                }
+              }
             } else {
               modCutSpacingCost(box, zIdx, type);
               modInterLayerCutSpacingCost(box, zIdx, type, true);

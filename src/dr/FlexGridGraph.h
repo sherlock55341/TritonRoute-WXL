@@ -111,6 +111,16 @@ namespace fr {
     bool isSVia(frMIdx x, frMIdx y, frMIdx z) const {
       return getBit(getIdx(x, y, z), 9);
     }
+    // bit 15: turn forbidden near wide IO pin shape
+    bool isTurnForbidden(frMIdx x, frMIdx y, frMIdx z) const {
+      return getBit(getIdx(x, y, z), 15);
+    }
+    void setTurnForbidden(frMIdx x, frMIdx y, frMIdx z) {
+      setBit(getIdx(x, y, z), 15);
+    }
+    void resetTurnForbidden(frMIdx x, frMIdx y, frMIdx z) {
+      resetBit(getIdx(x, y, z), 15);
+    }
     bool hasSelfSymmetryPrevPlanarEdge(frMIdx x, frMIdx y, frMIdx z, frDirEnum dir) const {
       correct(x, y, z, dir);
       if (isValid(x, y, z)) {
