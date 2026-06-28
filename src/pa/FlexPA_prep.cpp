@@ -421,10 +421,10 @@ void FlexPA::prepPoint_pin_genPoints_layerShapes(vector<unique_ptr<frAccessPoint
         instTerm->getInst()->getRefBlock()->getMacroClass() == MacroClassEnum::CORE_TIEHIGH ||
         instTerm->getInst()->getRefBlock()->getMacroClass() == MacroClassEnum::CORE_TIELOW ||
         instTerm->getInst()->getRefBlock()->getMacroClass() == MacroClassEnum::CORE_ANTENNACELL) {
-      if ((layerNum >= VIAINPIN_BOTTOMLAYERNUM && layerNum <= VIAINPIN_TOPLAYERNUM) || 
+      if ((layerNum >= VIAINPIN_BOTTOMLAYERNUM && layerNum <= VIAINPIN_TOPLAYERNUM) ||
           layerNum <= VIA_ACCESS_LAYERNUM) {
         // if (DBPROCESSNODE == "GF14_13M_3Mx_2Cx_4Kx_2Hx_2Gx_LB") {
-          allowPlanar = false;
+        //   allowPlanar = false; // removed: let DRC engine decide planar access
         // }
       }
     } else if (instTerm->getInst()->getRefBlock()->getMacroClass() == MacroClassEnum::BLOCK ||
@@ -660,16 +660,9 @@ void FlexPA::prepPoint_pin_checkPoint_planar(frAccessPoint* ap,
   // if (DBPROCESSNODE == "GF14_13M_3Mx_2Cx_4Kx_2Hx_2Gx_LB") {
      
   // } else {
-    bool isOutSide = prepPoint_pin_checkPoint_planar_ep(ep, layerPolys, bp, ap->getLayerNum(), dir);
-    // skip if two width within shape for standard cell
-    if (isStdCellPin && !isOutSide) {
-      ap->setAccess(dir, false);
-      if (enableOutput) {
-        prepPoint_pin_checkPoint_print_helper(ap, pin, instTerm, dir, 0, -1, bp, ep, nullptr);
-      }
-      return;
-    }
-  // }
+    bool isOutSide = prepPoint_pin_checkPoint_planar_ep(ep, layerPolys, bp, ap->getLayerNum(), dir, 1);
+    // skip if two width within shape for standard cell — removed early return, let DRC engine decide
+    // }
 
   auto ps = make_unique<frPathSeg>();
   auto style = getDesign()->getTech()->getLayer(ap->getLayerNum())->getDefaultSegStyle();
