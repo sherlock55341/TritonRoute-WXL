@@ -663,14 +663,28 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
   bool blockCost  = isBlocked(gridX, gridY, gridZ, dir);
   bool guideCost  = hasGuide(gridX, gridY, gridZ, dir);
 
-  // temporarily disable guideCost
   auto edgeLength = getEdgeLength(gridX, gridY, gridZ, dir);
   const bool usePrevEdgeCost = selfSymmetrySearch && drWorker &&
-                               drWorker->getDRIter() >= 3 &&
-                               drWorker->getDRIter() <= 5;
-  auto baseCost = edgeLength;
+                               drWorker->getDRIter() >= 2 &&
+                               drWorker->getDRIter() <= 3;
+  if (!guideCost && selfSymmetrySearch && drWorker &&
+      drWorker->getDRIter() <= 1) {
+    auto guideX = gridX;
+    auto guideY = gridY;
+    auto guideZ = gridZ;
+    auto guideDir = dir;
+    reverse(guideX, guideY, guideZ, guideDir);
+    auto zDim = (frMIdx)zCoords.size();
+    for (frMIdx z = 0; z < zDim; z++) {
+      if (guides[getIdx(guideX, guideY, z)]) {
+        guideCost = true;
+        break;
+      }
+    }
+  }
+  auto geometryCostDivisor = 1;
   if (!usePrevEdgeCost && selfSymmetrySearch && drWorker &&
-      drWorker->getDRIter() <= 2) {
+      drWorker->getDRIter() <= 1) {
     frPoint currPt;
     getPoint(currPt, gridX, gridY);
     bool isAxisEdge = false;
@@ -685,7 +699,7 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
     }
     if (isAxisEdge) {
       if (dir == frDirEnum::U || dir == frDirEnum::D) {
-        baseCost /= 8;
+        geometryCostDivisor = 4;
       } else {
         auto layerDir = getDesign()->getTech()->getLayer(lNum)->getDir();
         bool isPrefDir =
@@ -693,25 +707,30 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
              (dir == frDirEnum::E || dir == frDirEnum::W)) ||
             (layerDir == frPrefRoutingDirEnum::frcVertPrefRoutingDir &&
              (dir == frDirEnum::N || dir == frDirEnum::S));
-        baseCost /= isPrefDir ? 8 : 2;
+        geometryCostDivisor = isPrefDir ? 4 : 2;
       }
     }
   }
-  auto stepCost = baseCost
-                  + (gridCost   ? GRIDCOST     * edgeLength      : 0)
-                  + (drcCost    ? ggDRCCost    * edgeLength      : 0)
-                  + (markerCost ? ggMarkerCost * edgeLength      : 0)
-                  // + (markerCost ? ggMarkerCost     * pathWidth                               : 0)
-                  + (shapeCost  ? SHAPECOST    * edgeLength      : 0)
-                  + (blockCost  ? BLOCKCOST    * pathWidth * 20 : 0)
-                  + (!usePrevEdgeCost && !guideCost ? GUIDECOST * edgeLength : 0);
+  auto guideStepCost = !usePrevEdgeCost && !guideCost ? GUIDECOST * edgeLength : 0;
+  auto geometryCost = edgeLength
+                      + (gridCost ? GRIDCOST * edgeLength : 0)
+                      + (shapeCost ? SHAPECOST * edgeLength : 0)
+                      + guideStepCost;
+  geometryCost /= geometryCostDivisor;
+  auto drcStepCost = drcCost ? ggDRCCost * edgeLength : 0;
+  auto markerStepCost = markerCost ? ggMarkerCost * edgeLength : 0;
+  // + (markerCost ? ggMarkerCost     * pathWidth                               : 0)
+  auto blockStepCost = blockCost ? BLOCKCOST * pathWidth * 20 : 0;
+  auto safetyCost = drcStepCost + markerStepCost + blockStepCost;
+  auto symmetryPenalty = 0;
   if (usePrevEdgeCost && isSelfSymmetryCardinalDir(dir)) {
-    if (!hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ, dir)) {
-      stepCost = saturateSelfSymmetryCost(
-          (unsigned long long)stepCost +
-          (unsigned long long)BLOCKCOST * edgeLength * 100);
+    if (!hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ, dir) &&
+        !drcCost && !markerCost && !blockCost) {
+      symmetryPenalty = MARKERCOST * edgeLength * 2;
     }
   }
+  auto stepCost = saturateSelfSymmetryCost(
+      (unsigned long long)safetyCost + geometryCost + symmetryPenalty);
   nextPathCost += stepCost;
   if (enableOutput) {
     cout <<"edge grid/shape/drc/marker/blk/length = " 

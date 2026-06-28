@@ -2730,6 +2730,9 @@ void FlexDRWorker::route_queue_main(deque<pair<frBlockObject*, pair<bool, int> >
 
     if (obj->typeId() == drcNet && doRoute) {
       auto net = static_cast<drNet*>(obj);
+      if (!isTargetNet(net->getFrNet())) {
+        continue;
+      }
       if (route_queue_isSelfSymmetryRipupLocked(net)) {
         continue;
       }

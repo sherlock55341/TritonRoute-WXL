@@ -4046,9 +4046,17 @@ void FlexDRWorker::route_queue_addMarkerCost() {
   }
 }
 
+bool FlexDRWorker::isSelfSymmetryNet(frNet* net) const {
+  return net && net->getSelfSymmetryConstraintPtr();
+}
+
+bool FlexDRWorker::isTargetNet(frNet* net) const {
+  return getDRIter() <= 3 ? isSelfSymmetryNet(net) : !isSelfSymmetryNet(net);
+}
+
 bool FlexDRWorker::route_queue_isSelfSymmetryRipupLocked(drNet* net) const {
   auto frNet = net ? net->getFrNet() : nullptr;
-  return getDRIter() >= 6 && frNet && frNet->getSelfSymmetryConstraintPtr();
+  return getDRIter() >= 6 && isSelfSymmetryNet(frNet);
 }
 
 void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, int> > > &rerouteQueue) {
@@ -4061,11 +4069,10 @@ void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, 
     for (auto &marker: markers) {
       route_queue_update_from_marker(&marker, uniqueVictims, uniqueAggressors, checks, routes);
     }
-    if (getDRIter() >= 3 && getDRIter() <= 5) {
+    if (getDRIter() >= 2 && getDRIter() <= 3) {
       for (auto &net: nets) {
         auto frNet = net->getFrNet();
-        if (frNet && frNet->getSelfSymmetryConstraintPtr() &&
-            net->getNumReroutes() < getMazeEndIter()) {
+        if (isTargetNet(frNet) && net->getNumReroutes() < getMazeEndIter()) {
           auto route = make_pair(
               static_cast<frBlockObject*>(net.get()),
               make_pair(true, net->getNumReroutes()));
@@ -4080,6 +4087,9 @@ void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, 
     // nets are ripped up during initNets()
     vector<drNet*> ripupNets;
     for (auto &net: nets) {
+      if (!isTargetNet(net->getFrNet())) {
+        continue;
+      }
       if (route_queue_isSelfSymmetryRipupLocked(net.get())) {
         continue;
       }
@@ -4128,6 +4138,13 @@ void FlexDRWorker::route_queue_update_queue(const vector<pair<frBlockObject*, pa
     return net->getFrNet() && net->getFrNet()->getSelfSymmetryConstraintPtr();
   });
   for (auto &route: orderedRoutes) {
+    auto obj = route.first;
+    if (obj && obj->typeId() == drcNet) {
+      auto net = static_cast<drNet*>(obj);
+      if (!isTargetNet(net->getFrNet())) {
+        continue;
+      }
+    }
     rerouteQueue.push_back(route);
   }
   for (auto &check: checks) {
@@ -4163,6 +4180,9 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
         movableAggressorNets.insert(fNet);
         if (getDRNets(fNet)) {
           for (auto dNet: *(getDRNets(fNet))) {
+            if (!isTargetNet(dNet->getFrNet())) {
+              continue;
+            }
             if (dNet->getNumReroutes() >= getMazeEndIter()) {
               continue;
             }
@@ -4184,6 +4204,9 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
         // int subNetIdx = -1;
         for (auto dNet: *(getDRNets(fNet))) {
           // subNetIdx++;
+          if (!isTargetNet(dNet->getFrNet())) {
+            continue;
+          }
           if (dNet->getNumReroutes() >= getMazeEndIter()) {
             continue;
           }
@@ -4251,6 +4274,9 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
             // int subNetIdx = -1;
             for (auto dNet: *(getDRNets(fNet))) {
               // subNetIdx++;
+              if (!isTargetNet(dNet->getFrNet())) {
+                continue;
+              }
               // if (dNet->getNumReroutes() >= getMazeEndIter() * 2) {
               if (dNet->getNumReroutes() >= getMazeEndIter()) {
                 continue;
@@ -4315,6 +4341,9 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
           // int subNetIdx = -1;
           for (auto dNet: *(getDRNets(fNet))) {
             // subNetIdx++;
+            if (!isTargetNet(dNet->getFrNet())) {
+              continue;
+            }
             // if (dNet->getNumReroutes() >= getMazeEndIter() * 2) {
             if (dNet->getNumReroutes() >= getMazeEndIter()) {
               continue;
