@@ -28,6 +28,7 @@
 
 #include <iostream>
 #include <vector>
+#include <unordered_map>
 #include "global.h"
 #include "FlexRoute.h"
 #include "db/infra/frTransform.h"
@@ -51,29 +52,96 @@ using namespace fr;
 namespace {
 
   bool isSelfSymmetryCandidateNet(frNet *net) {
-    static const string prefix = "Symmtry";
-    return net != nullptr &&
-           net->getName().compare(0, prefix.size(), prefix) == 0;
+    if (!net) return false;
+    const string &name = net->getName();
+    return name.compare(0, 7, "Symmtry") == 0 ||
+           name.compare(0, 6, "Mirror")  == 0;
   }
 
-  frPoint getRPinGlobalAccessPoint(frRPin *rpin) {
-    frPoint pt;
-    auto ap = rpin->getAccessPoint();
-    ap->getPoint(pt);
-    if (rpin->getFrTerm()->typeId() == frcInstTerm) {
-      auto inst = static_cast<frInstTerm*>(rpin->getFrTerm())->getInst();
-      frTransform shiftXform;
-      inst->getTransform(shiftXform);
-      shiftXform.set(frOrient(frcR0));
-      pt.transform(shiftXform);
-    } else if (rpin->getFrTerm()->typeId() == frcTerm) {
-      ;
-    } else {
-      cout << "Error: unknown rpin term type in getRPinGlobalAccessPoint\n";
-      exit(1);
-    }
-    return pt;
-  }
+  struct HardcodedAxis {
+    const char* name;
+    bool isHorizontal; // H=true (axis is y), V=false (axis is x)
+    int axis;
+  };
+
+  // Hardcoded from axis.txt — maps net name to self-symmetry axis
+  const HardcodedAxis hardcodedAxes[] = {
+    {"Symmtry1",  false, 17420},
+    {"Symmtry2",  false, 23420},
+    {"Symmtry3",  true,  45850},
+    {"Symmtry4",  true,  59530},
+    {"Symmtry5",  true,  71820},
+    {"Symmtry6",  true,  58140},
+    {"Symmtry7",  true,  58140},
+    {"Symmtry8",  true,  58140},
+    {"Symmtry9",  false, 43180},
+    {"Symmtry10", true,  58140},
+    {"Symmtry11", false, 45035},
+    {"Symmtry12", false, 46600},
+    {"Symmtry13", false, 46980},
+    {"Symmtry14", true,  58140},
+    {"Symmtry15", true,  58140},
+    {"Symmtry16", false, 42430},
+    {"Symmtry17", false, 43940},
+    {"Symmtry18", false, 44020},
+    {"Symmtry19", false, 43500},
+    {"Symmtry20", true,  58140},
+    {"Symmtry24", true,  13680},
+    {"Symmtry25", true,  13680},
+    {"Symmtry26", true,  13686},
+    {"Symmtry27", true,  13680},
+    {"Symmtry28", true,  13680},
+    {"Symmtry29", true,  13680},
+    {"Symmtry30", true,  13680},
+    {"Symmtry31", false, 44420},
+    {"Symmtry32", false, 45600},
+    {"Symmtry33", false, 43070},
+    {"Symmtry34", false, 45860},
+    {"Mirror1_1", true,  78660},
+    {"Mirror1_2", true,  78660},
+    {"Mirror2_1", false, 28420},
+    {"Mirror2_2", false, 28420},
+    {"Mirror3_1", false, 37940},
+    {"Mirror3_2", false, 37940},
+    {"Mirror4_1", true,  88919},
+    {"Mirror4_2", true,  88919},
+    {"Mirror5_1", true,  100996},
+    {"Mirror5_2", true,  100996},
+    {"Mirror6_1", false, 41445},
+    {"Mirror6_2", false, 41445},
+    {"Mirror7_1", false, 42245},
+    {"Mirror7_2", false, 42245},
+    {"Mirror8_1", false, 41430},
+    {"Mirror8_2", false, 41430},
+    {"Mirror9_1", false, 43020},
+    {"Mirror9_2", false, 43020},
+    {"Mirror10_1", false, 42500},
+    {"Mirror10_2", false, 42500},
+    {"Mirror11_1", false, 42523},
+    {"Mirror11_2", false, 42523},
+    {"Mirror12_1", false, 42940},
+    {"Mirror12_2", false, 42940},
+    {"Mirror13_1", true,  10259},
+    {"Mirror13_2", true,  10259},
+    {"Mirror14_1", true,  10259},
+    {"Mirror14_2", true,  10259},
+    {"Mirror15_1", true,  13679},
+    {"Mirror15_2", true,  13679},
+    {"Mirror16_1", true,  13680},
+    {"Mirror16_2", true,  13680},
+    {"Mirror17_1", true,  13680},
+    {"Mirror17_2", true,  13680},
+    {"Mirror18_1", true,  13680},
+    {"Mirror18_2", true,  13680},
+    {"Mirror19_1", true,  13680},
+    {"Mirror19_2", true,  13680},
+    {"Mirror20_1", true,  13679},
+    {"Mirror20_2", true,  13679},
+    {"Mirror21_1", true,  13679},
+    {"Mirror21_2", true,  13679},
+    {"Mirror22_1", true,  13680},
+    {"Mirror22_2", true,  13680},
+  };
 
   void initSelfSymmetryConstraints(frDesign *design) {
     auto block = design ? design->getTopBlock() : nullptr;
@@ -81,30 +149,32 @@ namespace {
       return;
     }
 
+    // Build lookup from hardcoded axes
+    std::unordered_map<std::string, const HardcodedAxis*> axisMap;
+    for (auto &ha : hardcodedAxes) {
+      axisMap[ha.name] = &ha;
+    }
+
     frBox dieBox;
     block->getBoundaryBBox(dieBox);
+
     for (auto &uNet: block->getNets()) {
       auto net = uNet.get();
       if (!isSelfSymmetryCandidateNet(net)) {
         continue;
       }
 
-      vector<frPoint> points;
-      points.reserve(net->getRPins().size());
-      for (auto &rpin: net->getRPins()) {
-        if (rpin->getAccessPoint() == nullptr || rpin->getFrTerm() == nullptr) {
-          continue;
-        }
-        points.push_back(getRPinGlobalAccessPoint(rpin.get()));
-      }
-      if (points.empty()) {
+      auto it = axisMap.find(net->getName());
+      if (it == axisMap.end()) {
+        cout << "Warning: self-symmetry candidate net " << net->getName()
+             << " has no hardcoded axis, skipped\n";
         continue;
       }
 
-      bool isHorizontal = false;
-      int axis = 0;
-      get_self_symmetry_axis(points, isHorizontal, axis);
+      bool isHorizontal = it->second->isHorizontal;
+      frCoord axis = it->second->axis;
 
+      // Validate axis is inside die box
       auto axisName = isHorizontal ? "y" : "x";
       bool axisInDie = isHorizontal ?
                        axis >= dieBox.bottom() && axis <= dieBox.top() :
@@ -115,6 +185,8 @@ namespace {
              << " is outside die box " << dieBox << "\n";
         exit(1);
       }
+
+      // Snap to nearest routing track
       auto snappedAxis = axis;
       if (!findNearestSelfSymmetryRoutingTrack(design,
                                                isHorizontal,
