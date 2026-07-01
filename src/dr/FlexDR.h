@@ -687,9 +687,6 @@ namespace fr {
     void route_queue_markerCostDecay();
     void route_queue_addMarkerCost(const std::vector<std::unique_ptr<frMarker> > &markers);
     void route_queue_addMarkerCost();
-    bool isSelfSymmetryNet(frNet* net) const;
-    bool isTargetNet(frNet* net) const;
-    bool route_queue_isSelfSymmetryRipupLocked(drNet* net) const;
     void route_queue_init_queue(std::deque<std::pair<frBlockObject*, std::pair<bool, int> > > &rerouteQueue);
     void route_queue_update_from_marker(frMarker *marker,
                                         std::set<frBlockObject*> &uniqueVictims,
