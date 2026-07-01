@@ -48,8 +48,8 @@ namespace fr {
     //void pinPrep();
     void prep();
     void gr();
-    void ta();
-    void dr();
+    void ta(RouteNetMode mode = RouteNetMode::All);
+    void dr(RouteNetMode mode = RouteNetMode::All);
     void endFR();
   };
 }

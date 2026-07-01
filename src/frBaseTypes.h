@@ -185,6 +185,11 @@ namespace fr {
     frcNone,
     frcSelfSymmetry
   };
+  enum class RouteNetMode {
+    All,
+    SelfSymmetryOnly,
+    OrdinaryOnly
+  };
   enum class frTermDirectionEnum {
     UNKNOWN,
     INPUT,

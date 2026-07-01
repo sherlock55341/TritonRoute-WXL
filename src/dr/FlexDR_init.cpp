@@ -32,6 +32,18 @@
 using namespace std;
 using namespace fr;
 
+bool FlexDRWorker::routeNetModeMatches(frNet* net) const {
+  switch (dr->getRouteNetMode()) {
+    case RouteNetMode::All:
+      return true;
+    case RouteNetMode::SelfSymmetryOnly:
+      return net && net->getSelfSymmetryConstraintPtr() != nullptr;
+    case RouteNetMode::OrdinaryOnly:
+      return net && net->getSelfSymmetryConstraintPtr() == nullptr;
+  }
+  return false;
+}
+
 namespace {
 bool clipPathSegToBox(frPoint &bp, frPoint &ep, const frBox &box) {
   if (bp.x() == ep.x()) {
@@ -2242,7 +2254,7 @@ void FlexDRWorker::initNet(frNet* net,
   for (auto &obj: extObjs) {
     dNet->addRoute(obj, true);
   }
-  if (getRipupMode() == 0) {
+  if (getRipupMode() == 0 || !routeNetModeMatches(net)) {
     for (auto &obj: routeObjs) {
       dNet->addRoute(obj, false);
     }
@@ -3143,7 +3155,9 @@ void FlexDRWorker::initMazeCost_marker_fixMode_0(const frMarker &marker) {
       auto dy = max(max(objBox.bottom(), mBox.bottom()) - min(objBox.top(),   mBox.top()),   0);
       connFig->getNet()->updateMarkerDist(dx * dx + dy * dy);
 
-      connFig->getNet()->setRipup();
+      if (isTargetNet(connFig->getNet())) {
+        connFig->getNet()->setRipup();
+      }
       if (enableOutput) {
         cout <<"ripup pathseg from " <<connFig->getNet()->getFrNet()->getName() <<endl;
       }
@@ -3193,7 +3207,9 @@ void FlexDRWorker::initMazeCost_marker_fixMode_0(const frMarker &marker) {
 
       auto obj = static_cast<drVia*>(connFig);
       obj->getMazeIdx(mIdx1, mIdx2);
-      connFig->getNet()->setRipup();
+      if (isTargetNet(connFig->getNet())) {
+        connFig->getNet()->setRipup();
+      }
       gridGraph.addMarkerCostVia(mIdx1.x(), mIdx1.y(), mIdx1.z());
       if (enableOutput) {
         cout <<"ripup via from " <<connFig->getNet()->getFrNet()->getName() <<endl;
@@ -3214,7 +3230,9 @@ void FlexDRWorker::initMazeCost_marker_fixMode_0(const frMarker &marker) {
       obj->getOrigin(bp);
       if (getExtBox().contains(bp)) {
         gridGraph.getMazeIdx(mIdx1, bp, lNum);
-        connFig->getNet()->setRipup();
+        if (isTargetNet(connFig->getNet())) {
+          connFig->getNet()->setRipup();
+        }
         gridGraph.addMarkerCostPlanar(mIdx1.x(), mIdx1.y(), mIdx1.z());
         planarHistoryMarkers.insert(FlexMazeIdx(mIdx1.x(), mIdx1.y(), mIdx1.z()));
         if (enableOutput) {
@@ -3384,7 +3402,7 @@ void FlexDRWorker::initMazeCost_marker_fixMode_1(const frMarker &marker, bool ke
       auto dx = max(max(objBox.left(),   mBox.left())   - min(objBox.right(), mBox.right()), 0);
       auto dy = max(max(objBox.bottom(), mBox.bottom()) - min(objBox.top(),   mBox.top()),   0);
       connFig->getNet()->updateMarkerDist(dx * dx + dy * dy);
-      if (viaNet != currNet) {
+      if (viaNet != currNet && isTargetNet(currNet)) {
         currNet->setRipup();
         if (enableOutput) {
           double dbu = getDesign()->getTopBlock()->getDBUPerUU();
@@ -3406,7 +3424,9 @@ void FlexDRWorker::initMazeCost_marker_fixMode_1(const frMarker &marker, bool ke
         //}
         auto obj = static_cast<drVia*>(connFig);
         obj->getMazeIdx(mIdx1, mIdx2);
-        connFig->getNet()->setRipup();
+        if (isTargetNet(connFig->getNet())) {
+          connFig->getNet()->setRipup();
+        }
         //gridGraph.addMarkerCostVia(mIdx1.x(), mIdx1.y(), mIdx1.z());
         if (enableOutput) {
           cout <<"ripup via from " <<connFig->getNet()->getFrNet()->getName() <<endl;
@@ -3919,7 +3939,9 @@ void FlexDRWorker::initMazeCost_marker_fixMode_3_ripupNets(const frMarker &marke
         auto dy = max(max(objBox.bottom(), mBox.bottom()) - min(objBox.top(),   mBox.top()),   0);
         auto dz = abs(bloatDist * (lNum - currLNum));
         connFig->getNet()->updateMarkerDist(dx * dx + dy * dy + dz * dz);
-        connFig->getNet()->setRipup();
+        if (isTargetNet(connFig->getNet())) {
+          connFig->getNet()->setRipup();
+        }
         if (enableOutput) {
           cout <<"ripup pathseg from " <<connFig->getNet()->getFrNet()->getName() <<endl;
         }
@@ -3941,7 +3963,9 @@ void FlexDRWorker::initMazeCost_marker_fixMode_3_ripupNets(const frMarker &marke
 
         //auto obj = static_cast<drVia*>(connFig);
         //obj->getMazeIdx(mIdx1, mIdx2);
-        connFig->getNet()->setRipup();
+        if (isTargetNet(connFig->getNet())) {
+          connFig->getNet()->setRipup();
+        }
         if (enableOutput) {
           cout <<"ripup via from " <<connFig->getNet()->getFrNet()->getName() <<endl;
         }
@@ -3958,7 +3982,9 @@ void FlexDRWorker::initMazeCost_marker_fixMode_3_ripupNets(const frMarker &marke
 
         //auto obj = static_cast<drPatchWire*>(connFig);
         //obj->getMazeIdx(mIdx1, mIdx2);
-        connFig->getNet()->setRipup();
+        if (isTargetNet(connFig->getNet())) {
+          connFig->getNet()->setRipup();
+        }
         if (enableOutput) {
           cout <<"ripup pwire from " <<connFig->getNet()->getFrNet()->getName() <<endl;
         }
@@ -4061,7 +4087,7 @@ void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, 
     }
     if (getDRIter() >= 2 && getDRIter() <= 3) {
       for (auto &net: nets) {
-        if (net->getNumReroutes() < getMazeEndIter()) {
+        if (isTargetNet(net.get()) && net->getNumReroutes() < getMazeEndIter()) {
           auto route = make_pair(
               static_cast<frBlockObject*>(net.get()),
               make_pair(true, net->getNumReroutes()));
@@ -4076,7 +4102,9 @@ void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, 
     // nets are ripped up during initNets()
     vector<drNet*> ripupNets;
     for (auto &net: nets) {
-      ripupNets.push_back(net.get());
+      if (isTargetNet(net.get())) {
+        ripupNets.push_back(net.get());
+      }
     }
 
     // sort nets
@@ -4153,6 +4181,9 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
     if (aggressor && aggressor->typeId() == frcNet) {
       auto fNet = static_cast<frNet*>(aggressor);
       if (fNet->getType() == frNetEnum::frcNormalNet || fNet->getType() == frNetEnum::frcClockNet) {
+        if (!routeNetModeMatches(fNet)) {
+          continue;
+        }
         movableAggressorNets.insert(fNet);
         if (getDRNets(fNet)) {
           for (auto dNet: *(getDRNets(fNet))) {
@@ -4234,6 +4265,9 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
       if (owner && owner->typeId() == frcNet) {
         auto fNet = static_cast<frNet*>(owner);
         if (fNet->getType() == frNetEnum::frcNormalNet || fNet->getType() == frNetEnum::frcClockNet) {
+          if (!routeNetModeMatches(fNet)) {
+            continue;
+          }
           if (getDRNets(fNet)) {
             // int subNetIdx = -1;
             for (auto dNet: *(getDRNets(fNet))) {
@@ -4295,6 +4329,9 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
     if (aggressorOwner && aggressorOwner->typeId() == frcNet) {
       auto fNet = static_cast<frNet*>(aggressorOwner);
       if (fNet->getType() == frNetEnum::frcNormalNet || fNet->getType() == frNetEnum::frcClockNet) {
+        if (!routeNetModeMatches(fNet)) {
+          continue;
+        }
         if (getDRNets(fNet)) {
           // int subNetIdx = -1;
           for (auto dNet: *(getDRNets(fNet))) {

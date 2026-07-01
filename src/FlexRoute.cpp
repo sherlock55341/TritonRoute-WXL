@@ -238,15 +238,15 @@ void FlexRoute::gr() {
   gr.main();
 }
 
-void FlexRoute::ta() {
-  FlexTA ta(getDesign());
+void FlexRoute::ta(RouteNetMode mode) {
+  FlexTA ta(getDesign(), mode);
   ta.main();
   io::Writer writer(getDesign());
   writer.writeFromTA();
 }
 
-void FlexRoute::dr() {
-  FlexDR dr(getDesign());
+void FlexRoute::dr(RouteNetMode mode) {
+  FlexDR dr(getDesign(), mode);
   dr.main();
 }
 
@@ -271,8 +271,10 @@ int FlexRoute::main() {
     parser.postProcessGuide();
   }
   prep();
-  ta();
-  dr();
+  ta(RouteNetMode::SelfSymmetryOnly);
+  dr(RouteNetMode::SelfSymmetryOnly);
+  ta(RouteNetMode::OrdinaryOnly);
+  dr(RouteNetMode::OrdinaryOnly);
   endFR();
 
 

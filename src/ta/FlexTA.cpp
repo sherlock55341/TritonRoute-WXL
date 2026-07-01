@@ -39,6 +39,20 @@ using namespace std;
 using namespace fr;
 using namespace boost::polygon::operators;
 
+namespace {
+  const char* routeNetModeName(RouteNetMode mode) {
+    switch (mode) {
+      case RouteNetMode::All:
+        return "all";
+      case RouteNetMode::SelfSymmetryOnly:
+        return "self-symmetry";
+      case RouteNetMode::OrdinaryOnly:
+        return "ordinary";
+    }
+    return "unknown";
+  }
+}
+
 int FlexTAWorker::main() {
   using namespace std::chrono;
   high_resolution_clock::time_point t0 = high_resolution_clock::now();
@@ -145,7 +159,7 @@ int FlexTA::initTA_helper(int iter, int size, int offset, bool isH, int &numPane
   if (MAX_THREADS == 1) {
     if (isH) {
       for (int i = offset; i < (int)ygp.getCount(); i += size) {
-        FlexTAWorker worker(getDesign());
+        FlexTAWorker worker(getDesign(), getRouteNetMode());
         frBox beginBox, endBox;
         getDesign()->getTopBlock()->getGCellBox(frPoint(0, i), beginBox);
         getDesign()->getTopBlock()->getGCellBox(frPoint((int)xgp.getCount() - 1, 
@@ -167,7 +181,7 @@ int FlexTA::initTA_helper(int iter, int size, int offset, bool isH, int &numPane
       }
     } else {
       for (int i = offset; i < (int)xgp.getCount(); i += size) {
-        FlexTAWorker worker(getDesign());
+        FlexTAWorker worker(getDesign(), getRouteNetMode());
         frBox beginBox, endBox;
         getDesign()->getTopBlock()->getGCellBox(frPoint(i, 0),                       beginBox);
         getDesign()->getTopBlock()->getGCellBox(frPoint(min(i + size - 1, (int)xgp.getCount() - 1),
@@ -192,7 +206,7 @@ int FlexTA::initTA_helper(int iter, int size, int offset, bool isH, int &numPane
     vector<vector<unique_ptr<FlexTAWorker> > > workers;
     if (isH) {
       for (int i = offset; i < (int)ygp.getCount(); i += size) {
-        auto uworker = make_unique<FlexTAWorker>(getDesign());
+        auto uworker = make_unique<FlexTAWorker>(getDesign(), getRouteNetMode());
         auto &worker = *(uworker.get());
         frBox beginBox, endBox;
         getDesign()->getTopBlock()->getGCellBox(frPoint(0, i), beginBox);
@@ -215,7 +229,7 @@ int FlexTA::initTA_helper(int iter, int size, int offset, bool isH, int &numPane
       }
     } else {
       for (int i = offset; i < (int)xgp.getCount(); i += size) {
-        auto uworker = make_unique<FlexTAWorker>(getDesign());
+        auto uworker = make_unique<FlexTAWorker>(getDesign(), getRouteNetMode());
         auto &worker = *(uworker.get());
         frBox beginBox, endBox;
         getDesign()->getTopBlock()->getGCellBox(frPoint(i, 0),                       beginBox);
@@ -360,7 +374,7 @@ void FlexTA::searchRepair(int iter, int size, int offset) {
 int FlexTA::main() {
   frTime t;
   if (VERBOSE > 0) {
-    cout <<endl <<endl <<"start track assignment" <<endl;
+    cout <<endl <<endl <<"start track assignment (" <<routeNetModeName(getRouteNetMode()) <<")" <<endl;
   }
   initTA(50);
   searchRepair(1, 50, 0);
@@ -369,7 +383,7 @@ int FlexTA::main() {
   //searchRepair(-1, 50, 0);
 
   if (VERBOSE > 0) {
-    cout <<endl <<"complete track assignment";
+    cout <<endl <<"complete track assignment (" <<routeNetModeName(getRouteNetMode()) <<")";
     //end();
   }
   if (VERBOSE > 0) {
@@ -989,5 +1003,4 @@ void FlexTAWorker::reportCosts() {
   }
 }
 */
-
 

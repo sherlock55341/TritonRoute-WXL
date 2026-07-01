@@ -1802,24 +1802,28 @@ bool FlexDRWorker::mazeIterInit_searchRepair(int mazeIter, vector<drNet*> &rerou
   if (mazeIter == 0) {
     if (getRipupMode() == 0) {
       for (auto &net: nets) {
-        if (net->isRipup()) {
+        if (isTargetNet(net.get()) && net->isRipup()) {
           rerouteNets.push_back(net.get());
         }
       }
     } else if (getRipupMode() == 1) {
       for (auto &net: nets) {
-        rerouteNets.push_back(net.get());
+        if (isTargetNet(net.get())) {
+          rerouteNets.push_back(net.get());
+        }
       }
     } else if (getRipupMode() == 2) {
       for (auto &net: nets) {
-        rerouteNets.push_back(net.get());
+        if (isTargetNet(net.get())) {
+          rerouteNets.push_back(net.get());
+        }
       }
     }
   } else {
     if (getFixMode() == 1 || getFixMode() == 2 || getFixMode() == 3 || getFixMode() == 4 || getFixMode() == 5) {
       rerouteNets.clear();
       for (auto &net: nets) {
-        if (net->isRipup()) {
+        if (isTargetNet(net.get()) && net->isRipup()) {
           rerouteNets.push_back(net.get());
         }
       }
@@ -1916,7 +1920,7 @@ void FlexDRWorker::route_2_init_getNets_sort(vector<drNet*> &rerouteNets) {
 void FlexDRWorker::route_2_init_getNets(vector<drNet*> &tmpNets) {
   initMazeCost_marker();
   for (auto &net: nets) {
-    if (getRipupMode() == 1 || net->isRipup()) {
+    if (isTargetNet(net.get()) && (getRipupMode() == 1 || net->isRipup())) {
       tmpNets.push_back(net.get());
     }
   }
@@ -2447,7 +2451,7 @@ void FlexDRWorker::route_2_x2_ripupNets(const frMarker &marker, drNet* net) {
       auto dy = max(max(objBox.bottom(), mBox.bottom()) - min(objBox.top(),   mBox.top()),   0);
       connFig->getNet()->updateMarkerDist(dx * dx + dy * dy);
 
-      if (connFig->getNet() != net) {
+      if (connFig->getNet() != net && isTargetNet(connFig->getNet())) {
         connFig->getNet()->setRipup();
         if (enableOutput) {
           cout <<"ripup pathseg from " <<connFig->getNet()->getFrNet()->getName() <<endl;
@@ -2463,7 +2467,7 @@ void FlexDRWorker::route_2_x2_ripupNets(const frMarker &marker, drNet* net) {
 
       auto obj = static_cast<drVia*>(connFig);
       obj->getMazeIdx(mIdx1, mIdx2);
-      if (connFig->getNet() != net) {
+      if (connFig->getNet() != net && isTargetNet(connFig->getNet())) {
         connFig->getNet()->setRipup();
         if (enableOutput) {
           cout <<"ripup via from " <<connFig->getNet()->getFrNet()->getName() <<endl;

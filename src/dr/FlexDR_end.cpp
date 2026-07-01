@@ -33,13 +33,13 @@ using namespace fr;
 
 void FlexDRWorker::endGetModNets(set<frNet*, frBlockObjectComp> &modNets) {
   for (auto &net: nets) {
-    if (net->isModified()) {
+    if (isTargetNet(net.get()) && net->isModified()) {
       modNets.insert(net->getFrNet());
     }
   }
   // change modified flag to true if another subnet get routed
   for (auto &net: nets) {
-    if (!net->isModified() && modNets.find(net->getFrNet()) != modNets.end()) {
+    if (isTargetNet(net.get()) && !net->isModified() && modNets.find(net->getFrNet()) != modNets.end()) {
       net->setModified(true);
     }
   }
@@ -592,7 +592,7 @@ void FlexDRWorker::endAddNets_merge(frNet* net, set<pair<frPoint, frLayerNum> > 
 void FlexDRWorker::endAddNets(map<frNet*, set<pair<frPoint, frLayerNum> >, frBlockObjectComp> &boundPts) {
   //bool enableOutput = true;
   for(auto &net: nets) {
-    if (!net->isModified()) {
+    if (!isTargetNet(net.get()) || !net->isModified()) {
       continue;
     }
     //if (enableOutput) {

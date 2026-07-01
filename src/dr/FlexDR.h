@@ -43,7 +43,8 @@ namespace fr {
   class FlexDR {
   public:
     // constructors
-    FlexDR(frDesign* designIn): design(designIn) {}
+    FlexDR(frDesign* designIn, RouteNetMode modeIn = RouteNetMode::All):
+        design(designIn), routeNetMode(modeIn) {}
     // getters
     frTechObject* getTech() const {
       return design->getTech();
@@ -53,6 +54,9 @@ namespace fr {
     }
     frRegionQuery* getRegionQuery() const {
       return design->getRegionQuery();
+    }
+    RouteNetMode getRouteNetMode() const {
+      return routeNetMode;
     }
     // others
     int main();
@@ -70,6 +74,7 @@ namespace fr {
     }
   protected:
     frDesign*          design;
+    RouteNetMode       routeNetMode;
     std::vector<std::vector<std::map<frNet*, std::set<std::pair<frPoint, frLayerNum> >, frBlockObjectComp> > > gcell2BoundaryPin;
 
     std::vector<std::pair<frCoord, frCoord> >  halfViaEncArea; // std::pair<layer1area, layer2area>
@@ -119,7 +124,11 @@ namespace fr {
     void init_via2turnMinLen();
 
     void removeGCell2BoundaryPin();
-    void updateSelfSymmetryPathSegCaches();
+    enum class SelfSymmetryReferenceSide {
+      Negative,
+      Positive
+    };
+    void updateSelfSymmetryPathSegCaches(SelfSymmetryReferenceSide referenceSide);
     void checkConnectivity(int iter = -1);
     void checkConnectivity_initDRObjs(frNet* net, std::vector<frConnFig*> &netDRObjs);
     void checkConnectivity_pin2epMap(frNet* net, std::vector<frConnFig*> &netDRObjs,
@@ -428,6 +437,10 @@ namespace fr {
     }
     int getFixMode() const {
       return fixMode;
+    }
+    bool routeNetModeMatches(frNet* net) const;
+    bool isTargetNet(drNet* net) const {
+      return net && routeNetModeMatches(net->getFrNet());
     }
     //const std::vector<std::unique_ptr<frMarker> >& getMarkers() const {
     //  return markers;

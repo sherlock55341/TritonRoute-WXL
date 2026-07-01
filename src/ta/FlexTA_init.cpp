@@ -486,6 +486,19 @@ void FlexTAWorker::initIroute(frGuide *guide) {
 }
 
 
+bool FlexTAWorker::routeNetModeMatches(frGuide *guide) const {
+  if (getRouteNetMode() == RouteNetMode::All) {
+    return true;
+  }
+
+  auto net = guide ? guide->getNet() : nullptr;
+  bool isSelfSymmetryNet = net && net->getSelfSymmetryConstraintPtr();
+  if (getRouteNetMode() == RouteNetMode::SelfSymmetryOnly) {
+    return isSelfSymmetryNet;
+  }
+  return !isSelfSymmetryNet;
+}
+
 
 void FlexTAWorker::initIroutes() {
   //bool enableOutput = true;
@@ -516,6 +529,9 @@ void FlexTAWorker::initIroutes() {
       //}
       //guides.push_back(guide);
       //cout <<endl;
+      if (!routeNetModeMatches(guide)) {
+        continue;
+      }
       initIroute(guide);
     }
     //sort(guides.begin(), guides.end(), [](const frGuide *a, const frGuide *b) {return *a < *b;});

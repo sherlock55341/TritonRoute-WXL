@@ -39,6 +39,20 @@
 using namespace std;
 using namespace fr;
 
+namespace {
+  const char* routeNetModeName(RouteNetMode mode) {
+    switch (mode) {
+      case RouteNetMode::All:
+        return "all";
+      case RouteNetMode::SelfSymmetryOnly:
+        return "self-symmetry";
+      case RouteNetMode::OrdinaryOnly:
+        return "ordinary";
+    }
+    return "unknown";
+  }
+}
+
 // std::chrono::duration<double> time_span_init(0);
 // std::chrono::duration<double> time_span_init0(0);
 // std::chrono::duration<double> time_span_init1(0);
@@ -146,7 +160,7 @@ int FlexDRWorker::main_mt() {
   return 0;
 }
 
-void FlexDR::updateSelfSymmetryPathSegCaches() {
+void FlexDR::updateSelfSymmetryPathSegCaches(SelfSymmetryReferenceSide referenceSide) {
   auto getSide = [](frCoord coord, frCoord axis) {
     if (coord < axis) {
       return -1;
@@ -167,6 +181,13 @@ void FlexDR::updateSelfSymmetryPathSegCaches() {
     }
     return mirroredPoint;
   };
+  const auto referenceSideValue =
+      referenceSide == SelfSymmetryReferenceSide::Negative ? -1 : 1;
+  if (VERBOSE > 0) {
+    cout << "  self-symmetry DR reference side = "
+         << (referenceSide == SelfSymmetryReferenceSide::Negative ? "negative" : "positive")
+         << endl;
+  }
 
   for (auto &uNet: getDesign()->getTopBlock()->getNets()) {
     auto net = uNet.get();
@@ -190,8 +211,10 @@ void FlexDR::updateSelfSymmetryPathSegCaches() {
       auto endSide = getSide(endCoord, constraint->axis);
       if (beginSide == 0 && endSide == 0) {
         net->addSelfSymmetryPathSeg(*pathSeg);
-      } else if ((beginSide == -1 && endSide <= 0) ||
-                 (endSide == -1 && beginSide <= 0)) {
+      } else if ((beginSide == referenceSideValue &&
+                  (endSide == 0 || endSide == referenceSideValue)) ||
+                 (endSide == referenceSideValue &&
+                  (beginSide == 0 || beginSide == referenceSideValue))) {
         net->addSelfSymmetryPathSeg(*pathSeg);
         frPathSeg mirroredPathSeg(*pathSeg);
         mirroredPathSeg.setPoints(
@@ -199,8 +222,8 @@ void FlexDR::updateSelfSymmetryPathSegCaches() {
             mirrorPoint(end, constraint->isAxisHorizontal, constraint->axis));
         net->addSelfSymmetryPathSeg(mirroredPathSeg);
       } else if (beginSide != endSide &&
-                 (beginSide == -1 || endSide == -1)) {
-        auto leadPoint = beginSide == -1 ? begin : end;
+                 (beginSide == referenceSideValue || endSide == referenceSideValue)) {
+        auto leadPoint = beginSide == referenceSideValue ? begin : end;
         frPoint axisPoint;
         if (constraint->isAxisHorizontal) {
           axisPoint.set(leadPoint.x(), constraint->axis);
@@ -2150,7 +2173,9 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     }
   }
   checkConnectivity(iter);
-  updateSelfSymmetryPathSegCaches();
+  updateSelfSymmetryPathSegCaches(iter % 2 == 0 ?
+                                  SelfSymmetryReferenceSide::Negative :
+                                  SelfSymmetryReferenceSide::Positive);
   numViols.push_back(getDesign()->getTopBlock()->getNumMarkers());
   if (VERBOSE > 0) {
     if (enableDRC) {
@@ -2390,7 +2415,7 @@ int FlexDR::main() {
   //exit(1);
   frTime t;
   if (VERBOSE > 0) {
-    cout <<endl <<endl <<"start detail routing ...";
+    cout <<endl <<endl <<"start detail routing (" <<routeNetModeName(getRouteNetMode()) <<") ...";
   }
   // initDR: enableDRC
   // initDR(7, true);
@@ -2582,9 +2607,9 @@ int FlexDR::main() {
   //                                   <<time_span_end.count() <<" "
   //                                   <<endl;
   if (VERBOSE > 0) {
-    cout <<endl <<"complete detail routing";
-    end();
+    cout <<endl <<"complete detail routing (" <<routeNetModeName(getRouteNetMode()) <<")";
   }
+  end();
   if (VERBOSE > 0) {
     t.print();
     cout <<endl;

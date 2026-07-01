@@ -90,7 +90,8 @@ namespace fr {
   public:
     // constructors
     //FlexTA(): tech(std::make_shared<frTechObject>()), design(std::make_shared<frDesign>()) {};
-    FlexTA(frDesign* in): tech(in->getTech()), design(in) {};
+    FlexTA(frDesign* in, RouteNetMode modeIn = RouteNetMode::All):
+        tech(in->getTech()), design(in), routeNetMode(modeIn) {};
     // getters
     frTechObject* getTech() const {
       return tech;
@@ -98,11 +99,15 @@ namespace fr {
     frDesign* getDesign() const {
       return design;
     }
+    RouteNetMode getRouteNetMode() const {
+      return routeNetMode;
+    }
     // others
     int main();
   protected:
     frTechObject*   tech;
     frDesign*       design;
+    RouteNetMode    routeNetMode;
     // others
     void main_helper(frLayerNum lNum, int maxOffsetIter, int panelWidth);
     void initTA(int size);
@@ -170,7 +175,8 @@ namespace fr {
   class FlexTAWorker {
   public:
     // constructors
-    FlexTAWorker(frDesign* designIn): design(designIn), rq(this), numAssigned(0), totCost(0), maxRetry(1)/*, totDrcCost(0)*/ {};
+    FlexTAWorker(frDesign* designIn, RouteNetMode modeIn = RouteNetMode::All):
+        design(designIn), routeNetMode(modeIn), rq(this), numAssigned(0), totCost(0), maxRetry(1)/*, totDrcCost(0)*/ {};
     // setters
     void setRouteBox(const frBox &boxIn) {
       routeBox.set(boxIn);
@@ -256,6 +262,9 @@ namespace fr {
     int getNumAssigned() const {
       return numAssigned;
     }
+    RouteNetMode getRouteNetMode() const {
+      return routeNetMode;
+    }
     // others
     int main();
     int main_mt();
@@ -267,6 +276,7 @@ namespace fr {
     frBox                              extBox;
     frPrefRoutingDirEnum               dir;
     int                                taIter;
+    RouteNetMode                       routeNetMode;
     FlexTAWorkerRegionQuery            rq;
 
     //std::vector<frGuide*>            guides;
@@ -291,6 +301,7 @@ namespace fr {
     void initTracks();
     void initIroutes();
     void initIroute(frGuide *in);
+    bool routeNetModeMatches(frGuide *guide) const;
     void initIroute_helper(frGuide* guide, frCoord &maxBegin, frCoord &minEnd, 
                            std::set<frCoord> &downViaCoordSet, std::set<frCoord> &upViaCoordSet, int &wlen, frCoord &wlen2);
     void initIroute_helper_generic(frGuide* guide, frCoord &maxBegin, frCoord &minEnd, 
