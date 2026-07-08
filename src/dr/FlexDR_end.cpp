@@ -713,9 +713,19 @@ void FlexDRWorker::end() {
   if (skipRouting == true) {
     return;
   }
+  bool hasForcedModifiedNet = false;
+  if (hasForcedSelfSymmetryRerouteNet()) {
+    for (auto &net: nets) {
+      if (net->isModified() && isForcedSelfSymmetryRerouteNet(net.get())) {
+        hasForcedModifiedNet = true;
+        break;
+      }
+    }
+  }
   // skip if current clip does not have input DRCs
   // ripupMode = 0 must have enableDRC = true in previous iteration
-  if (isEnableDRC() && getDRIter() && getRipupMode() != 2 && getInitNumMarkers() == 0) {
+  if (isEnableDRC() && getDRIter() && getRipupMode() != 2 &&
+      getInitNumMarkers() == 0 && !hasForcedModifiedNet) {
     return;
   // do not write back if current clip is worse than input
   } else if (isEnableDRC() && getDRIter() && getRipupMode() == 0 && getBestNumMarkers() > getInitNumMarkers()) {

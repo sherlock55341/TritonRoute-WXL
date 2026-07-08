@@ -731,7 +731,7 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
   if (usePrevEdgeCost && isSelfSymmetryCardinalDir(dir)) {
     if (!hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ, dir) &&
         !drcCost && !markerCost && !blockCost) {
-      symmetryPenalty = MARKERCOST * edgeLength * 2;
+      symmetryPenalty = 2 * edgeLength;
     }
   }
   auto stepCost = saturateSelfSymmetryCost(

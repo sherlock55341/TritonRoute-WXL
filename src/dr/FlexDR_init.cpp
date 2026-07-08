@@ -44,6 +44,14 @@ bool FlexDRWorker::routeNetModeMatches(frNet* net) const {
   return false;
 }
 
+bool FlexDRWorker::isForcedSelfSymmetryRerouteNet(drNet* net) const {
+  return net && dr->isForcedSelfSymmetryRerouteNet(net->getFrNet(), getDRIter());
+}
+
+bool FlexDRWorker::hasForcedSelfSymmetryRerouteNet() const {
+  return dr->hasForcedSelfSymmetryRerouteNet(getDRIter());
+}
+
 namespace {
 bool clipPathSegToBox(frPoint &bp, frPoint &ep, const frBox &box) {
   if (bp.x() == ep.x()) {
@@ -383,6 +391,18 @@ void FlexDRWorker::initNetObjs(set<frNet*, frBlockObjectComp> &nets,
           netRouteObjs[net].clear();
           netExtObjs[net].clear();
         }
+      }
+    }
+  }
+
+  if (hasForcedSelfSymmetryRerouteNet()) {
+    for (auto &uNet: getDesign()->getTopBlock()->getNets()) {
+      auto net = uNet.get();
+      if (dr->isForcedSelfSymmetryRerouteNet(net, getDRIter()) &&
+          nets.find(net) == nets.end()) {
+        nets.insert(net);
+        netRouteObjs[net].clear();
+        netExtObjs[net].clear();
       }
     }
   }
@@ -4088,6 +4108,10 @@ void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, 
     if (getDRIter() >= 2 && getDRIter() <= 3) {
       for (auto &net: nets) {
         if (isTargetNet(net.get()) && net->getNumReroutes() < getMazeEndIter()) {
+          if (isForcedSelfSymmetryRerouteNet(net.get())) {
+            cout << "  force reroute " << net->getFrNet()->getName()
+                 << " in DR iter " << getDRIter() << endl;
+          }
           auto route = make_pair(
               static_cast<frBlockObject*>(net.get()),
               make_pair(true, net->getNumReroutes()));
@@ -5912,7 +5936,8 @@ void FlexDRWorker::init() {
   // if (!DRCTEST && isEnableDRC() && getDRIter() && getInitNumMarkers() == 0 && !needRecheck) {
   //   return;
   // }
-  if (isEnableDRC() && getDRIter() && getInitNumMarkers() == 0 && getRipupMode() != 2) {
+  if (isEnableDRC() && getDRIter() && getInitNumMarkers() == 0 &&
+      getRipupMode() != 2 && !hasForcedSelfSymmetryRerouteNet()) {
     skipRouting = true;
   }
   if (skipRouting) {

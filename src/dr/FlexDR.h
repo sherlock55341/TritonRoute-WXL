@@ -58,6 +58,8 @@ namespace fr {
     RouteNetMode getRouteNetMode() const {
       return routeNetMode;
     }
+    bool hasForcedSelfSymmetryRerouteNet(int iter) const;
+    bool isForcedSelfSymmetryRerouteNet(frNet* net, int iter) const;
     // others
     int main();
     const std::vector<std::pair<frCoord, frCoord> >* getHalfViaEncArea() const {
@@ -439,6 +441,8 @@ namespace fr {
       return fixMode;
     }
     bool routeNetModeMatches(frNet* net) const;
+    bool isForcedSelfSymmetryRerouteNet(drNet* net) const;
+    bool hasForcedSelfSymmetryRerouteNet() const;
     bool isTargetNet(drNet* net) const {
       return net && routeNetModeMatches(net->getFrNet());
     }

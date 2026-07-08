@@ -51,6 +51,9 @@ namespace {
     }
     return "unknown";
   }
+
+  constexpr int FORCED_SELF_SYMMETRY_REROUTE_BEGIN_ITER = 2;
+  constexpr int FORCED_SELF_SYMMETRY_REROUTE_END_ITER = 3;
 }
 
 // std::chrono::duration<double> time_span_init(0);
@@ -109,6 +112,19 @@ int FlexDRWorker::main() {
   }
   return 0;
 }
+
+bool FlexDR::hasForcedSelfSymmetryRerouteNet(int iter) const {
+  return getRouteNetMode() == RouteNetMode::SelfSymmetryOnly &&
+         iter >= FORCED_SELF_SYMMETRY_REROUTE_BEGIN_ITER &&
+         iter <= FORCED_SELF_SYMMETRY_REROUTE_END_ITER;
+}
+
+bool FlexDR::isForcedSelfSymmetryRerouteNet(frNet* net, int iter) const {
+  return hasForcedSelfSymmetryRerouteNet(iter) &&
+         net &&
+         net->getSelfSymmetryConstraintPtr();
+}
+
 
 int FlexDRWorker::main_mt() {
   using namespace std::chrono;
@@ -1889,7 +1905,8 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
   if (iter > END_ITERATION) {
     return;
   }
-  if (iter && getDesign()->getTopBlock()->getMarkers().size() == 0) {
+  if (iter && getDesign()->getTopBlock()->getMarkers().size() == 0 &&
+      !hasForcedSelfSymmetryRerouteNet(iter)) {
     return;
   } 
 

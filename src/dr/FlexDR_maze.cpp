@@ -2608,6 +2608,10 @@ void FlexDRWorker::route_2() {
         }
         exit(1);
       }
+      if (isForcedSelfSymmetryRerouteNet(net)) {
+        cout << "  routed forced net " << net->getFrNet()->getName()
+             << " in DR iter " << getDRIter() << endl;
+      }
       mazeNetEnd(net);
       // incr drc
       route_2_x1(net, rerouteNets);
@@ -2744,6 +2748,13 @@ void FlexDRWorker::route_queue_main(deque<pair<frBlockObject*, pair<bool, int> >
         // isRouteSkipped = true;
         // cout << "  skip route " << net->getFrNet()->getName() << "\n";
         continue;
+      }
+      if (isForcedSelfSymmetryRerouteNet(net)) {
+        cout << "  force reroute " << net->getFrNet()->getName()
+             << " in DR iter " << getDRIter()
+             << " pins=" << net->getPins().size()
+             << " routeObjs=" << net->getRouteConnFigs().size()
+             << " numReroutes=" << net->getNumReroutes() << endl;
       }
       // cout << "  do route " << net->getFrNet()->getName() << "\n";
       // isRouteSkipped = false;
