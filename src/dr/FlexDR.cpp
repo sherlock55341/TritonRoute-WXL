@@ -53,7 +53,6 @@ namespace {
   }
 
   constexpr int FORCED_SELF_SYMMETRY_REROUTE_BEGIN_ITER = 2;
-  constexpr int FORCED_SELF_SYMMETRY_REROUTE_END_ITER = 3;
 }
 
 // std::chrono::duration<double> time_span_init(0);
@@ -115,8 +114,7 @@ int FlexDRWorker::main() {
 
 bool FlexDR::hasForcedSelfSymmetryRerouteNet(int iter) const {
   return getRouteNetMode() == RouteNetMode::SelfSymmetryOnly &&
-         iter >= FORCED_SELF_SYMMETRY_REROUTE_BEGIN_ITER &&
-         iter <= FORCED_SELF_SYMMETRY_REROUTE_END_ITER;
+         iter >= FORCED_SELF_SYMMETRY_REROUTE_BEGIN_ITER;
 }
 
 bool FlexDR::isForcedSelfSymmetryRerouteNet(frNet* net, int iter) const {

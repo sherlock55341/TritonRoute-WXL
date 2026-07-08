@@ -670,8 +670,7 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
 
   auto edgeLength = getEdgeLength(gridX, gridY, gridZ, dir);
   const bool usePrevEdgeCost = selfSymmetrySearch && drWorker &&
-                               drWorker->getDRIter() >= 2 &&
-                               drWorker->getDRIter() <= 3;
+                               drWorker->hasForcedSelfSymmetryRerouteNet();
   if (!guideCost && selfSymmetrySearch && drWorker &&
       drWorker->getDRIter() <= 1) {
     auto guideX = gridX;
@@ -687,12 +686,10 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
       }
     }
   }
-  auto geometryCostDivisor = 1;
-  if (!usePrevEdgeCost && selfSymmetrySearch && drWorker &&
-      drWorker->getDRIter() <= 1) {
+  bool isAxisEdge = false;
+  if (selfSymmetrySearch) {
     frPoint currPt;
     getPoint(currPt, gridX, gridY);
-    bool isAxisEdge = false;
     if (selfSymmetryAxisHorizontal) {
       isAxisEdge = currPt.y() == selfSymmetryAxis &&
                    (dir == frDirEnum::E || dir == frDirEnum::W ||
@@ -702,18 +699,19 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
                    (dir == frDirEnum::N || dir == frDirEnum::S ||
                     dir == frDirEnum::U || dir == frDirEnum::D);
     }
-    if (isAxisEdge) {
-      if (dir == frDirEnum::U || dir == frDirEnum::D) {
-        geometryCostDivisor = 4;
-      } else {
-        auto layerDir = getDesign()->getTech()->getLayer(lNum)->getDir();
-        bool isPrefDir =
-            (layerDir == frPrefRoutingDirEnum::frcHorzPrefRoutingDir &&
-             (dir == frDirEnum::E || dir == frDirEnum::W)) ||
-            (layerDir == frPrefRoutingDirEnum::frcVertPrefRoutingDir &&
-             (dir == frDirEnum::N || dir == frDirEnum::S));
-        geometryCostDivisor = isPrefDir ? 4 : 2;
-      }
+  }
+  auto geometryCostDivisor = 1;
+  if (isAxisEdge) {
+    if (dir == frDirEnum::U || dir == frDirEnum::D) {
+      geometryCostDivisor = 4;
+    } else {
+      auto layerDir = getDesign()->getTech()->getLayer(lNum)->getDir();
+      bool isPrefDir =
+          (layerDir == frPrefRoutingDirEnum::frcHorzPrefRoutingDir &&
+           (dir == frDirEnum::E || dir == frDirEnum::W)) ||
+          (layerDir == frPrefRoutingDirEnum::frcVertPrefRoutingDir &&
+           (dir == frDirEnum::N || dir == frDirEnum::S));
+      geometryCostDivisor = isPrefDir ? 4 : 2;
     }
   }
   auto guideStepCost = !usePrevEdgeCost && !guideCost ? GUIDECOST * edgeLength : 0;
@@ -728,7 +726,7 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
   auto blockStepCost = blockCost ? BLOCKCOST * pathWidth * 20 : 0;
   auto safetyCost = drcStepCost + markerStepCost + blockStepCost;
   auto symmetryPenalty = 0;
-  if (usePrevEdgeCost && isSelfSymmetryCardinalDir(dir)) {
+  if (usePrevEdgeCost && isSelfSymmetryCardinalDir(dir) && !isAxisEdge) {
     if (!hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ, dir) &&
         !drcCost && !markerCost && !blockCost) {
       symmetryPenalty = 2 * edgeLength;

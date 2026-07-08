@@ -4105,13 +4105,9 @@ void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, 
     for (auto &marker: markers) {
       route_queue_update_from_marker(&marker, uniqueVictims, uniqueAggressors, checks, routes);
     }
-    if (getDRIter() >= 2 && getDRIter() <= 3) {
+    if (hasForcedSelfSymmetryRerouteNet()) {
       for (auto &net: nets) {
         if (isTargetNet(net.get()) && net->getNumReroutes() < getMazeEndIter()) {
-          if (isForcedSelfSymmetryRerouteNet(net.get())) {
-            cout << "  force reroute " << net->getFrNet()->getName()
-                 << " in DR iter " << getDRIter() << endl;
-          }
           auto route = make_pair(
               static_cast<frBlockObject*>(net.get()),
               make_pair(true, net->getNumReroutes()));

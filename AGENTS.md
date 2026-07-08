@@ -49,7 +49,8 @@ the ordinary worker path or the queue path.
 - `searchRepair(...)` also returns early for `iter > 0` when top-block marker
   count is zero, except for forced self-symmetry reroute iters. The forced
   reroute is only active in `RouteNetMode::SelfSymmetryOnly` for all
-  self-symmetry nets in DR iter 2 and 3.
+  self-symmetry nets in DR iter 2 and later, and prev-edge cost uses the same
+  forced reroute window.
 - Worker path: `FlexDR::searchRepair()` builds tiled `FlexDRWorker`s, sets
   `routeBox`, `extBox`, `drcBox`, `mazeEndIter`, `drIter`, `ripupMode`,
   `followGuide`, `fixMode`, and costs, then calls `worker->main_mt()` in OpenMP
