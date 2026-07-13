@@ -670,7 +670,7 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
 
   auto edgeLength = getEdgeLength(gridX, gridY, gridZ, dir);
   const bool usePrevEdgeCost = selfSymmetrySearch && drWorker &&
-                               drWorker->hasForcedSelfSymmetryRerouteNet();
+                               drWorker->useSelfSymmetryPrevEdgeCost();
   if (!guideCost && selfSymmetrySearch && drWorker &&
       drWorker->getDRIter() <= 1) {
     auto guideX = gridX;

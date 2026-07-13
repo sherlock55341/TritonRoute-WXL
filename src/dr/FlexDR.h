@@ -441,10 +441,13 @@ namespace fr {
       return fixMode;
     }
     bool routeNetModeMatches(frNet* net) const;
+    bool isOrdinarySelfSymmetryRepairMode() const;
+    bool canRepairNet(frNet* net) const;
     bool isForcedSelfSymmetryRerouteNet(drNet* net) const;
     bool hasForcedSelfSymmetryRerouteNet() const;
+    bool useSelfSymmetryPrevEdgeCost() const;
     bool isTargetNet(drNet* net) const {
-      return net && routeNetModeMatches(net->getFrNet());
+      return net && canRepairNet(net->getFrNet());
     }
     //const std::vector<std::unique_ptr<frMarker> >& getMarkers() const {
     //  return markers;

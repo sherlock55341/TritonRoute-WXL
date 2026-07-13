@@ -44,12 +44,31 @@ bool FlexDRWorker::routeNetModeMatches(frNet* net) const {
   return false;
 }
 
+bool FlexDRWorker::isOrdinarySelfSymmetryRepairMode() const {
+  return dr->getRouteNetMode() == RouteNetMode::OrdinaryOnly &&
+         getDRIter() >= 3 &&
+         getRipupMode() == 0;
+}
+
+bool FlexDRWorker::canRepairNet(frNet* net) const {
+  if (routeNetModeMatches(net)) {
+    return true;
+  }
+  return isOrdinarySelfSymmetryRepairMode() &&
+         net &&
+         net->getSelfSymmetryConstraintPtr();
+}
+
 bool FlexDRWorker::isForcedSelfSymmetryRerouteNet(drNet* net) const {
   return net && dr->isForcedSelfSymmetryRerouteNet(net->getFrNet(), getDRIter());
 }
 
 bool FlexDRWorker::hasForcedSelfSymmetryRerouteNet() const {
   return dr->hasForcedSelfSymmetryRerouteNet(getDRIter());
+}
+
+bool FlexDRWorker::useSelfSymmetryPrevEdgeCost() const {
+  return hasForcedSelfSymmetryRerouteNet() || isOrdinarySelfSymmetryRepairMode();
 }
 
 namespace {
@@ -4201,7 +4220,7 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
     if (aggressor && aggressor->typeId() == frcNet) {
       auto fNet = static_cast<frNet*>(aggressor);
       if (fNet->getType() == frNetEnum::frcNormalNet || fNet->getType() == frNetEnum::frcClockNet) {
-        if (!routeNetModeMatches(fNet)) {
+        if (!canRepairNet(fNet)) {
           continue;
         }
         movableAggressorNets.insert(fNet);
@@ -4211,6 +4230,26 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
               continue;
             }
             movableAggressorOwners.insert(aggressor);
+          }
+        }
+      }
+    }
+  }
+  if (isOrdinarySelfSymmetryRepairMode()) {
+    for (auto &src: marker->getSrcs()) {
+      if (src && src->typeId() == frcNet) {
+        auto fNet = static_cast<frNet*>(src);
+        if ((fNet->getType() == frNetEnum::frcNormalNet ||
+             fNet->getType() == frNetEnum::frcClockNet) &&
+            fNet->getSelfSymmetryConstraintPtr()) {
+          movableAggressorNets.insert(fNet);
+          if (getDRNets(fNet)) {
+            for (auto dNet: *(getDRNets(fNet))) {
+              if (dNet->getNumReroutes() >= getMazeEndIter()) {
+                continue;
+              }
+              movableAggressorOwners.insert(src);
+            }
           }
         }
       }
@@ -4285,7 +4324,7 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
       if (owner && owner->typeId() == frcNet) {
         auto fNet = static_cast<frNet*>(owner);
         if (fNet->getType() == frNetEnum::frcNormalNet || fNet->getType() == frNetEnum::frcClockNet) {
-          if (!routeNetModeMatches(fNet)) {
+          if (!canRepairNet(fNet)) {
             continue;
           }
           if (getDRNets(fNet)) {
@@ -4349,7 +4388,7 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
     if (aggressorOwner && aggressorOwner->typeId() == frcNet) {
       auto fNet = static_cast<frNet*>(aggressorOwner);
       if (fNet->getType() == frNetEnum::frcNormalNet || fNet->getType() == frNetEnum::frcClockNet) {
-        if (!routeNetModeMatches(fNet)) {
+        if (!canRepairNet(fNet)) {
           continue;
         }
         if (getDRNets(fNet)) {

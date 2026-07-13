@@ -40,7 +40,9 @@ the ordinary worker path or the queue path.
 - `RouteNetMode` controls net membership. `SelfSymmetryOnly` matches nets with
   `getSelfSymmetryConstraintPtr() != nullptr`; `OrdinaryOnly` matches nets
   without that constraint; `All` is only the default constructor mode and is not
-  used by the current top-level `FlexRoute::main()` sequence.
+  used by the current top-level `FlexRoute::main()` sequence. During
+  `OrdinaryOnly` DR iter 3+ with `ripupMode=0`, queue-mode marker repair may
+  also reroute self-symmetry nets implicated by current DRC markers.
 - `FlexDR::main()` is a fixed list of `searchRepair(...)` calls. The
   `-drouteEndIterNum N` / `drouteEndIterNum:N` value sets `END_ITERATION`; each
   `searchRepair(iter, ...)` returns immediately when `iter > END_ITERATION`.
@@ -49,8 +51,9 @@ the ordinary worker path or the queue path.
 - `searchRepair(...)` also returns early for `iter > 0` when top-block marker
   count is zero, except for forced self-symmetry reroute iters. The forced
   reroute is only active in `RouteNetMode::SelfSymmetryOnly` for all
-  self-symmetry nets in DR iter 2 and later, and prev-edge cost uses the same
-  forced reroute window.
+  self-symmetry nets in DR iter 2 and later. Prev-edge cost uses that forced
+  reroute window, and also applies to self-symmetry nets pulled into
+  `OrdinaryOnly` iter 3+ marker repair.
 - Worker path: `FlexDR::searchRepair()` builds tiled `FlexDRWorker`s, sets
   `routeBox`, `extBox`, `drcBox`, `mazeEndIter`, `drIter`, `ripupMode`,
   `followGuide`, `fixMode`, and costs, then calls `worker->main_mt()` in OpenMP
@@ -64,8 +67,10 @@ the ordinary worker path or the queue path.
   `drNet`, calls `mazeNetInit()` -> `routeNet()` -> `mazeNetEnd()`, updates the
   GC target with `gcWorker->updateDRNet(net)`, runs `gcWorker->main()`, applies
   GC patch wires, then uses `gcWorker->getMarkers()` to update the queue and
-  marker costs. Insert marker diagnostics here when debugging queue-mode DR
-  markers.
+  marker costs. In `OrdinaryOnly` iter 3+ partial-ripup queue mode, marker
+  owners can make self-symmetry nets route items; this does not force reroute
+  all self-symmetry nets. Insert marker diagnostics here when debugging
+  queue-mode DR markers.
 - Ordinary `route()` path: only used when `fixMode != 9` through `main_mt()` or
   through the single-worker `main()` path. It runs `mazeIterInit()`, routes
   `rerouteNets`, then calls `route_drc()` and uses worker member `markers`.
