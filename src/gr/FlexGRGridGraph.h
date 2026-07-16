@@ -645,7 +645,8 @@ namespace fr {
 
     // [0] hasEEdge; [1] hasNEdge; [2] hasUEdge
     // [3] blockE;   [4] blockN;   [5] blockU
-    // [6] selfSymPrevE; [7] selfSymPrevN
+    // [6] selfSymPrevE; [7] selfSymPrevN.  These transient bits mark the
+    // cached symmetric target for the active net and are reset between nets.
     // [15-8]  history cost
     // [31-24] supply H; [23-16] supply V // last bit is fractional
     // [63-48] demand H; [47-32] demand V // last bit is fractional

@@ -2007,6 +2007,8 @@ void FlexDRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(drNet* net) {
     return;
   }
 
+  // Clip the top-block cache to this worker and project it into transient maze
+  // bits.  The bits guide this net only and reset with gridGraph status.
   for (auto &pathSeg: net->getFrNet()->getSelfSymmetryPathSegs()) {
     frPoint bp, ep;
     FlexMazeIdx bi, ei;
@@ -2632,6 +2634,7 @@ void FlexDRWorker::route_2() {
 */
 
 void FlexDRWorker::route_queue() {
+  // The reroute queue owns no objects; entries point into worker state.
   // bool enableOutput = true;
   bool enableOutput = false;
   // deque<pair<drNet*, int> > rerouteNets; // drNet*, #reroute pair
@@ -2771,6 +2774,9 @@ void FlexDRWorker::route_queue_main(deque<pair<frBlockObject*, pair<bool, int> >
       net->clear();
 
 
+      // Route mutates the worker net and region query first; GC then checks the
+      // same committed geometry and feeds new markers back into the queue.
+      // This ordering keeps subsequent costs synchronized with the latest path.
       // route
       mazeNetInit(net);
       bool isRouted = routeNet(net);

@@ -41,6 +41,9 @@
 
 namespace fr {
 
+  // Auto builds the lower-coordinate reference side, OrdinaryOnly excludes
+  // constrained nets, and Mirror repairs constrained nets against the cached
+  // reference geometry.
   enum class FlexGRSelfSymmetryMode {
     Auto,
     OrdinaryOnly,
@@ -383,6 +386,8 @@ namespace fr {
     double     congThresh;
     bool       is2DRouting;
     int        ripupMode;
+    // Worker-local phase selector; it controls net admission and how mirror
+    // costs interpret the per-net path-segment cache.
     FlexGRSelfSymmetryMode selfSymmetryMode;
 
     // local storage

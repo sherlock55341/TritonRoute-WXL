@@ -76,6 +76,8 @@ namespace fr {
     }
   protected:
     frDesign*          design;
+    // Stage-wide membership filter.  Ordinary marker repair may deliberately
+    // admit implicated self-symmetry nets without changing this authority.
     RouteNetMode       routeNetMode;
     std::vector<std::vector<std::map<frNet*, std::set<std::pair<frPoint, frLayerNum> >, frBlockObjectComp> > > gcell2BoundaryPin;
 
@@ -130,6 +132,8 @@ namespace fr {
       Negative,
       Positive
     };
+    // Rebuilds each constrained net's derived path cache from the selected
+    // authoritative side of committed top-block DR geometry.
     void updateSelfSymmetryPathSegCaches(SelfSymmetryReferenceSide referenceSide);
     void checkConnectivity(int iter = -1);
     void checkConnectivity_initDRObjs(frNet* net, std::vector<frConnFig*> &netDRObjs);

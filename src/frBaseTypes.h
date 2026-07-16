@@ -185,6 +185,9 @@ namespace fr {
     frcNone,
     frcSelfSymmetry
   };
+  // Selects which net population a routing stage is allowed to mutate.  The
+  // top-level flow routes constrained nets first so their symmetric result can
+  // act as fixed context while ordinary nets are completed.
   enum class RouteNetMode {
     All,
     SelfSymmetryOnly,
@@ -421,6 +424,8 @@ namespace fr {
   typedef boost::polygon::segment_data<int> Segment;
 
   struct frSelfSymmetryConstraint {
+    // Coordinates are authoritative design-space DBU values.  A horizontal
+    // axis is y=axis; a vertical axis is x=axis.
     bool isAxisHorizontal;
     int axis;
   };

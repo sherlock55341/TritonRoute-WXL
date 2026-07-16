@@ -487,6 +487,8 @@ void FlexTAWorker::initIroute(frGuide *guide) {
 
 
 bool FlexTAWorker::routeNetModeMatches(frGuide *guide) const {
+  // Filtering happens before iroute creation, so non-target guides remain
+  // fixed context in the region query rather than competing for tracks again.
   if (getRouteNetMode() == RouteNetMode::All) {
     return true;
   }

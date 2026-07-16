@@ -45,6 +45,8 @@ bool FlexDRWorker::routeNetModeMatches(frNet* net) const {
 }
 
 bool FlexDRWorker::isOrdinarySelfSymmetryRepairMode() const {
+  // Ordinary routing may repair a constrained net only when a current marker
+  // implicates it; this is not the constrained stage's force-reroute policy.
   return dr->getRouteNetMode() == RouteNetMode::OrdinaryOnly &&
          getDRIter() >= 3 &&
          getRipupMode() == 0;
@@ -68,6 +70,8 @@ bool FlexDRWorker::hasForcedSelfSymmetryRerouteNet() const {
 }
 
 bool FlexDRWorker::useSelfSymmetryPrevEdgeCost() const {
+  // Cache guidance is meaningful when both sides are being refreshed or when
+  // an ordinary-stage marker repair touches already established symmetry.
   return hasForcedSelfSymmetryRerouteNet() || isOrdinarySelfSymmetryRepairMode();
 }
 
@@ -4124,6 +4128,8 @@ void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, 
     for (auto &marker: markers) {
       route_queue_update_from_marker(&marker, uniqueVictims, uniqueAggressors, checks, routes);
     }
+    // Marker owners seed normal partial repair.  During the constrained-stage
+    // refresh window, also enqueue every eligible symmetry net exactly once.
     if (hasForcedSelfSymmetryRerouteNet()) {
       for (auto &net: nets) {
         if (isTargetNet(net.get()) && net->getNumReroutes() < getMazeEndIter()) {
@@ -4179,6 +4185,8 @@ void FlexDRWorker::route_queue_update_queue(const vector<pair<frBlockObject*, pa
                                             const vector<pair<frBlockObject*, pair<bool, int> > > &routes,
                                             deque<pair<frBlockObject*, pair<bool, int> > > &rerouteQueue) {
   auto orderedRoutes = routes;
+  // Preserve existing ordering within each group, but establish constrained
+  // geometry before ordinary routes that may depend on it.
   stable_partition(orderedRoutes.begin(), orderedRoutes.end(), [](auto &route) {
     auto obj = route.first;
     if (!obj || obj->typeId() != drcNet) {

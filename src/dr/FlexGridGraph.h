@@ -918,6 +918,8 @@ namespace fr {
     std::vector<bool>                          zDirs; // is horz dir
     frUInt4                                    ggDRCCost;
     frUInt4                                    ggMarkerCost;
+    // Per-search state derived from the active frNet constraint.  The axis is
+    // a design-space DBU coordinate; all fields reset before routing a net.
     bool                                       selfSymmetrySearch = false;
     bool                                       selfSymmetryAxisHorizontal = false;
     frCoord                                    selfSymmetryAxis = 0;

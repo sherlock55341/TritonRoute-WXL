@@ -41,6 +41,8 @@
 
 namespace fr {
 
+  // Scales the extra cost of consuming a planar M1 edge, where a symmetric
+  // route is especially likely to require an additional access via.
   constexpr unsigned SELF_SYMMETRY_M1_VIA_PENALTY_COUNT = 4;
 
   inline long long getSelfSymmetryAbsDiff(frCoord lhs, frCoord rhs) {
@@ -75,6 +77,9 @@ namespace fr {
       return false;
     }
 
+    // Search every routing layer because the axis is a design-space invariant,
+    // not a commitment to one layer.  Ties choose the lower DBU coordinate so
+    // all stages derive the same axis deterministically.
     bool found = false;
     long long bestDist = std::numeric_limits<long long>::max();
     frCoord bestCoord = axis;
@@ -159,6 +164,9 @@ namespace fr {
     return true;
   }
 
+  // Carries the same authoritative axis in both design DBU and GCell-index
+  // spaces.  The GCell form is derived for maze decisions; it must never be
+  // written back as a physical coordinate.
   struct SelfSymmetryAxisContext {
     bool valid = false;
     bool isAxisHorizontal = false;
@@ -245,6 +253,8 @@ namespace fr {
   inline void get_self_symmetry_axis(const std::vector<frPoint> &points,
                                      bool &is_horizontal,
                                      int &coor) {
+    // Prefer the cheap moment test when one orientation is unambiguous, then
+    // fall back to nearest-neighbor mirror error for nearly balanced samples.
     double mean_x = 0;
     double mean_y = 0;
     double sigma_x = 0;

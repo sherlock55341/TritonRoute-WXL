@@ -292,8 +292,12 @@ namespace fr {
     //std::list<std::unique_ptr<frGuide> >    guides;
     std::vector<std::unique_ptr<frGuide> >    guides;
     frNetEnum                                 type;
+    // Identifies whether selfSymmetryConstraint is active for this net.
     frNetRoutingConstraint                    constraint;
+    // Authoritative design-space axis owned by the net for its full lifetime.
     frSelfSymmetryConstraint                  selfSymmetryConstraint;
+    // Derived snapshot of routed geometry used to price/mark mirrored edges in
+    // later routing phases.  Each phase rebuilds or clears this non-owning cache.
     std::vector<frPathSeg>                    selfSymmetryPathSegs;
     bool                                      modified;
     bool                                      isFakeNet; // indicate floating PG nets

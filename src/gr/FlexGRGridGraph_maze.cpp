@@ -672,6 +672,9 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
   frMIdx selfSymmetryMirrorY = 0;
   frMIdx selfSymmetryMirrorZ = 0;
   frDirEnum selfSymmetryMirrorDir = frDirEnum::UNKNOWN;
+  // Phase 1 (Auto) makes the lower-coordinate side authoritative and discounts
+  // motion on the axis.  Phase 2 (Mirror) rewards cached target edges and
+  // penalizes choices whose reflected peer was not established by phase 1.
   if (activeNet && activeNet->getSelfSymmetryConstraintPtr() &&
       (grWorker->isSelfSymmetryAuto() || grWorker->isSelfSymmetryMirror())) {
     if (getSelfSymmetryAxisContext(this, activeNet, selfSymmetryAxisCtx)) {
@@ -719,6 +722,8 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
     }
   }
   auto stepCost = safetyCost + trafficCost + geometryCost + symmetryPenalty;
+  // In 3D, account for the access-via burden of using an M1 planar edge before
+  // adding the ordinary traffic and geometry cost to the wavefront.
   if (activeNet && activeNet->getSelfSymmetryConstraintPtr() &&
       !grWorker->is2D() && isSelfSymmetryCardinalDir(dir) &&
       getLayerNum(gridZ) == VIA_ACCESS_LAYERNUM) {
@@ -736,6 +741,9 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
   }
   nextPathCost += stepCost;
   auto mirrorCost = 0.0;
+  // Charge the reflected edge's congestion, history, and blockage as part of
+  // the current decision.  This prevents a locally cheap lead edge from
+  // committing the mirror pass to an infeasible or heavily congested peer.
   if (activeNet && activeNet->getSelfSymmetryConstraintPtr() &&
       isSelfSymmetryCardinalDir(dir)) {
     auto edgeLen = getEdgeLength(gridX, gridY, gridZ, dir);

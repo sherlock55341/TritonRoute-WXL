@@ -671,6 +671,8 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
   auto edgeLength = getEdgeLength(gridX, gridY, gridZ, dir);
   const bool usePrevEdgeCost = selfSymmetrySearch && drWorker &&
                                drWorker->useSelfSymmetryPrevEdgeCost();
+  // Early constrained iterations may use the mirrored guide on any layer;
+  // later reroutes rely on the committed prev-edge cache instead.
   if (!guideCost && selfSymmetrySearch && drWorker &&
       drWorker->getDRIter() <= 1) {
     auto guideX = gridX;
@@ -700,6 +702,8 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
                     dir == frDirEnum::U || dir == frDirEnum::D);
     }
   }
+  // Prefer motion along the physical symmetry axis without making it free:
+  // preferred-direction planar edges and vias receive the strongest discount.
   auto geometryCostDivisor = 1;
   if (isAxisEdge) {
     if (dir == frDirEnum::U || dir == frDirEnum::D) {
@@ -878,6 +882,9 @@ bool FlexGridGraph::search(drNet* net, vector<FlexMazeIdx> &connComps, drPin* ne
   //bool enableOutput = true;
   bool enableOutput = false;
   int stepCnt = 0;
+  // Constraint data is copied into per-search state because the grid graph is
+  // reused across nets; resetting prevents one net's axis from leaking into the
+  // next wavefront expansion.
   selfSymmetrySearch = false;
   selfSymmetryAxisHorizontal = false;
   selfSymmetryAxis = 0;

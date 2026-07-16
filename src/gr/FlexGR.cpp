@@ -193,11 +193,15 @@ void FlexGR::main() {
   searchRepair(/*iter*/2, /*size*/200, /*offset*/-150, /*mazeEndIter*/2, /*workerCongCost*/2 * CONGCOST, /*workerHistCost*/2 * HISTCOST, /*congThresh*/0.8, /*is2DRouting*/true, /*mode*/1, /*TEST*/false);
   // reportCong2D();
   writeGuideStageFile("2d_auto");
+  // Revisit constrained nets after the reference-side pass.  The freshly
+  // cached geometry now supplies the desired mirror edges to each worker.
   searchRepair(/*iter*/0, /*size*/200, /*offset*/0, /*mazeEndIter*/1, /*workerCongCost*/2 * CONGCOST, /*workerHistCost*/2 * HISTCOST, /*congThresh*/0.8, /*is2DRouting*/true, /*mode*/1, /*TEST*/false, FlexGRSelfSymmetryMode::Mirror);
   writeGuideStageFile("2d_mirror");
   
   reportCong2D();
   
+  // Assign layers only after the symmetric 2D topology is established; the 3D
+  // passes below can then price both the chosen edge and its mirrored peer.
   layerAssign();
   writeGuideStageFile("layerassign");
   
@@ -338,6 +342,8 @@ void FlexGR::clearSelfSymmetryPathSegCaches() {
 }
 
 void FlexGR::updateSelfSymmetryPathSegCaches() {
+  // Rebuild, rather than incrementally patch, the derived cache after every
+  // search/repair pass so it exactly reflects committed top-block GR shapes.
   auto block = design ? design->getTopBlock() : nullptr;
   if (block == nullptr) {
     return;
@@ -365,6 +371,10 @@ void FlexGR::updateSelfSymmetryPathSegCaches() {
       continue;
     }
 
+    // Normalize the lower-coordinate side into a complete symmetric target:
+    // keep axis edges, mirror lead-side edges, and split crossing edges at the
+    // axis before mirroring.  Geometry already wholly on the opposite side is
+    // intentionally ignored because the lead side is authoritative.
     for (auto &uShape: net->getGRShapes()) {
       if (uShape->typeId() != grcPathSeg) {
         continue;
@@ -433,6 +443,8 @@ void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
                           unsigned workerCongCost, unsigned workerHistCost, 
                           double congThresh, bool is2DRouting, int mode, bool TEST,
                           FlexGRSelfSymmetryMode selfSymmetryMode) {
+  // A pass consists of: tile creation, boundary extraction, parallel maze
+  // repair, serial writeback, then rebuilding the cross-pass symmetry cache.
   if (selfSymmetryMode == FlexGRSelfSymmetryMode::Mirror &&
       !hasSelfSymmetryNets()) {
     return;
@@ -571,6 +583,8 @@ void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     }
   }
 
+  // Workers have committed their route objects at this point; publish one
+  // coherent cache for the next reference/mirror pass.
   updateSelfSymmetryPathSegCaches();
   t.print();
   cout << endl << flush;

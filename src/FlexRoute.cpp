@@ -51,11 +51,12 @@ using namespace fr;
 
 namespace {
 
+  // Candidate naming is only the admission filter; a net becomes constrained
+  // after initSelfSymmetryConstraints installs a validated axis on frNet.
   bool isSelfSymmetryCandidateNet(frNet *net) {
     if (!net) return false;
     const string &name = net->getName();
-    return name.compare(0, 7, "Symmtry") == 0 ||
-           name.compare(0, 6, "Mirror")  == 0;
+    return name.compare(0, 7, "Symmtry") == 0;
   }
 
   struct HardcodedAxis {
@@ -149,7 +150,7 @@ namespace {
       return;
     }
 
-    // Build lookup from hardcoded axes
+    // Look up each candidate net's hardcoded axis by name.
     std::unordered_map<std::string, const HardcodedAxis*> axisMap;
     for (auto &ha : hardcodedAxes) {
       axisMap[ha.name] = &ha;
@@ -174,7 +175,7 @@ namespace {
       bool isHorizontal = it->second->isHorizontal;
       frCoord axis = it->second->axis;
 
-      // Validate axis is inside die box
+      // Axis must lie within the die box, or the request is unsatisfiable.
       auto axisName = isHorizontal ? "y" : "x";
       bool axisInDie = isHorizontal ?
                        axis >= dieBox.bottom() && axis <= dieBox.top() :
@@ -186,7 +187,8 @@ namespace {
         exit(1);
       }
 
-      // Snap to nearest routing track
+      // Snap to a routing track; later mirror operations treat this snapped
+      // coordinate as authoritative.
       auto snappedAxis = axis;
       if (!findNearestSelfSymmetryRoutingTrack(design,
                                                isHorizontal,
@@ -199,6 +201,8 @@ namespace {
         exit(1);
       }
 
+      // Set the constraint only after validation succeeds, so a non-null
+      // constraint always denotes a routable axis.
       frSelfSymmetryConstraint selfSymmetryConstraint;
       selfSymmetryConstraint.isAxisHorizontal = isHorizontal;
       selfSymmetryConstraint.axis = snappedAxis;
@@ -225,6 +229,8 @@ void FlexRoute::init() {
   }
   // GR-related
   parser.initRPin();
+  // Constraints must exist before GR/TA/DR classify nets and build mirrored
+  // caches, but after tracks and top-block geometry have been parsed.
   initSelfSymmetryConstraints(getDesign());
 }
 
@@ -271,6 +277,9 @@ int FlexRoute::main() {
     parser.postProcessGuide();
   }
   prep();
+  // Route constrained nets first and write their symmetric geometry back
+  // before ordinary routing.  Ordinary DR may still pull a constrained net
+  // into marker repair when that net owns a violation in its repair window.
   ta(RouteNetMode::SelfSymmetryOnly);
   dr(RouteNetMode::SelfSymmetryOnly);
   ta(RouteNetMode::OrdinaryOnly);

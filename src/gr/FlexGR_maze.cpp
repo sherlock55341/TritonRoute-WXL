@@ -269,6 +269,8 @@ void FlexGRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(grNet* net) {
     return;
   }
 
+  // Project the design-space cache into this worker's clipped maze grid.  The
+  // resulting bits are hints for the current net only and reset with the grid.
   for (auto &pathSeg: net->getFrNet()->getSelfSymmetryPathSegs()) {
     frPoint bp, ep;
     FlexMazeIdx bi, ei;

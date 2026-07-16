@@ -52,6 +52,9 @@ namespace {
     return "unknown";
   }
 
+  // Iterations 0-1 establish an initial legal route.  Later constrained-stage
+  // iterations reroute every symmetry net so the alternating reference cache
+  // can correct both sides even when no current marker selects the net.
   constexpr int FORCED_SELF_SYMMETRY_REROUTE_BEGIN_ITER = 2;
 }
 
@@ -175,6 +178,9 @@ int FlexDRWorker::main_mt() {
 }
 
 void FlexDR::updateSelfSymmetryPathSegCaches(SelfSymmetryReferenceSide referenceSide) {
+  // Rebuild the cache from committed frPathSegs after a full tiled iteration.
+  // Axis segments are retained, reference-side segments are mirrored, and
+  // crossing segments are clipped at the axis before reflection.
   auto getSide = [](frCoord coord, frCoord axis) {
     if (coord < axis) {
       return -1;
@@ -2188,6 +2194,8 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     }
   }
   checkConnectivity(iter);
+  // Alternate the authoritative side across forced reroutes.  This prevents
+  // accumulated error on one side from permanently defining the other side.
   updateSelfSymmetryPathSegCaches(iter % 2 == 0 ?
                                   SelfSymmetryReferenceSide::Negative :
                                   SelfSymmetryReferenceSide::Positive);

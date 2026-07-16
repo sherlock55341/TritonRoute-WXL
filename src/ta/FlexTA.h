@@ -107,6 +107,8 @@ namespace fr {
   protected:
     frTechObject*   tech;
     frDesign*       design;
+    // Stage-wide membership filter; workers inherit it and must not assign
+    // tracks for the other net population.
     RouteNetMode    routeNetMode;
     // others
     void main_helper(frLayerNum lNum, int maxOffsetIter, int panelWidth);
@@ -276,6 +278,7 @@ namespace fr {
     frBox                              extBox;
     frPrefRoutingDirEnum               dir;
     int                                taIter;
+    // Non-owning copy of the stage filter used when collecting panel routes.
     RouteNetMode                       routeNetMode;
     FlexTAWorkerRegionQuery            rq;
 
