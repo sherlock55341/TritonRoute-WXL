@@ -60,6 +60,8 @@ namespace fr {
     }
     bool hasForcedSelfSymmetryRerouteNet(int iter) const;
     bool isForcedSelfSymmetryRerouteNet(frNet* net, int iter) const;
+    bool hasForcedMirrorRerouteNet(int iter) const;
+    bool isForcedMirrorRerouteNet(frNet* net, int iter) const;
     // others
     int main();
     const std::vector<std::pair<frCoord, frCoord> >* getHalfViaEncArea() const {
@@ -135,6 +137,9 @@ namespace fr {
     // Rebuilds each constrained net's derived path cache from the selected
     // authoritative side of committed top-block DR geometry.
     void updateSelfSymmetryPathSegCaches(SelfSymmetryReferenceSide referenceSide);
+    // Rebuilds each mirror pair's follower path cache from the pass's
+    // effective leader's committed top-block DR geometry.
+    void updateMirrorPathSegCaches(bool mirrorPassIsSecond);
     void checkConnectivity(int iter = -1);
     void checkConnectivity_initDRObjs(frNet* net, std::vector<frConnFig*> &netDRObjs);
     void checkConnectivity_pin2epMap(frNet* net, std::vector<frConnFig*> &netDRObjs,
@@ -450,6 +455,11 @@ namespace fr {
     bool isForcedSelfSymmetryRerouteNet(drNet* net) const;
     bool hasForcedSelfSymmetryRerouteNet() const;
     bool useSelfSymmetryPrevEdgeCost() const;
+    bool isOrdinaryMirrorRepairMode() const;
+    bool isForcedMirrorRerouteNet(drNet* net) const;
+    bool hasForcedMirrorRerouteNet() const;
+    bool useMirrorPrevEdgeCost() const;
+    bool isMirrorFollower(frNet* net) const;
     bool isTargetNet(drNet* net) const {
       return net && canRepairNet(net->getFrNet());
     }
@@ -758,7 +768,12 @@ namespace fr {
     void mazeIterInit_drcCost();
 
     void mazeNetInit(drNet* net);
+    static bool clipPathSegToBox(frPoint &bp, frPoint &ep, const frBox &box);
+    void projectPrevPlanarEdgesToGrid(const std::vector<frPathSeg> &pathSegs,
+                                      const char *callerName);
     void mazeNetInit_selfSymmetryPrevPlanarEdges(drNet* net);
+    void mazeNetInit_mirrorPrevPlanarEdges(drNet* net);
+    void mazeNetInit_mirrorLeaderAnchorPrevPlanarEdges(drNet* net);
     void mazeNetEnd(drNet* net);
     bool routeNet(drNet* net);
     void routeNet_prep(drNet* net, std::set<drPin*, frBlockObjectComp> &pins, 

@@ -714,12 +714,18 @@ void FlexDRWorker::end() {
     return;
   }
   bool hasForcedModifiedNet = false;
-  if (hasForcedSelfSymmetryRerouteNet()) {
-    for (auto &net: nets) {
-      if (net->isModified() && isForcedSelfSymmetryRerouteNet(net.get())) {
-        hasForcedModifiedNet = true;
-        break;
-      }
+  // The self-symmetry and mirror forced windows are mode-exclusive, so a
+  // single pass with a combined predicate covers both.
+  for (auto &net: nets) {
+    if (!net->isModified()) {
+      continue;
+    }
+    if ((hasForcedSelfSymmetryRerouteNet() &&
+         isForcedSelfSymmetryRerouteNet(net.get())) ||
+        (hasForcedMirrorRerouteNet() &&
+         isForcedMirrorRerouteNet(net.get()))) {
+      hasForcedModifiedNet = true;
+      break;
     }
   }
   // skip if current clip does not have input DRCs

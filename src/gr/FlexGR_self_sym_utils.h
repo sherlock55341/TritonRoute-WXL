@@ -30,9 +30,8 @@
 #define _FLEX_GR_SELF_SYM_UTILS_H_
 
 #include <algorithm>
-#include <cmath>
-#include <iterator>
 #include <limits>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -64,14 +63,44 @@ namespace fr {
                               trackPattern->isHorizontal();
   }
 
+  // Admission test for self-symmetry candidate nets; the "Symmtry" spelling
+  // is the benchmark's net-name convention and must stay byte-identical.
+  inline bool isSelfSymmetryNetName(const std::string &name) {
+    return name.compare(0, 7, "Symmtry") == 0;
+  }
+
+  // Classifies a coordinate against an axis: -1 below, 0 on, +1 above.
+  // Shared by GR (GCell-index space) and DR (DBU space) side tests.
+  inline int getSelfSymmetrySide(frCoord coord, frCoord axis) {
+    if (coord < axis) {
+      return -1;
+    }
+    if (coord > axis) {
+      return 1;
+    }
+    return 0;
+  }
+
+  // Reflects a point about the given axis; shared by the GR/DR cache
+  // rebuilds and the maze mirror-edge computations.
+  inline frPoint mirrorPointAboutAxis(const frPoint &point,
+                                      bool axisHorizontal,
+                                      frCoord axis) {
+    frPoint mirroredPoint;
+    if (axisHorizontal) {
+      mirroredPoint.set(point.x(), axis + (axis - point.y()));
+    } else {
+      mirroredPoint.set(axis + (axis - point.x()), point.y());
+    }
+    return mirroredPoint;
+  }
+
   inline bool findNearestSelfSymmetryRoutingTrack(
       frDesign *design,
       bool isAxisHorizontal,
       frCoord axis,
       const frBox *preferredBox,
-      frCoord &trackCoord,
-      frLayerNum *layerNum = nullptr,
-      frTrackPattern **trackPattern = nullptr) {
+      frCoord &trackCoord) {
     auto block = design ? design->getTopBlock() : nullptr;
     if (block == nullptr) {
       return false;
@@ -83,8 +112,6 @@ namespace fr {
     bool found = false;
     long long bestDist = std::numeric_limits<long long>::max();
     frCoord bestCoord = axis;
-    frLayerNum bestLayerNum = 0;
-    frTrackPattern *bestTrackPattern = nullptr;
     for (auto &layer: design->getTech()->getLayers()) {
       if (layer->getType() != frLayerTypeEnum::ROUTING) {
         continue;
@@ -144,8 +171,6 @@ namespace fr {
             found = true;
             bestDist = currDist;
             bestCoord = currCoord;
-            bestLayerNum = currLayerNum;
-            bestTrackPattern = tp;
           }
         }
       }
@@ -155,12 +180,6 @@ namespace fr {
       return false;
     }
     trackCoord = bestCoord;
-    if (layerNum != nullptr) {
-      *layerNum = bestLayerNum;
-    }
-    if (trackPattern != nullptr) {
-      *trackPattern = bestTrackPattern;
-    }
     return true;
   }
 
@@ -175,7 +194,8 @@ namespace fr {
 
     static SelfSymmetryAxisContext fromAxisProbe(
         frDesign *design,
-        const frSelfSymmetryConstraint &constraint,
+        bool isAxisHorizontal,
+        frCoord axis,
         const frPoint &axisProbe) {
       SelfSymmetryAxisContext ctx;
       auto block = design ? design->getTopBlock() : nullptr;
@@ -183,20 +203,28 @@ namespace fr {
         return ctx;
       }
       frPoint effectiveAxisProbe(axisProbe);
-      if (constraint.isAxisHorizontal) {
-        effectiveAxisProbe.set(axisProbe.x(), constraint.axis);
+      if (isAxisHorizontal) {
+        effectiveAxisProbe.set(axisProbe.x(), axis);
       } else {
-        effectiveAxisProbe.set(constraint.axis, axisProbe.y());
+        effectiveAxisProbe.set(axis, axisProbe.y());
       }
       frPoint axisGCellLocation;
       block->getGCellIdx(effectiveAxisProbe, axisGCellLocation);
       ctx.valid = true;
-      ctx.isAxisHorizontal = constraint.isAxisHorizontal;
-      ctx.axis = constraint.axis;
-      ctx.axisGCellIdx = constraint.isAxisHorizontal ?
+      ctx.isAxisHorizontal = isAxisHorizontal;
+      ctx.axis = axis;
+      ctx.axisGCellIdx = isAxisHorizontal ?
                          axisGCellLocation.y() :
                          axisGCellLocation.x();
       return ctx;
+    }
+
+    static SelfSymmetryAxisContext fromAxisProbe(
+        frDesign *design,
+        const frSelfSymmetryConstraint &constraint,
+        const frPoint &axisProbe) {
+      return fromAxisProbe(design, constraint.isAxisHorizontal,
+                            constraint.axis, axisProbe);
     }
 
     static SelfSymmetryAxisContext fromReferencePoint(
@@ -212,29 +240,12 @@ namespace fr {
       return fromAxisProbe(design, constraint, axisProbe);
     }
 
-    int sideOfPoint(const frPoint &point) const {
-      auto coord = isAxisHorizontal ? point.y() : point.x();
-      if (coord < axis) {
-        return -1;
-      }
-      if (coord > axis) {
-        return 1;
-      }
-      return 0;
-    }
-
     frCoord axisCoord(const frPoint &gcellIdx) const {
       return isAxisHorizontal ? gcellIdx.y() : gcellIdx.x();
     }
 
     frPoint mirrorPoint(const frPoint &point) const {
-      frPoint mirroredPoint(point);
-      if (isAxisHorizontal) {
-        mirroredPoint.set(point.x(), axis + (axis - point.y()));
-      } else {
-        mirroredPoint.set(axis + (axis - point.x()), point.y());
-      }
-      return mirroredPoint;
+      return mirrorPointAboutAxis(point, isAxisHorizontal, axis);
     }
 
     frPoint mirrorGCell(const frPoint &gcellIdx) const {
@@ -249,103 +260,6 @@ namespace fr {
       return mirroredGCellIdx;
     }
   };
-
-  inline void get_self_symmetry_axis(const std::vector<frPoint> &points,
-                                     bool &is_horizontal,
-                                     int &coor) {
-    // Prefer the cheap moment test when one orientation is unambiguous, then
-    // fall back to nearest-neighbor mirror error for nearly balanced samples.
-    double mean_x = 0;
-    double mean_y = 0;
-    double sigma_x = 0;
-    double sigma_y = 0;
-    for (auto p: points) {
-      mean_x += p.x();
-      mean_y += p.y();
-    }
-    mean_x /= points.size();
-    mean_y /= points.size();
-
-    for (auto p: points) {
-      auto dx = p.x() - mean_x;
-      auto dy = p.y() - mean_y;
-      sigma_x += dx * dx;
-      sigma_y += dy * dy;
-    }
-    sigma_x /= points.size();
-    sigma_y /= points.size();
-    sigma_x = std::sqrt(sigma_x);
-    sigma_y = std::sqrt(sigma_y);
-
-    double moment_x_1 = 0;
-    double moment_x_2 = 0;
-    double moment_x_3 = 0;
-    double moment_y_1 = 0;
-    double moment_y_2 = 0;
-    double moment_y_3 = 0;
-    for (auto p: points) {
-      auto dx = sigma_x == 0 ? 0 : (p.x() - mean_x) / sigma_x;
-      auto dy = sigma_y == 0 ? 0 : (p.y() - mean_y) / sigma_y;
-      moment_x_1 += dx * dx * dx;
-      moment_x_2 += dx * dy;
-      moment_x_3 += dx * dy * dy;
-      moment_y_1 += dy * dy * dy;
-      moment_y_2 += dy * dx;
-      moment_y_3 += dy * dx * dx;
-    }
-    moment_x_1 /= points.size();
-    moment_x_2 /= points.size();
-    moment_x_3 /= points.size();
-    moment_y_1 /= points.size();
-    moment_y_2 /= points.size();
-    moment_y_3 /= points.size();
-
-    auto sum_moment_x =
-        std::abs(moment_x_1) + std::abs(moment_x_2) + std::abs(moment_x_3);
-    auto sum_moment_y =
-        std::abs(moment_y_1) + std::abs(moment_y_2) + std::abs(moment_y_3);
-    if (sum_moment_x * 2 < sum_moment_y) {
-      is_horizontal = false;
-      coor = std::round(mean_x);
-      return;
-    }
-    if (sum_moment_y * 2 < sum_moment_x) {
-      is_horizontal = true;
-      coor = std::round(mean_y);
-      return;
-    }
-
-    std::vector<point_t> rtree_points;
-    rtree_points.reserve(points.size());
-    for (auto p: points) {
-      rtree_points.push_back(point_t(p.x(), p.y()));
-    }
-    bgi::rtree<point_t, bgi::quadratic<16> > tree(rtree_points);
-
-    double mirror_x_score = 0;
-    double mirror_y_score = 0;
-    for (auto p: points) {
-      int mx = mean_x * 2 - p.x();
-      int my = p.y();
-      std::vector<point_t> results;
-      tree.query(bgi::nearest(point_t(mx, my), 1), std::back_inserter(results));
-      mirror_x_score += (results[0].x() - mx) * (results[0].x() - mx) +
-                        (results[0].y() - my) * (results[0].y() - my);
-      mx = p.x();
-      my = mean_y * 2 - p.y();
-      results.clear();
-      tree.query(bgi::nearest(point_t(mx, my), 1), std::back_inserter(results));
-      mirror_y_score += (results[0].x() - mx) * (results[0].x() - mx) +
-                        (results[0].y() - my) * (results[0].y() - my);
-    }
-    if (mirror_x_score < mirror_y_score) {
-      is_horizontal = false;
-      coor = std::round(mean_x);
-    } else {
-      is_horizontal = true;
-      coor = std::round(mean_y);
-    }
-  }
 
 }
 

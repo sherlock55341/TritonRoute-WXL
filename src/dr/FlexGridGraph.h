@@ -923,6 +923,13 @@ namespace fr {
     bool                                       selfSymmetrySearch = false;
     bool                                       selfSymmetryAxisHorizontal = false;
     frCoord                                    selfSymmetryAxis = 0;
+    // Same idea, set only while routing the effective follower of a mirror
+    // pair; leader nets keep this false and get plain/ordinary cost.
+    bool                                       mirrorFollowerSearch = false;
+    // Set only while routing the effective leader of a mirror pair; guides
+    // the leader toward its own previous geometry. No axis fields needed
+    // since this path does no coordinate mirroring.
+    bool                                       mirrorLeaderSearch = false;
     // temporary variables
     FlexWavefront                              wavefront;
     const std::vector<std::pair<frCoord, frCoord> >* halfViaEncArea; // std::pair<layer1area, layer2area>

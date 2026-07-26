@@ -47,9 +47,7 @@ using namespace fr;
 namespace {
 
   bool isSelfSymmetryGuideNet(frNet *net) {
-    static const string prefix = "Symmtry";
-    return net != nullptr &&
-           net->getName().compare(0, prefix.size(), prefix) == 0;
+    return net != nullptr && isSelfSymmetryNetName(net->getName());
   }
 
   frPoint getRPinGlobalAccessPoint(frRPin *rpin) {
@@ -195,7 +193,7 @@ void FlexGR::main() {
   writeGuideStageFile("2d_auto");
   // Revisit constrained nets after the reference-side pass.  The freshly
   // cached geometry now supplies the desired mirror edges to each worker.
-  searchRepair(/*iter*/0, /*size*/200, /*offset*/0, /*mazeEndIter*/1, /*workerCongCost*/2 * CONGCOST, /*workerHistCost*/2 * HISTCOST, /*congThresh*/0.8, /*is2DRouting*/true, /*mode*/1, /*TEST*/false, FlexGRSelfSymmetryMode::Mirror);
+  searchRepair(/*iter*/0, /*size*/200, /*offset*/0, /*mazeEndIter*/1, /*workerCongCost*/2 * CONGCOST, /*workerHistCost*/2 * HISTCOST, /*congThresh*/0.8, /*is2DRouting*/true, /*mode*/1, /*TEST*/false, FlexGRSelfSymmetryMode::Mirror, /*mirrorPassIsSecond*/false, /*mirrorCachePublishPassIsSecond*/true);
   writeGuideStageFile("2d_mirror");
   
   reportCong2D();
@@ -210,9 +208,9 @@ void FlexGR::main() {
 
   // reportCong3D();
 
-  searchRepair(/*iter*/0, /*size*/10, /*offset*/0, /*mazeEndIter*/2, /*workerCongCost*/4 * CONGCOST, /*workerHistCost*/0.25 * HISTCOST, /*congThresh*/1.0, /*is2DRouting*/false, 1, /*TEST*/false, FlexGRSelfSymmetryMode::OrdinaryOnly);
+  searchRepair(/*iter*/0, /*size*/10, /*offset*/0, /*mazeEndIter*/2, /*workerCongCost*/4 * CONGCOST, /*workerHistCost*/0.25 * HISTCOST, /*congThresh*/1.0, /*is2DRouting*/false, 1, /*TEST*/false, FlexGRSelfSymmetryMode::OrdinaryOnly, /*mirrorPassIsSecond*/false, /*mirrorCachePublishPassIsSecond*/true);
   writeGuideStageFile("3d_auto");
-  searchRepair(/*iter*/0, /*size*/10, /*offset*/0, /*mazeEndIter*/1, /*workerCongCost*/4 * CONGCOST, /*workerHistCost*/0.25 * HISTCOST, /*congThresh*/1.0, /*is2DRouting*/false, 1, /*TEST*/false, FlexGRSelfSymmetryMode::Mirror);
+  searchRepair(/*iter*/0, /*size*/10, /*offset*/0, /*mazeEndIter*/1, /*workerCongCost*/4 * CONGCOST, /*workerHistCost*/0.25 * HISTCOST, /*congThresh*/1.0, /*is2DRouting*/false, 1, /*TEST*/false, FlexGRSelfSymmetryMode::Mirror, /*mirrorPassIsSecond*/true, /*mirrorCachePublishPassIsSecond*/false);
   writeGuideStageFile("3d_mirror");
   reportCong3D();
 
@@ -331,6 +329,20 @@ bool FlexGR::hasSelfSymmetryNets() const {
   return false;
 }
 
+bool FlexGR::hasMirrorNets() const {
+  auto block = design ? design->getTopBlock() : nullptr;
+  if (block == nullptr) {
+    return false;
+  }
+  for (auto &uNet: block->getNets()) {
+    auto net = uNet.get();
+    if (net && net->getMirrorConstraintPtr()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void FlexGR::clearSelfSymmetryPathSegCaches() {
   auto block = design ? design->getTopBlock() : nullptr;
   if (block == nullptr) {
@@ -359,14 +371,9 @@ void FlexGR::updateSelfSymmetryPathSegCaches() {
       continue;
     }
 
-    frPoint axisProbe;
-    if (constraint->isAxisHorizontal) {
-      axisProbe.set(dieBox.left(), constraint->axis);
-    } else {
-      axisProbe.set(constraint->axis, dieBox.bottom());
-    }
-    auto axisCtx = SelfSymmetryAxisContext::fromAxisProbe(
-        design, *constraint, axisProbe);
+    frPoint referencePoint(dieBox.left(), dieBox.bottom());
+    auto axisCtx = SelfSymmetryAxisContext::fromReferencePoint(
+        design, *constraint, referencePoint);
     if (!axisCtx.valid) {
       continue;
     }
@@ -394,17 +401,8 @@ void FlexGR::updateSelfSymmetryPathSegCaches() {
       block->getGCellIdx(end, endGCellIdx);
       auto beginCoord = axisCtx.axisCoord(beginGCellIdx);
       auto endCoord = axisCtx.axisCoord(endGCellIdx);
-      auto getSide = [&axisCtx](frCoord coord) {
-        if (coord < axisCtx.axisGCellIdx) {
-          return -1;
-        }
-        if (coord > axisCtx.axisGCellIdx) {
-          return 1;
-        }
-        return 0;
-      };
-      auto beginSide = getSide(beginCoord);
-      auto endSide = getSide(endCoord);
+      auto beginSide = getSelfSymmetrySide(beginCoord, axisCtx.axisGCellIdx);
+      auto endSide = getSelfSymmetrySide(endCoord, axisCtx.axisGCellIdx);
 
       frPathSeg cachePathSeg;
       cachePathSeg.setPoints(begin, end);
@@ -439,14 +437,98 @@ void FlexGR::updateSelfSymmetryPathSegCaches() {
   }
 }
 
-void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter, 
-                          unsigned workerCongCost, unsigned workerHistCost, 
+void FlexGR::updateMirrorPathSegCaches(bool mirrorPassIsSecond) {
+  // Rebuild, rather than incrementally patch, the derived cache after every
+  // search/repair pass, mirroring updateSelfSymmetryPathSegCaches() above.
+  // Unlike self-symmetry, a mirror pair is two independent, non-connectable
+  // nets: only the effective leader drives the follower's cache. Callers
+  // pass the NEXT pass's role parity (roles flip between the 2D and 3D
+  // Mirror passes), so this pass's follower geometry is mirrored into this
+  // pass's leader cache and the next pass's follower never chases a stale
+  // target. The cache is a soft cost-guidance target for the follower's maze
+  // search, not a hard geometric constraint, so leader segments are mirrored
+  // wholesale regardless of whether they cross the axis.
+  auto block = design ? design->getTopBlock() : nullptr;
+  if (block == nullptr) {
+    return;
+  }
+
+  frBox dieBox;
+  block->getBoundaryBBox(dieBox);
+  for (auto &uNet: block->getNets()) {
+    auto net = uNet.get();
+    auto c = net->getMirrorConstraintPtr();
+    if (!c) {
+      continue;
+    }
+    // Every mirror-constrained net anchors itself to its own previously
+    // committed geometry, regardless of which role (leader/follower) it
+    // holds this pass, since the roles may swap on the next iteration.
+    net->clearMirrorLeaderAnchorPathSegs();
+    for (auto &uShape: net->getGRShapes()) {
+      if (uShape->typeId() != grcPathSeg) {
+        continue;
+      }
+      auto shapePathSeg = static_cast<grPathSeg*>(uShape.get());
+      frPoint begin;
+      frPoint end;
+      shapePathSeg->getPoints(begin, end);
+      frPathSeg anchorPathSeg;
+      anchorPathSeg.setLayerNum(shapePathSeg->getLayerNum());
+      anchorPathSeg.setPoints(begin, end);
+      net->addMirrorLeaderAnchorPathSeg(anchorPathSeg);
+    }
+
+    bool effectiveLeader = (c->isLeader != mirrorPassIsSecond);
+    if (!effectiveLeader) {
+      continue;
+    }
+    auto follower = c->partnerNet;
+    if (!follower) {
+      continue;
+    }
+    follower->clearMirrorPathSegs();
+
+    frPoint axisProbe;
+    if (c->isAxisHorizontal) {
+      axisProbe.set(dieBox.left(), c->axis);
+    } else {
+      axisProbe.set(c->axis, dieBox.bottom());
+    }
+    auto axisCtx = SelfSymmetryAxisContext::fromAxisProbe(
+        design, c->isAxisHorizontal, c->axis, axisProbe);
+    if (!axisCtx.valid) {
+      continue;
+    }
+
+    for (auto &uShape: net->getGRShapes()) {
+      if (uShape->typeId() != grcPathSeg) {
+        continue;
+      }
+      auto shapePathSeg = static_cast<grPathSeg*>(uShape.get());
+      frPoint begin;
+      frPoint end;
+      shapePathSeg->getPoints(begin, end);
+
+      frPathSeg mirrorPathSeg;
+      mirrorPathSeg.setLayerNum(shapePathSeg->getLayerNum());
+      mirrorPathSeg.setPoints(axisCtx.mirrorPoint(begin),
+                              axisCtx.mirrorPoint(end));
+      follower->addMirrorPathSeg(mirrorPathSeg);
+    }
+  }
+}
+
+void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
+                          unsigned workerCongCost, unsigned workerHistCost,
                           double congThresh, bool is2DRouting, int mode, bool TEST,
-                          FlexGRSelfSymmetryMode selfSymmetryMode) {
+                          FlexGRSelfSymmetryMode selfSymmetryMode,
+                          bool mirrorPassIsSecond,
+                          bool mirrorCachePublishPassIsSecond) {
   // A pass consists of: tile creation, boundary extraction, parallel maze
   // repair, serial writeback, then rebuilding the cross-pass symmetry cache.
   if (selfSymmetryMode == FlexGRSelfSymmetryMode::Mirror &&
-      !hasSelfSymmetryNets()) {
+      !hasSelfSymmetryNets() && !hasMirrorNets()) {
     return;
   }
 
@@ -499,6 +581,7 @@ void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     worker.set2D(is2DRouting);
     worker.setRipupMode(mode);
     worker.setSelfSymmetryMode(selfSymmetryMode);
+    worker.setMirrorPassIsSecond(mirrorPassIsSecond);
 
     worker.initBoundary();
     worker.main_mt();
@@ -544,6 +627,7 @@ void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
         worker->set2D(is2DRouting);
         worker->setRipupMode(mode);
         worker->setSelfSymmetryMode(selfSymmetryMode);
+        worker->setMirrorPassIsSecond(mirrorPassIsSecond);
 
         int batchIdx = (xIdx % batchStepX) * batchStepY + yIdx % batchStepY;
         if (workers[batchIdx].empty() || (int)workers[batchIdx].back().size() >= BATCHSIZE) {
@@ -584,8 +668,14 @@ void FlexGR::searchRepair(int iter, int size, int offset, int mazeEndIter,
   }
 
   // Workers have committed their route objects at this point; publish one
-  // coherent cache for the next reference/mirror pass.
+  // coherent cache for the next reference/mirror pass. The follower cache is
+  // published with the NEXT Mirror-mode consumer's role parity (which does
+  // not simply flip between consecutive passes: 2d_auto -> 2d_mirror keeps
+  // parity, 2d_mirror -> 3d_mirror and 3d_mirror -> DR flip it), so the next
+  // follower is guided by its leader's just-committed geometry instead of a
+  // two-pass-old target.
   updateSelfSymmetryPathSegCaches();
+  updateMirrorPathSegCaches(mirrorCachePublishPassIsSecond);
   t.print();
   cout << endl << flush;
 

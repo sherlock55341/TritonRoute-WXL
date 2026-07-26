@@ -28,6 +28,12 @@ cmake --build build-debug -j$(nproc)
 
 Smoke-test inputs: LEF `~/benchmark/primarius/outdata/ispd18_test1.input.lef`, DEF `~/benchmark/primarius/outdata/pattern_route_lay.def`. Place all outputs (DEFs, guides, logs) under `build/`.
 
+Default smoke-test command (run from `build/`, self-symmetry case):
+
+```bash
+./TritonRoute -lef ~/benchmark/primarius/case_0625/pattern_route0625.lef -def ~/benchmark/primarius/case_0625/pattern_route0625_v2.def -output route.def -drouteEndIterNum 6
+```
+
 ## Architecture
 
 `FlexRoute` (`src/FlexRoute.h/.cpp`) is the top-level orchestrator. Its `main()` calls the pipeline in order:
@@ -68,4 +74,4 @@ Key invariants for self-symmetry work:
 
 ## Testing
 
-No CTest suite. Validate routing behavior changes by rebuilding and running the smoke-test inputs, then comparing output DEF, guide files, DRC markers, and logs against a known baseline. For changes limited to declarations, helpers, or comments, a successful build is sufficient.
+No CTest suite. Validate routing behavior changes by rebuilding and running the default smoke-test command above (see Running), then comparing output DEF, guide files, DRC markers, and logs against a known baseline. For changes limited to declarations, helpers, or comments, a successful build is sufficient.

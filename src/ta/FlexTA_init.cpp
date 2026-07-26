@@ -495,10 +495,14 @@ bool FlexTAWorker::routeNetModeMatches(frGuide *guide) const {
 
   auto net = guide ? guide->getNet() : nullptr;
   bool isSelfSymmetryNet = net && net->getSelfSymmetryConstraintPtr();
+  bool isMirrorNet = net && net->getMirrorConstraintPtr();
   if (getRouteNetMode() == RouteNetMode::SelfSymmetryOnly) {
     return isSelfSymmetryNet;
   }
-  return !isSelfSymmetryNet;
+  if (getRouteNetMode() == RouteNetMode::MirrorOnly) {
+    return isMirrorNet;
+  }
+  return !isSelfSymmetryNet && !isMirrorNet;
 }
 
 

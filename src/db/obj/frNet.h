@@ -53,6 +53,8 @@ namespace fr {
                                firstNonRPinNode(nullptr), rpins(), guides(), type(frNetEnum::frcNormalNet), 
                                constraint(frNetRoutingConstraint::frcNone), selfSymmetryConstraint(),
                                selfSymmetryPathSegs(),
+                               mirrorConstraint({false, 0, nullptr, false}), mirrorPathSegs(),
+                               mirrorLeaderAnchorPathSegs(),
                                modified(false), isFakeNet(false) {}
     // getters
     const frString& getName() const {
@@ -135,6 +137,12 @@ namespace fr {
     }
     const std::vector<frPathSeg>& getSelfSymmetryPathSegs() const {
       return selfSymmetryPathSegs;
+    }
+    const std::vector<frPathSeg>& getMirrorPathSegs() const {
+      return mirrorPathSegs;
+    }
+    const std::vector<frPathSeg>& getMirrorLeaderAnchorPathSegs() const {
+      return mirrorLeaderAnchorPathSegs;
     }
 
     // setters
@@ -268,6 +276,27 @@ namespace fr {
     void addSelfSymmetryPathSeg(const frPathSeg &in) {
       selfSymmetryPathSegs.push_back(in);
     }
+    frMirrorConstraint getMirrorConstraint() const {
+      return mirrorConstraint;
+    }
+    const frMirrorConstraint* getMirrorConstraintPtr() const {
+      return constraint == frNetRoutingConstraint::frcMirror ? &mirrorConstraint : nullptr;
+    }
+    void setMirrorConstraint(frMirrorConstraint in) {
+      mirrorConstraint = in;
+    }
+    void clearMirrorPathSegs() {
+      mirrorPathSegs.clear();
+    }
+    void addMirrorPathSeg(const frPathSeg &in) {
+      mirrorPathSegs.push_back(in);
+    }
+    void clearMirrorLeaderAnchorPathSegs() {
+      mirrorLeaderAnchorPathSegs.clear();
+    }
+    void addMirrorLeaderAnchorPathSeg(const frPathSeg &in) {
+      mirrorLeaderAnchorPathSegs.push_back(in);
+    }
     virtual frBlockObjectEnum typeId() const override {
       return frcNet;
     }
@@ -299,6 +328,17 @@ namespace fr {
     // Derived snapshot of routed geometry used to price/mark mirrored edges in
     // later routing phases.  Each phase rebuilds or clears this non-owning cache.
     std::vector<frPathSeg>                    selfSymmetryPathSegs;
+    // Authoritative axis + partner reference for mirror-pair nets.
+    frMirrorConstraint                        mirrorConstraint;
+    // Snapshot of the partner leader's committed geometry mirrored about the
+    // pair's axis; the follower's maze search reads this as its prev-edge
+    // guidance target. Rebuilt by GR/DR updateMirrorPathSegCaches().
+    std::vector<frPathSeg>                    mirrorPathSegs;
+    // Snapshot of this net's own previously committed geometry (not mirrored),
+    // used to anchor its own maze search across iterations when it is the
+    // pass's effective leader. Independent of mirrorPathSegs, which is the
+    // leader's geometry mirrored for the follower to read.
+    std::vector<frPathSeg>                    mirrorLeaderAnchorPathSegs;
     bool                                      modified;
     bool                                      isFakeNet; // indicate floating PG nets
   };

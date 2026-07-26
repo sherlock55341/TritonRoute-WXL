@@ -36,24 +36,33 @@ the ordinary worker path or the queue path.
   runs global routing (`gr()`), reads the generated guide, and enables via
   generation. Then it runs the routed stages in this order:
   `prep()` -> `ta(SelfSymmetryOnly)` -> `dr(SelfSymmetryOnly)` ->
+  `ta(MirrorOnly)` -> `dr(MirrorOnly)` ->
   `ta(OrdinaryOnly)` -> `dr(OrdinaryOnly)` -> `endFR()`.
 - `RouteNetMode` controls net membership. `SelfSymmetryOnly` matches nets with
-  `getSelfSymmetryConstraintPtr() != nullptr`; `OrdinaryOnly` matches nets
-  without that constraint; `All` is only the default constructor mode and is not
-  used by the current top-level `FlexRoute::main()` sequence. During
+  `getSelfSymmetryConstraintPtr() != nullptr`; `MirrorOnly` matches nets with
+  `getMirrorConstraintPtr() != nullptr` (mirror pairs linked from the
+  hardcoded `Mirror*_1`/`Mirror*_2` table in `src/FlexRoute.cpp`);
+  `OrdinaryOnly` matches nets without either constraint; `All` is only the
+  default constructor mode and is not used by the current top-level
+  `FlexRoute::main()` sequence. During
   `OrdinaryOnly` DR iter 3+ with `ripupMode=0`, queue-mode marker repair may
-  also reroute self-symmetry nets implicated by current DRC markers.
+  also reroute self-symmetry and mirror nets implicated by current DRC
+  markers.
 - `FlexDR::main()` is a fixed list of `searchRepair(...)` calls. The
   `-drouteEndIterNum N` / `drouteEndIterNum:N` value sets `END_ITERATION`; each
   `searchRepair(iter, ...)` returns immediately when `iter > END_ITERATION`.
   Current calls use `fixMode=9`, so workers launched through `main_mt()` route
   through `FlexDRWorker::route_queue()`, not `FlexDRWorker::route()`.
 - `searchRepair(...)` also returns early for `iter > 0` when top-block marker
-  count is zero, except for forced self-symmetry reroute iters. The forced
-  reroute is only active in `RouteNetMode::SelfSymmetryOnly` for all
-  self-symmetry nets in DR iter 2 and later. Prev-edge cost uses that forced
-  reroute window, and also applies to self-symmetry nets pulled into
-  `OrdinaryOnly` iter 3+ marker repair.
+  count is zero, except for forced self-symmetry/mirror reroute iters. The
+  forced reroute is only active in `RouteNetMode::SelfSymmetryOnly` /
+  `RouteNetMode::MirrorOnly` for all constrained nets in DR iter 2 and later.
+  Prev-edge cost uses that forced reroute window, and also applies to
+  constrained nets pulled into `OrdinaryOnly` iter 3+ marker repair. Mirror
+  pairs additionally swap leader/follower roles every iteration
+  (`iter % 2` parity), and `FlexDR::updateMirrorPathSegCaches()` publishes
+  the follower cache with the NEXT iteration's parity at the end of each
+  `MirrorOnly` iteration.
 - Worker path: `FlexDR::searchRepair()` builds tiled `FlexDRWorker`s, sets
   `routeBox`, `extBox`, `drcBox`, `mazeEndIter`, `drIter`, `ripupMode`,
   `followGuide`, `fixMode`, and costs, then calls `worker->main_mt()` in OpenMP

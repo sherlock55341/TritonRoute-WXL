@@ -96,7 +96,9 @@ namespace fr {
     void initFLUTE();
     bool readFLUTE_readLUT();
     bool hasSelfSymmetryNets() const;
+    bool hasMirrorNets() const;
     void updateSelfSymmetryPathSegCaches();
+    void updateMirrorPathSegCaches(bool mirrorPassIsSecond);
     void clearSelfSymmetryPathSegCaches();
     void initLayerPitch();
 
@@ -105,10 +107,17 @@ namespace fr {
     void searchRepairMacro(int iter, int size, int mazeEndIter, unsigned workerCongCost,
                            unsigned workerHistCost, double congThresh, bool is2DRouting,
                            int mode);
-    void searchRepair(int iter, int size, int offset, int mazeEndIter, 
+    void searchRepair(int iter, int size, int offset, int mazeEndIter,
                       unsigned workerCongCost, unsigned workerHistCost,
                       double congThresh, bool is2DRouting, int mode, bool TEST,
-                      FlexGRSelfSymmetryMode selfSymmetryMode = FlexGRSelfSymmetryMode::Auto);
+                      FlexGRSelfSymmetryMode selfSymmetryMode = FlexGRSelfSymmetryMode::Auto,
+                      bool mirrorPassIsSecond = false,
+                      // Role parity of the NEXT Mirror-mode consumer pass; the
+                      // mirror follower cache published at the end of this pass
+                      // must target that pass's follower. Defaults to the 2D
+                      // Mirror pass parity (false), which is what the pre-2D
+                      // passes need.
+                      bool mirrorCachePublishPassIsSecond = false);
 
     void end();
 
@@ -230,7 +239,7 @@ namespace fr {
                  design(grIn->getDesign()), gr(grIn), routeGCellIdxLL(), routeGCellIdxUR(),
                  extBox(), routeBox(), grIter(0), mazeEndIter(1), workerCongCost(0), workerHistCost(0), 
                  congThresh(1.0), is2DRouting(false), ripupMode(0),
-                 selfSymmetryMode(FlexGRSelfSymmetryMode::Auto),
+                 selfSymmetryMode(FlexGRSelfSymmetryMode::Auto), mirrorPassIsSecond(false),
                  nets(), owner2nets(), /*owner2extBoundPtNodes(), owner2routeBoundPtNodes(), owner2pinGCellNodes(),*/
                  gridGraph(grIn->getDesign(), this), rq(this) {}
     // setters
@@ -269,6 +278,9 @@ namespace fr {
     }
     void setSelfSymmetryMode(FlexGRSelfSymmetryMode in) {
       selfSymmetryMode = in;
+    }
+    void setMirrorPassIsSecond(bool in) {
+      mirrorPassIsSecond = in;
     }
 
     // getters
@@ -329,14 +341,28 @@ namespace fr {
     bool isSelfSymmetryMirror() const {
       return selfSymmetryMode == FlexGRSelfSymmetryMode::Mirror;
     }
+    bool isMirrorPassSecond() const {
+      return mirrorPassIsSecond;
+    }
+    // A mirror-pair net's effective role for the pass currently running on
+    // this worker: initial isLeader XORed against which of GR's two
+    // Mirror-mode passes (2D vs 3D) is active. See frMirrorConstraint.
+    bool isMirrorFollower(frNet* net) const {
+      auto c = net ? net->getMirrorConstraintPtr() : nullptr;
+      if (!c) {
+        return false;
+      }
+      bool effectiveLeader = (c->isLeader != mirrorPassIsSecond);
+      return !effectiveLeader;
+    }
     bool isTarget(frNet* net) const {
       if (selfSymmetryMode == FlexGRSelfSymmetryMode::Auto) {
         return true;
       }
       if (selfSymmetryMode == FlexGRSelfSymmetryMode::OrdinaryOnly) {
-        return net && !net->getSelfSymmetryConstraintPtr();
+        return net && !net->getSelfSymmetryConstraintPtr() && !net->getMirrorConstraintPtr();
       }
-      return net && net->getSelfSymmetryConstraintPtr();
+      return net && (net->getSelfSymmetryConstraintPtr() || isMirrorFollower(net));
     }
     frRegionQuery* getRegionQuery() const {
       return design->getRegionQuery();
@@ -389,6 +415,10 @@ namespace fr {
     // Worker-local phase selector; it controls net admission and how mirror
     // costs interpret the per-net path-segment cache.
     FlexGRSelfSymmetryMode selfSymmetryMode;
+    // True only during GR's second Mirror-mode pass (3d_mirror); flips which
+    // side of each mirror pair is treated as leader for this pass. See
+    // isMirrorFollower().
+    bool mirrorPassIsSecond;
 
     // local storage
     std::vector<std::unique_ptr<grNet> >   nets;
@@ -455,7 +485,11 @@ namespace fr {
     void route_getRerouteNets(std::vector<grNet*> &rerouteNets);
     void mazeNetInit(grNet* net);
     bool mazeNetHasCong(grNet* net);
+    void projectPrevPlanarEdgesToGrid(const std::vector<frPathSeg> &pathSegs,
+                                      const char *callerName);
     void mazeNetInit_selfSymmetryPrevPlanarEdges(grNet* net);
+    void mazeNetInit_mirrorPrevPlanarEdges(grNet* net);
+    void mazeNetInit_mirrorLeaderAnchorPrevPlanarEdges(grNet* net);
     void mazeNetInit_addHistCost(grNet* net);
     void mazeNetInit_decayHistCost(grNet* net);
     void mazeNetInit_removeNetObjs(grNet* net);

@@ -188,6 +188,9 @@ void FlexGRWorker::route_getRerouteNets(vector<grNet*> &rerouteNets) {
           frNet && frNet->getSelfSymmetryConstraintPtr();
       if (isTarget(frNet) && !net->isTrivial()) {
         rerouteNets.push_back(net.get());
+        // isTarget() already restricts Mirror-mode nets reaching here to
+        // self-symmetry nets and mirror followers, so isSelfSymmetryMirror()
+        // alone covers both.
         if (isSelfSymmetryMirror() || isSelfSymmetryNet) {
           net->setModified(true);
           frNet->setModified(true);
@@ -195,9 +198,10 @@ void FlexGRWorker::route_getRerouteNets(vector<grNet*> &rerouteNets) {
       }
     }
   }
-  stable_partition(rerouteNets.begin(), rerouteNets.end(), [](auto net) {
+  stable_partition(rerouteNets.begin(), rerouteNets.end(), [this](auto net) {
     return net && net->getFrNet() &&
-           net->getFrNet()->getSelfSymmetryConstraintPtr();
+           (net->getFrNet()->getSelfSymmetryConstraintPtr() ||
+            isMirrorFollower(net->getFrNet()));
   });
 }
 
@@ -259,19 +263,19 @@ void FlexGRWorker::mazeNetInit(grNet* net) {
     mazeNetInit_addHistCost(net);
   }
   mazeNetInit_selfSymmetryPrevPlanarEdges(net);
+  mazeNetInit_mirrorPrevPlanarEdges(net);
+  mazeNetInit_mirrorLeaderAnchorPrevPlanarEdges(net);
   mazeNetInit_removeNetObjs(net);
   mazeNetInit_removeNetNodes(net);
 }
 
-void FlexGRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(grNet* net) {
-  if (!isSelfSymmetryMirror() || !net || !net->getFrNet() ||
-      !net->getFrNet()->getSelfSymmetryConstraintPtr()) {
-    return;
-  }
-
-  // Project the design-space cache into this worker's clipped maze grid.  The
-  // resulting bits are hints for the current net only and reset with the grid.
-  for (auto &pathSeg: net->getFrNet()->getSelfSymmetryPathSegs()) {
+// Projects each design-space cache pathSeg, clipped to this worker's extBox,
+// into transient maze bits. The resulting bits are hints for the current net
+// only and reset with the grid. callerName only labels the unreachable
+// non-colinear error message.
+void FlexGRWorker::projectPrevPlanarEdgesToGrid(const std::vector<frPathSeg> &pathSegs,
+                                                const char *callerName) {
+  for (auto &pathSeg: pathSegs) {
     frPoint bp, ep;
     FlexMazeIdx bi, ei;
     pathSeg.getPoints(bp, ep);
@@ -298,7 +302,7 @@ void FlexGRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(grNet* net) {
       bp.set(low, bp.y());
       ep.set(high, bp.y());
     } else {
-      cout << "Error: non-colinear pathSeg in mazeNetInit_selfSymmetryPrevPlanarEdges" << endl;
+      cout << "Error: non-colinear pathSeg in " << callerName << endl;
       continue;
     }
     gridGraph.getMazeIdx(bp, pathSeg.getLayerNum(), bi);
@@ -315,9 +319,40 @@ void FlexGRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(grNet* net) {
                                                 frDirEnum::E);
       }
     } else {
-      cout << "Error: non-colinear pathSeg in mazeNetInit_selfSymmetryPrevPlanarEdges" << endl;
+      cout << "Error: non-colinear pathSeg in " << callerName << endl;
     }
   }
+}
+
+void FlexGRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(grNet* net) {
+  if (!isSelfSymmetryMirror() || !net || !net->getFrNet() ||
+      !net->getFrNet()->getSelfSymmetryConstraintPtr()) {
+    return;
+  }
+  projectPrevPlanarEdgesToGrid(net->getFrNet()->getSelfSymmetryPathSegs(),
+                               "mazeNetInit_selfSymmetryPrevPlanarEdges");
+}
+
+void FlexGRWorker::mazeNetInit_mirrorPrevPlanarEdges(grNet* net) {
+  // Guides the follower toward the leader's mirrored geometry.
+  auto frNet = net ? net->getFrNet() : nullptr;
+  if (!isSelfSymmetryMirror() || !frNet || !isMirrorFollower(frNet)) {
+    return;
+  }
+  projectPrevPlanarEdgesToGrid(frNet->getMirrorPathSegs(),
+                               "mazeNetInit_mirrorPrevPlanarEdges");
+}
+
+void FlexGRWorker::mazeNetInit_mirrorLeaderAnchorPrevPlanarEdges(grNet* net) {
+  // Guides the leader toward its own previously committed geometry so the
+  // leader itself is stable across iterations.
+  auto frNet = net ? net->getFrNet() : nullptr;
+  if (!isSelfSymmetryMirror() || !frNet || !frNet->getMirrorConstraintPtr() ||
+      isMirrorFollower(frNet)) {
+    return;
+  }
+  projectPrevPlanarEdgesToGrid(frNet->getMirrorLeaderAnchorPathSegs(),
+                               "mazeNetInit_mirrorLeaderAnchorPrevPlanarEdges");
 }
 
 void FlexGRWorker::mazeNetInit_addHistCost(grNet* net) {

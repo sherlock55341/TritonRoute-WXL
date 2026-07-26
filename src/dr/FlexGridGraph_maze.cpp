@@ -274,7 +274,7 @@ namespace {
 
 /*inline*/ frCost FlexGridGraph::getEstCost(const FlexMazeIdx &src, const FlexMazeIdx &dstMazeIdx1,
                                 const FlexMazeIdx &dstMazeIdx2, const frDirEnum &dir) {
-  if (selfSymmetrySearch) {
+  if (selfSymmetrySearch || mirrorFollowerSearch || mirrorLeaderSearch) {
     return 0;
   }
   //bool enableOutput = true;
@@ -669,11 +669,15 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
   bool guideCost  = hasGuide(gridX, gridY, gridZ, dir);
 
   auto edgeLength = getEdgeLength(gridX, gridY, gridZ, dir);
-  const bool usePrevEdgeCost = selfSymmetrySearch && drWorker &&
-                               drWorker->useSelfSymmetryPrevEdgeCost();
+  const bool usePrevEdgeCost = (selfSymmetrySearch && drWorker &&
+                                 drWorker->useSelfSymmetryPrevEdgeCost()) ||
+                                (mirrorFollowerSearch && drWorker &&
+                                 drWorker->useMirrorPrevEdgeCost()) ||
+                                (mirrorLeaderSearch && drWorker &&
+                                 drWorker->useMirrorPrevEdgeCost());
   // Early constrained iterations may use the mirrored guide on any layer;
   // later reroutes rely on the committed prev-edge cache instead.
-  if (!guideCost && selfSymmetrySearch && drWorker &&
+  if (!guideCost && (selfSymmetrySearch || mirrorFollowerSearch) && drWorker &&
       drWorker->getDRIter() <= 1) {
     auto guideX = gridX;
     auto guideY = gridY;
@@ -688,16 +692,22 @@ void FlexGridGraph::getPrevGrid(frMIdx &gridX, frMIdx &gridY, frMIdx &gridZ, con
       }
     }
   }
+  // Axis-hugging is only safe for self-symmetry, where both sides of the
+  // axis belong to the same net. A mirror pair is two independent,
+  // non-connectable nets, so the follower must never be discounted onto the
+  // axis line the leader may itself be occupying.
   bool isAxisEdge = false;
   if (selfSymmetrySearch) {
+    bool axisHorizontal = selfSymmetryAxisHorizontal;
+    frCoord axis = selfSymmetryAxis;
     frPoint currPt;
     getPoint(currPt, gridX, gridY);
-    if (selfSymmetryAxisHorizontal) {
-      isAxisEdge = currPt.y() == selfSymmetryAxis &&
+    if (axisHorizontal) {
+      isAxisEdge = currPt.y() == axis &&
                    (dir == frDirEnum::E || dir == frDirEnum::W ||
                     dir == frDirEnum::U || dir == frDirEnum::D);
     } else {
-      isAxisEdge = currPt.x() == selfSymmetryAxis &&
+      isAxisEdge = currPt.x() == axis &&
                    (dir == frDirEnum::N || dir == frDirEnum::S ||
                     dir == frDirEnum::U || dir == frDirEnum::D);
     }
@@ -895,6 +905,15 @@ bool FlexGridGraph::search(drNet* net, vector<FlexMazeIdx> &connComps, drPin* ne
     selfSymmetryAxisHorizontal = constraint.isAxisHorizontal;
     selfSymmetryAxis = constraint.axis;
   }
+  mirrorFollowerSearch = false;
+  if (frNet && drWorker && drWorker->isMirrorFollower(frNet)) {
+    mirrorFollowerSearch = true;
+  }
+  mirrorLeaderSearch = false;
+  if (frNet && frNet->getMirrorConstraintPtr() && drWorker &&
+      !drWorker->isMirrorFollower(frNet)) {
+    mirrorLeaderSearch = true;
+  }
 
   // prep nextPinBox
   frMIdx xDim, yDim, zDim;
@@ -977,7 +996,7 @@ bool FlexGridGraph::search(drNet* net, vector<FlexMazeIdx> &connComps, drPin* ne
       // expand and update wavefront
       expandWavefront(currGrid, dstMazeIdx1, dstMazeIdx2, centerPt);
     }
-    
+
   }
   return false;
 }

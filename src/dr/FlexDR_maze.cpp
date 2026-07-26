@@ -1985,6 +1985,8 @@ void FlexDRWorker::route_2_init(deque<drNet*> &rerouteNets) {
 void FlexDRWorker::mazeNetInit(drNet* net) {
   gridGraph.resetStatus();
   mazeNetInit_selfSymmetryPrevPlanarEdges(net);
+  mazeNetInit_mirrorPrevPlanarEdges(net);
+  mazeNetInit_mirrorLeaderAnchorPrevPlanarEdges(net);
   // sub term / instterm cost when net is about to route
   initMazeCost_terms(net->getFrNetTerms(), false, true);
   // sub via access cost when net is about to route
@@ -2001,42 +2003,20 @@ void FlexDRWorker::mazeNetInit(drNet* net) {
   initMazeCost_boundary_helper(net, false);
 }
 
-void FlexDRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(drNet* net) {
-  if (!net || !net->getFrNet() ||
-      !net->getFrNet()->getSelfSymmetryConstraintPtr()) {
-    return;
-  }
-
-  // Clip the top-block cache to this worker and project it into transient maze
-  // bits.  The bits guide this net only and reset with gridGraph status.
-  for (auto &pathSeg: net->getFrNet()->getSelfSymmetryPathSegs()) {
+// Clips each cache pathSeg to this worker's extBox and projects it into
+// transient maze bits. The bits guide this net only and reset with gridGraph
+// status. callerName only labels the unreachable non-colinear error message.
+void FlexDRWorker::projectPrevPlanarEdgesToGrid(const std::vector<frPathSeg> &pathSegs,
+                                                const char *callerName) {
+  for (auto &pathSeg: pathSegs) {
     frPoint bp, ep;
     FlexMazeIdx bi, ei;
     pathSeg.getPoints(bp, ep);
-    if (bp.x() == ep.x()) {
-      if (bp.x() < getExtBox().left() || bp.x() > getExtBox().right()) {
-        continue;
-      }
-      auto low = max(min(bp.y(), ep.y()), getExtBox().bottom());
-      auto high = min(max(bp.y(), ep.y()), getExtBox().top());
-      if (low >= high) {
-        continue;
-      }
-      bp.set(bp.x(), low);
-      ep.set(bp.x(), high);
-    } else if (bp.y() == ep.y()) {
-      if (bp.y() < getExtBox().bottom() || bp.y() > getExtBox().top()) {
-        continue;
-      }
-      auto low = max(min(bp.x(), ep.x()), getExtBox().left());
-      auto high = min(max(bp.x(), ep.x()), getExtBox().right());
-      if (low >= high) {
-        continue;
-      }
-      bp.set(low, bp.y());
-      ep.set(high, bp.y());
-    } else {
-      cout << "Error: non-colinear pathSeg in mazeNetInit_selfSymmetryPrevPlanarEdges" << endl;
+    if (bp.x() != ep.x() && bp.y() != ep.y()) {
+      cout << "Error: non-colinear pathSeg in " << callerName << endl;
+      continue;
+    }
+    if (!clipPathSegToBox(bp, ep, getExtBox())) {
       continue;
     }
     if (!gridGraph.hasMazeIdx(bp, pathSeg.getLayerNum()) ||
@@ -2056,9 +2036,40 @@ void FlexDRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(drNet* net) {
                                                 frDirEnum::E);
       }
     } else {
-      cout << "Error: non-colinear pathSeg in mazeNetInit_selfSymmetryPrevPlanarEdges" << endl;
+      cout << "Error: non-colinear pathSeg in " << callerName << endl;
     }
   }
+}
+
+void FlexDRWorker::mazeNetInit_selfSymmetryPrevPlanarEdges(drNet* net) {
+  if (!net || !net->getFrNet() ||
+      !net->getFrNet()->getSelfSymmetryConstraintPtr()) {
+    return;
+  }
+  projectPrevPlanarEdgesToGrid(net->getFrNet()->getSelfSymmetryPathSegs(),
+                               "mazeNetInit_selfSymmetryPrevPlanarEdges");
+}
+
+void FlexDRWorker::mazeNetInit_mirrorPrevPlanarEdges(drNet* net) {
+  // Guides the follower toward the leader's mirrored geometry.
+  if (!net || !net->getFrNet() ||
+      !isMirrorFollower(net->getFrNet())) {
+    return;
+  }
+  projectPrevPlanarEdgesToGrid(net->getFrNet()->getMirrorPathSegs(),
+                               "mazeNetInit_mirrorPrevPlanarEdges");
+}
+
+void FlexDRWorker::mazeNetInit_mirrorLeaderAnchorPrevPlanarEdges(drNet* net) {
+  // Guides the leader toward its own previously committed geometry so the
+  // leader itself is stable across iterations.
+  if (!net || !net->getFrNet() ||
+      !net->getFrNet()->getMirrorConstraintPtr() ||
+      isMirrorFollower(net->getFrNet())) {
+    return;
+  }
+  projectPrevPlanarEdgesToGrid(net->getFrNet()->getMirrorLeaderAnchorPathSegs(),
+                               "mazeNetInit_mirrorLeaderAnchorPrevPlanarEdges");
 }
 
 void FlexDRWorker::mazeNetEnd(drNet* net) {
@@ -2783,7 +2794,7 @@ void FlexDRWorker::route_queue_main(deque<pair<frBlockObject*, pair<bool, int> >
       if (isRouted == false) {
         frBox routeBox = getRouteBox();
         // TODO: output maze area
-        cout << "Fatal error: Maze Route cannot find path (" << net->getFrNet()->getName() << ") in " 
+        cout << "Fatal error: Maze Route cannot find path (" << net->getFrNet()->getName() << ") in "
              << "(" << routeBox.left() / 2000.0 << ", " << routeBox.bottom() / 2000.0
              << ") - (" << routeBox.right() / 2000.0 << ", " << routeBox.top() / 2000.0
              << "). Connectivity Changed.\n";

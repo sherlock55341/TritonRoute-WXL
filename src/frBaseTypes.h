@@ -183,7 +183,8 @@ namespace fr {
   };
   enum class frNetRoutingConstraint {
     frcNone,
-    frcSelfSymmetry
+    frcSelfSymmetry,
+    frcMirror
   };
   // Selects which net population a routing stage is allowed to mutate.  The
   // top-level flow routes constrained nets first so their symmetric result can
@@ -191,8 +192,23 @@ namespace fr {
   enum class RouteNetMode {
     All,
     SelfSymmetryOnly,
+    MirrorOnly,
     OrdinaryOnly
   };
+  // Shared by DR/TA stage banners.
+  inline const char* routeNetModeName(RouteNetMode mode) {
+    switch (mode) {
+      case RouteNetMode::All:
+        return "all";
+      case RouteNetMode::SelfSymmetryOnly:
+        return "self-symmetry";
+      case RouteNetMode::MirrorOnly:
+        return "mirror";
+      case RouteNetMode::OrdinaryOnly:
+        return "ordinary";
+    }
+    return "unknown";
+  }
   enum class frTermDirectionEnum {
     UNKNOWN,
     INPUT,
@@ -343,6 +359,7 @@ namespace fr {
   //    frcPolygon = 1
   //};
   class frBlockObject;
+  class frNet;
   struct vertex_properties_t {
     frBlockObject* objPtr;
     //int index;
@@ -428,6 +445,20 @@ namespace fr {
     // axis is y=axis; a vertical axis is x=axis.
     bool isAxisHorizontal;
     int axis;
+  };
+
+  // Pairs two nets that mirror each other about a shared axis (as opposed to
+  // frSelfSymmetryConstraint, where a single net mirrors itself). Only one
+  // member of the pair need be inspected to recover the other via partnerNet.
+  struct frMirrorConstraint {
+    bool isAxisHorizontal;
+    int axis;
+    frNet* partnerNet; // non-owning
+    // Initial GR leader/follower role, set once when the pair is linked (the
+    // "_1" net leads first). GR flips the *effective* role between its two
+    // Mirror-mode passes via a per-pass flag rather than mutating this field
+    // — see FlexGRWorker::isMirrorPassSecond().
+    bool isLeader;
   };
 }
 

@@ -39,20 +39,6 @@ using namespace std;
 using namespace fr;
 using namespace boost::polygon::operators;
 
-namespace {
-  const char* routeNetModeName(RouteNetMode mode) {
-    switch (mode) {
-      case RouteNetMode::All:
-        return "all";
-      case RouteNetMode::SelfSymmetryOnly:
-        return "self-symmetry";
-      case RouteNetMode::OrdinaryOnly:
-        return "ordinary";
-    }
-    return "unknown";
-  }
-}
-
 int FlexTAWorker::main() {
   using namespace std::chrono;
   high_resolution_clock::time_point t0 = high_resolution_clock::now();

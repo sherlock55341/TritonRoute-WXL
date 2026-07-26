@@ -32,6 +32,7 @@
 //#include <taskflow/taskflow.hpp>
 #include "dr/FlexDR.h"
 #include "global.h"
+#include "gr/FlexGR_self_sym_utils.h"
 #include "io/io.h"
 #include "db/infra/frTime.h"
 #include <omp.h>
@@ -40,22 +41,14 @@ using namespace std;
 using namespace fr;
 
 namespace {
-  const char* routeNetModeName(RouteNetMode mode) {
-    switch (mode) {
-      case RouteNetMode::All:
-        return "all";
-      case RouteNetMode::SelfSymmetryOnly:
-        return "self-symmetry";
-      case RouteNetMode::OrdinaryOnly:
-        return "ordinary";
-    }
-    return "unknown";
-  }
-
   // Iterations 0-1 establish an initial legal route.  Later constrained-stage
   // iterations reroute every symmetry net so the alternating reference cache
   // can correct both sides even when no current marker selects the net.
   constexpr int FORCED_SELF_SYMMETRY_REROUTE_BEGIN_ITER = 2;
+  // Same rationale as above, applied to mirror pairs: later constrained-stage
+  // iterations reroute every mirror net so the leader/follower cache can
+  // correct the follower even when no current marker selects it.
+  constexpr int FORCED_MIRROR_REROUTE_BEGIN_ITER = 2;
 }
 
 // std::chrono::duration<double> time_span_init(0);
@@ -126,6 +119,17 @@ bool FlexDR::isForcedSelfSymmetryRerouteNet(frNet* net, int iter) const {
          net->getSelfSymmetryConstraintPtr();
 }
 
+bool FlexDR::hasForcedMirrorRerouteNet(int iter) const {
+  return getRouteNetMode() == RouteNetMode::MirrorOnly &&
+         iter >= FORCED_MIRROR_REROUTE_BEGIN_ITER;
+}
+
+bool FlexDR::isForcedMirrorRerouteNet(frNet* net, int iter) const {
+  return hasForcedMirrorRerouteNet(iter) &&
+         net &&
+         net->getMirrorConstraintPtr();
+}
+
 
 int FlexDRWorker::main_mt() {
   using namespace std::chrono;
@@ -181,26 +185,6 @@ void FlexDR::updateSelfSymmetryPathSegCaches(SelfSymmetryReferenceSide reference
   // Rebuild the cache from committed frPathSegs after a full tiled iteration.
   // Axis segments are retained, reference-side segments are mirrored, and
   // crossing segments are clipped at the axis before reflection.
-  auto getSide = [](frCoord coord, frCoord axis) {
-    if (coord < axis) {
-      return -1;
-    }
-    if (coord > axis) {
-      return 1;
-    }
-    return 0;
-  };
-  auto mirrorPoint = [](const frPoint &point,
-                        bool axisHorizontal,
-                        frCoord axis) {
-    frPoint mirroredPoint;
-    if (axisHorizontal) {
-      mirroredPoint.set(point.x(), axis + (axis - point.y()));
-    } else {
-      mirroredPoint.set(axis + (axis - point.x()), point.y());
-    }
-    return mirroredPoint;
-  };
   const auto referenceSideValue =
       referenceSide == SelfSymmetryReferenceSide::Negative ? -1 : 1;
   if (VERBOSE > 0) {
@@ -227,8 +211,8 @@ void FlexDR::updateSelfSymmetryPathSegCaches(SelfSymmetryReferenceSide reference
       pathSeg->getPoints(begin, end);
       auto beginCoord = constraint->isAxisHorizontal ? begin.y() : begin.x();
       auto endCoord = constraint->isAxisHorizontal ? end.y() : end.x();
-      auto beginSide = getSide(beginCoord, constraint->axis);
-      auto endSide = getSide(endCoord, constraint->axis);
+      auto beginSide = getSelfSymmetrySide(beginCoord, constraint->axis);
+      auto endSide = getSelfSymmetrySide(endCoord, constraint->axis);
       if (beginSide == 0 && endSide == 0) {
         net->addSelfSymmetryPathSeg(*pathSeg);
       } else if ((beginSide == referenceSideValue &&
@@ -238,8 +222,8 @@ void FlexDR::updateSelfSymmetryPathSegCaches(SelfSymmetryReferenceSide reference
         net->addSelfSymmetryPathSeg(*pathSeg);
         frPathSeg mirroredPathSeg(*pathSeg);
         mirroredPathSeg.setPoints(
-            mirrorPoint(begin, constraint->isAxisHorizontal, constraint->axis),
-            mirrorPoint(end, constraint->isAxisHorizontal, constraint->axis));
+            mirrorPointAboutAxis(begin, constraint->isAxisHorizontal, constraint->axis),
+            mirrorPointAboutAxis(end, constraint->isAxisHorizontal, constraint->axis));
         net->addSelfSymmetryPathSeg(mirroredPathSeg);
       } else if (beginSide != endSide &&
                  (beginSide == referenceSideValue || endSide == referenceSideValue)) {
@@ -255,10 +239,66 @@ void FlexDR::updateSelfSymmetryPathSegCaches(SelfSymmetryReferenceSide reference
         net->addSelfSymmetryPathSeg(leadPathSeg);
         frPathSeg mirroredPathSeg(leadPathSeg);
         mirroredPathSeg.setPoints(
-            mirrorPoint(leadPoint, constraint->isAxisHorizontal, constraint->axis),
-            mirrorPoint(axisPoint, constraint->isAxisHorizontal, constraint->axis));
+            mirrorPointAboutAxis(leadPoint, constraint->isAxisHorizontal, constraint->axis),
+            mirrorPointAboutAxis(axisPoint, constraint->isAxisHorizontal, constraint->axis));
         net->addSelfSymmetryPathSeg(mirroredPathSeg);
       }
+    }
+  }
+}
+
+void FlexDR::updateMirrorPathSegCaches(bool mirrorPassIsSecond) {
+  // Rebuild, rather than incrementally patch, the derived cache after every
+  // tiled iteration, mirroring updateSelfSymmetryPathSegCaches() above.
+  // Unlike self-symmetry, a mirror pair is two independent, non-connectable
+  // nets: only the effective leader drives the follower's cache. The
+  // mirrorPassIsSecond argument must be the NEXT iteration's role parity:
+  // since roles swap every iteration, the next follower is this iteration's
+  // leader, so this iteration's follower geometry is mirrored into this
+  // iteration's leader cache and the follower never chases two-iteration-old
+  // geometry. The cache is a soft cost-guidance target for the follower's
+  // maze search, not a hard geometric constraint, so leader segments are
+  // mirrored wholesale regardless of whether they cross the axis.
+  for (auto &uNet: getDesign()->getTopBlock()->getNets()) {
+    auto net = uNet.get();
+    auto constraint = net->getMirrorConstraintPtr();
+    if (!constraint) {
+      continue;
+    }
+    // Every mirror-constrained net anchors itself to its own previously
+    // committed geometry, regardless of which role (leader/follower) it
+    // holds this pass, since the roles may swap on the next iteration.
+    net->clearMirrorLeaderAnchorPathSegs();
+    for (auto &shape: net->getShapes()) {
+      if (shape->typeId() != frcPathSeg) {
+        continue;
+      }
+      net->addMirrorLeaderAnchorPathSeg(*static_cast<frPathSeg*>(shape.get()));
+    }
+
+    bool effectiveLeader = (constraint->isLeader != mirrorPassIsSecond);
+    if (!effectiveLeader) {
+      continue;
+    }
+    auto follower = constraint->partnerNet;
+    if (!follower) {
+      continue;
+    }
+    follower->clearMirrorPathSegs();
+
+    for (auto &shape: net->getShapes()) {
+      if (shape->typeId() != frcPathSeg) {
+        continue;
+      }
+      auto pathSeg = static_cast<frPathSeg*>(shape.get());
+      frPoint begin;
+      frPoint end;
+      pathSeg->getPoints(begin, end);
+      frPathSeg mirroredPathSeg(*pathSeg);
+      mirroredPathSeg.setPoints(
+          mirrorPointAboutAxis(begin, constraint->isAxisHorizontal, constraint->axis),
+          mirrorPointAboutAxis(end, constraint->isAxisHorizontal, constraint->axis));
+      follower->addMirrorPathSeg(mirroredPathSeg);
     }
   }
 }
@@ -1910,9 +1950,10 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
     return;
   }
   if (iter && getDesign()->getTopBlock()->getMarkers().size() == 0 &&
-      !hasForcedSelfSymmetryRerouteNet(iter)) {
+      !hasForcedSelfSymmetryRerouteNet(iter) &&
+      !hasForcedMirrorRerouteNet(iter)) {
     return;
-  } 
+  }
 
   frTime t;
   //bool TEST = false;
@@ -2199,6 +2240,11 @@ void FlexDR::searchRepair(int iter, int size, int offset, int mazeEndIter,
   updateSelfSymmetryPathSegCaches(iter % 2 == 0 ?
                                   SelfSymmetryReferenceSide::Negative :
                                   SelfSymmetryReferenceSide::Positive);
+  if (getRouteNetMode() == RouteNetMode::MirrorOnly) {
+    // Pass the NEXT iteration's role parity: roles swap every iteration, so
+    // the cache written now serves the net that becomes follower next iter.
+    updateMirrorPathSegCaches((iter + 1) % 2 == 1);
+  }
   numViols.push_back(getDesign()->getTopBlock()->getNumMarkers());
   if (VERBOSE > 0) {
     if (enableDRC) {

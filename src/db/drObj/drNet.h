@@ -41,7 +41,7 @@ namespace fr {
   public:
     // constructors
     drNet(): drBlockObject(), pins(), extConnFigs(), routeConnFigs(), bestRouteConnFigs(),
-             fNetTerms(), fNet(nullptr), modified(false), isFix(false), numMarkers(0), numPinsIn(0),
+             fNetTerms(), fNet(nullptr), modified(false), numMarkers(0), numPinsIn(0),
              markerDist(std::numeric_limits<frCoord>::max()), allowRipup(true), pinBox(), ripup(false),
              numReroutes(0), inQueue(false), routed(false), origGuides() {}
     // getters
@@ -80,9 +80,6 @@ namespace fr {
     }
     bool isModified() const {
       return modified;
-    }
-    bool isFixed() const {
-      return isFix;
     }
     int getNumMarkers() const {
       return numMarkers;
@@ -162,10 +159,6 @@ namespace fr {
     void setModified(bool in) {
       modified = in;
     }
-    void setFixed(bool in) {
-      isFix = in;
-    }
-
     void setNumMarkers(int in) {
       numMarkers = in;
     }
@@ -244,7 +237,6 @@ namespace fr {
     frNet*                                       fNet;
     // old
     bool                                         modified;
-    bool                                         isFix;
     int                                          numMarkers;
     int                                          numPinsIn;
     frCoord                                      markerDist;

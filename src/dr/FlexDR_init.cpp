@@ -38,8 +38,11 @@ bool FlexDRWorker::routeNetModeMatches(frNet* net) const {
       return true;
     case RouteNetMode::SelfSymmetryOnly:
       return net && net->getSelfSymmetryConstraintPtr() != nullptr;
+    case RouteNetMode::MirrorOnly:
+      return net && net->getMirrorConstraintPtr() != nullptr;
     case RouteNetMode::OrdinaryOnly:
-      return net && net->getSelfSymmetryConstraintPtr() == nullptr;
+      return net && net->getSelfSymmetryConstraintPtr() == nullptr &&
+             net->getMirrorConstraintPtr() == nullptr;
   }
   return false;
 }
@@ -56,9 +59,14 @@ bool FlexDRWorker::canRepairNet(frNet* net) const {
   if (routeNetModeMatches(net)) {
     return true;
   }
-  return isOrdinarySelfSymmetryRepairMode() &&
+  if (isOrdinarySelfSymmetryRepairMode() &&
+      net &&
+      net->getSelfSymmetryConstraintPtr()) {
+    return true;
+  }
+  return isOrdinaryMirrorRepairMode() &&
          net &&
-         net->getSelfSymmetryConstraintPtr();
+         net->getMirrorConstraintPtr();
 }
 
 bool FlexDRWorker::isForcedSelfSymmetryRerouteNet(drNet* net) const {
@@ -75,8 +83,39 @@ bool FlexDRWorker::useSelfSymmetryPrevEdgeCost() const {
   return hasForcedSelfSymmetryRerouteNet() || isOrdinarySelfSymmetryRepairMode();
 }
 
-namespace {
-bool clipPathSegToBox(frPoint &bp, frPoint &ep, const frBox &box) {
+bool FlexDRWorker::isOrdinaryMirrorRepairMode() const {
+  // Same repair-window policy as self-symmetry: ordinary routing may repair
+  // a mirror-constrained net only when a current marker implicates it.
+  return dr->getRouteNetMode() == RouteNetMode::OrdinaryOnly &&
+         getDRIter() >= 3 &&
+         getRipupMode() == 0;
+}
+
+bool FlexDRWorker::isForcedMirrorRerouteNet(drNet* net) const {
+  return net && dr->isForcedMirrorRerouteNet(net->getFrNet(), getDRIter());
+}
+
+bool FlexDRWorker::hasForcedMirrorRerouteNet() const {
+  return dr->hasForcedMirrorRerouteNet(getDRIter());
+}
+
+bool FlexDRWorker::useMirrorPrevEdgeCost() const {
+  return hasForcedMirrorRerouteNet() || isOrdinaryMirrorRepairMode();
+}
+
+bool FlexDRWorker::isMirrorFollower(frNet* net) const {
+  auto constraint = net ? net->getMirrorConstraintPtr() : nullptr;
+  if (!constraint) {
+    return false;
+  }
+  // The effective role flips each iteration (iter % 2 parity); the follower
+  // is whichever side is not the effective leader. Cache publishing uses the
+  // NEXT iteration's parity — see FlexDR::updateMirrorPathSegCaches().
+  bool effectiveLeader = (constraint->isLeader != (getDRIter() % 2 == 1));
+  return !effectiveLeader;
+}
+
+bool FlexDRWorker::clipPathSegToBox(frPoint &bp, frPoint &ep, const frBox &box) {
   if (bp.x() == ep.x()) {
     if (bp.x() < box.left() || bp.x() > box.right()) {
       return false;
@@ -104,7 +143,6 @@ bool clipPathSegToBox(frPoint &bp, frPoint &ep, const frBox &box) {
     return true;
   }
   return false;
-}
 }
 
 void FlexDRWorker::initNetObjs_pathSeg(frPathSeg* pathSeg,
@@ -418,10 +456,13 @@ void FlexDRWorker::initNetObjs(set<frNet*, frBlockObjectComp> &nets,
     }
   }
 
-  if (hasForcedSelfSymmetryRerouteNet()) {
+  // The self-symmetry and mirror forced windows are mode-exclusive, so a
+  // single pass with a combined predicate covers both.
+  if (hasForcedSelfSymmetryRerouteNet() || hasForcedMirrorRerouteNet()) {
     for (auto &uNet: getDesign()->getTopBlock()->getNets()) {
       auto net = uNet.get();
-      if (dr->isForcedSelfSymmetryRerouteNet(net, getDRIter()) &&
+      if ((dr->isForcedSelfSymmetryRerouteNet(net, getDRIter()) ||
+           dr->isForcedMirrorRerouteNet(net, getDRIter())) &&
           nets.find(net) == nets.end()) {
         nets.insert(net);
         netRouteObjs[net].clear();
@@ -429,7 +470,7 @@ void FlexDRWorker::initNetObjs(set<frNet*, frBlockObjectComp> &nets,
       }
     }
   }
-  
+
   if (isFollowGuide()) {
     vector<rq_rptr_value_t<frNet> > origGuides;
     frRect rect;
@@ -2657,16 +2698,21 @@ void FlexDRWorker::initTrackCoords_route(drNet* net,
     }
   }
 
-  if (!net->getFrNet() || !net->getFrNet()->getSelfSymmetryConstraintPtr()) {
-    return;
-  }
-  for (auto &pathSeg: net->getFrNet()->getSelfSymmetryPathSegs()) {
-    frPoint bp, ep;
-    pathSeg.getPoints(bp, ep);
-    if (!clipPathSegToBox(bp, ep, getExtBox())) {
-      continue;
+  auto addCachedPathSegTrackCoords = [&](const std::vector<frPathSeg> &pathSegs) {
+    for (auto &pathSeg: pathSegs) {
+      frPoint bp, ep;
+      pathSeg.getPoints(bp, ep);
+      if (!clipPathSegToBox(bp, ep, getExtBox())) {
+        continue;
+      }
+      addPathSegTrackCoords(bp, ep, pathSeg.getLayerNum());
     }
-    addPathSegTrackCoords(bp, ep, pathSeg.getLayerNum());
+  };
+  if (net->getFrNet() && net->getFrNet()->getSelfSymmetryConstraintPtr()) {
+    addCachedPathSegTrackCoords(net->getFrNet()->getSelfSymmetryPathSegs());
+  }
+  if (net->getFrNet() && isMirrorFollower(net->getFrNet())) {
+    addCachedPathSegTrackCoords(net->getFrNet()->getMirrorPathSegs());
   }
 }
     
@@ -4130,7 +4176,9 @@ void FlexDRWorker::route_queue_init_queue(deque<pair<frBlockObject*, pair<bool, 
     }
     // Marker owners seed normal partial repair.  During the constrained-stage
     // refresh window, also enqueue every eligible symmetry net exactly once.
-    if (hasForcedSelfSymmetryRerouteNet()) {
+    // The self-symmetry and mirror windows are mode-exclusive, so a single
+    // pass covers both.
+    if (hasForcedSelfSymmetryRerouteNet() || hasForcedMirrorRerouteNet()) {
       for (auto &net: nets) {
         if (isTargetNet(net.get()) && net->getNumReroutes() < getMazeEndIter()) {
           auto route = make_pair(
@@ -4193,7 +4241,9 @@ void FlexDRWorker::route_queue_update_queue(const vector<pair<frBlockObject*, pa
       return false;
     }
     auto net = static_cast<drNet*>(obj);
-    return net->getFrNet() && net->getFrNet()->getSelfSymmetryConstraintPtr();
+    return net->getFrNet() &&
+           (net->getFrNet()->getSelfSymmetryConstraintPtr() ||
+            net->getFrNet()->getMirrorConstraintPtr());
   });
   for (auto &route: orderedRoutes) {
     rerouteQueue.push_back(route);
@@ -4243,13 +4293,14 @@ void FlexDRWorker::route_queue_update_from_marker(frMarker *marker,
       }
     }
   }
-  if (isOrdinarySelfSymmetryRepairMode()) {
+  if (isOrdinarySelfSymmetryRepairMode() || isOrdinaryMirrorRepairMode()) {
     for (auto &src: marker->getSrcs()) {
       if (src && src->typeId() == frcNet) {
         auto fNet = static_cast<frNet*>(src);
         if ((fNet->getType() == frNetEnum::frcNormalNet ||
              fNet->getType() == frNetEnum::frcClockNet) &&
-            fNet->getSelfSymmetryConstraintPtr()) {
+            (fNet->getSelfSymmetryConstraintPtr() ||
+             fNet->getMirrorConstraintPtr())) {
           movableAggressorNets.insert(fNet);
           if (getDRNets(fNet)) {
             for (auto dNet: *(getDRNets(fNet))) {
@@ -5980,7 +6031,8 @@ void FlexDRWorker::init() {
   //   return;
   // }
   if (isEnableDRC() && getDRIter() && getInitNumMarkers() == 0 &&
-      getRipupMode() != 2 && !hasForcedSelfSymmetryRerouteNet()) {
+      getRipupMode() != 2 && !hasForcedSelfSymmetryRerouteNet() &&
+      !hasForcedMirrorRerouteNet()) {
     skipRouting = true;
   }
   if (skipRouting) {

@@ -41,13 +41,13 @@ namespace {
            dir == frDirEnum::S || dir == frDirEnum::W;
   }
 
-  unsigned long long getInvalidMirrorPenalty(long long edgeLen) {
-    return (unsigned long long)std::max(1ll, edgeLen) *
+  unsigned long long getInvalidMirrorPenalty(long long edgeLength) {
+    return (unsigned long long)std::max(1ll, edgeLength) *
            ((unsigned long long)MARKERCOST * 8);
   }
 
-  unsigned long long getViaStepCost(frCoord edgeLen) {
-    return (unsigned long long)edgeLen * (1 + 128);
+  unsigned long long getViaStepCost(frCoord edgeLength) {
+    return (unsigned long long)edgeLength * (1 + 128);
   }
 
   bool getSelfSymmetryEdgeGCells(FlexGRGridGraph* gridGraph,
@@ -79,8 +79,6 @@ namespace {
       case frDirEnum::N:
         ++y2;
         break;
-      default:
-        return false;
     }
 
     auto routeGCellIdxLL = worker->getRouteGCellIdxLL();
@@ -103,17 +101,8 @@ namespace {
 
     auto beginCoord = axisCtx.axisCoord(beginGCellIdx);
     auto endCoord = axisCtx.axisCoord(endGCellIdx);
-    auto getSide = [&axisCtx](frCoord coord) {
-      if (coord < axisCtx.axisGCellIdx) {
-        return -1;
-      }
-      if (coord > axisCtx.axisGCellIdx) {
-        return 1;
-      }
-      return 0;
-    };
-    auto beginSide = getSide(beginCoord);
-    auto endSide = getSide(endCoord);
+    auto beginSide = getSelfSymmetrySide(beginCoord, axisCtx.axisGCellIdx);
+    auto endSide = getSelfSymmetrySide(endCoord, axisCtx.axisGCellIdx);
     if (beginSide != 0 && (endSide == 0 || endSide == beginSide)) {
       return beginSide;
     }
@@ -152,19 +141,15 @@ namespace {
     }
     auto constraint = net->getSelfSymmetryConstraint();
     auto routeBox = worker->getRouteBox();
-    frPoint axisProbe;
-    if (constraint.isAxisHorizontal) {
-      axisProbe.set(routeBox.left(), constraint.axis);
-    } else {
-      axisProbe.set(constraint.axis, routeBox.bottom());
-    }
-    axisCtx = SelfSymmetryAxisContext::fromAxisProbe(
-        gridGraph->getDesign(), constraint, axisProbe);
+    frPoint referencePoint(routeBox.left(), routeBox.bottom());
+    axisCtx = SelfSymmetryAxisContext::fromReferencePoint(
+        gridGraph->getDesign(), constraint, referencePoint);
     return axisCtx.valid;
   }
 
   bool getSelfSymmetryMirrorEdge(FlexGRGridGraph* gridGraph,
                                  frNet* net,
+                                 const SelfSymmetryAxisContext &axisCtx,
                                  frMIdx x,
                                  frMIdx y,
                                  frMIdx z,
@@ -182,18 +167,8 @@ namespace {
     if (!worker) {
       return false;
     }
-    auto constraint = net->getSelfSymmetryConstraint();
     auto routeGCellIdxLL = worker->getRouteGCellIdxLL();
     auto routeGCellIdxUR = worker->getRouteGCellIdxUR();
-    auto routeBox = worker->getRouteBox();
-    frPoint axisProbe;
-    if (constraint.isAxisHorizontal) {
-      axisProbe.set(routeBox.left(), constraint.axis);
-    } else {
-      axisProbe.set(constraint.axis, routeBox.bottom());
-    }
-    auto axisCtx = SelfSymmetryAxisContext::fromAxisProbe(
-        gridGraph->getDesign(), constraint, axisProbe);
     if (!axisCtx.valid) {
       return false;
     }
@@ -317,7 +292,8 @@ bool FlexGRGridGraph::search(vector<FlexMazeIdx> &connComps, grNode* nextPinNode
 
 frCost FlexGRGridGraph::getEstCost(const FlexMazeIdx &src, const FlexMazeIdx &dstMazeIdx1,
                                    const FlexMazeIdx &dstMazeIdx2, const frDirEnum &dir) {
-  if (activeNet && activeNet->getSelfSymmetryConstraintPtr()) {
+  if (activeNet && (activeNet->getSelfSymmetryConstraintPtr() ||
+                    grWorker->isMirrorFollower(activeNet))) {
     return 0;
   }
   bool enableOutput = false;
@@ -697,7 +673,8 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
             }
           } else if (selfSymmetryEdgeSide == -selfSymmetryLeadSide) {
             selfSymmetryMirrorEdgeValid =
-                getSelfSymmetryMirrorEdge(this, activeNet, gridX, gridY, gridZ,
+                getSelfSymmetryMirrorEdge(this, activeNet, selfSymmetryAxisCtx,
+                                          gridX, gridY, gridZ,
                                           dir, selfSymmetryMirrorX,
                                           selfSymmetryMirrorY,
                                           selfSymmetryMirrorZ,
@@ -719,6 +696,15 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
                                          gridY)) {
         geometryCost /= 4;
       }
+    }
+  }
+  // Mirror-pair nets: the follower reads the cached leader reflection while
+  // the leader reads its own self-anchor cache; both pay the same penalty
+  // for cardinal edges their respective cache does not cover.
+  if (activeNet && grWorker->isSelfSymmetryMirror() &&
+      activeNet->getMirrorConstraintPtr() && isSelfSymmetryCardinalDir(dir)) {
+    if (!hasSelfSymmetryPrevPlanarEdge(gridX, gridY, gridZ, dir)) {
+      symmetryPenalty += 4 * edgeLength;
     }
   }
   auto stepCost = safetyCost + trafficCost + geometryCost + symmetryPenalty;
@@ -746,7 +732,6 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
   // committing the mirror pass to an infeasible or heavily congested peer.
   if (activeNet && activeNet->getSelfSymmetryConstraintPtr() &&
       isSelfSymmetryCardinalDir(dir)) {
-    auto edgeLen = getEdgeLength(gridX, gridY, gridZ, dir);
     bool addMirrorCost = (grWorker->isSelfSymmetryMirror() &&
                           selfSymmetryEdgeSide == -selfSymmetryLeadSide) ||
                          (grWorker->isSelfSymmetryAuto() &&
@@ -755,7 +740,8 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
     if (addMirrorCost) {
       if (!selfSymmetryMirrorEdgeValid) {
         selfSymmetryMirrorEdgeValid =
-            getSelfSymmetryMirrorEdge(this, activeNet, gridX, gridY, gridZ,
+            getSelfSymmetryMirrorEdge(this, activeNet, selfSymmetryAxisCtx,
+                                      gridX, gridY, gridZ,
                                       dir, selfSymmetryMirrorX,
                                       selfSymmetryMirrorY,
                                       selfSymmetryMirrorZ,
@@ -774,32 +760,32 @@ frCost FlexGRGridGraph::getNextPathCost(const FlexGRWavefrontGrid &currGrid, con
       auto tmpMirrorZ = selfSymmetryMirrorZ;
       auto tmpMirrorDir = selfSymmetryMirrorDir;
       correct(tmpMirrorX, tmpMirrorY, tmpMirrorZ, tmpMirrorDir);
-      if (tmpMirrorDir != frDirEnum::U && tmpMirrorDir != frDirEnum::D) {
-        auto mirrorRawDemand = getRawDemand(tmpMirrorX, tmpMirrorY,
-                                            tmpMirrorZ, tmpMirrorDir);
-        auto mirrorRawSupply = getRawSupply(tmpMirrorX, tmpMirrorY,
-                                            tmpMirrorZ, tmpMirrorDir);
-        mirrorCost =
-            getCongCost(mirrorRawDemand,
-                        mirrorRawSupply * grWorker->getCongThresh()) *
-            edgeLen * 5;
-        if (getHistoryCost(tmpMirrorX, tmpMirrorY, tmpMirrorZ)) {
-          mirrorCost += 4 *
-                        getCongCost(mirrorRawDemand,
-                                    mirrorRawSupply * grWorker->getCongThresh()) *
-                        getHistoryCost(tmpMirrorX, tmpMirrorY, tmpMirrorZ) *
-                        edgeLen;
-        }
-        if (hasBlock(tmpMirrorX, tmpMirrorY, tmpMirrorZ, tmpMirrorDir)) {
-          mirrorCost += BLOCKCOST * edgeLen * 100;
-        }
-        if (mirrorRawDemand >= mirrorRawSupply * grWorker->getCongThresh()) {
-          mirrorCost += 128 * edgeLen;
-        }
-        nextPathCost += mirrorCost;
+      // mirrorDir is always cardinal (getSelfSymmetryMirrorEdge rejects
+      // non-cardinal), so the corrected direction stays planar here.
+      auto mirrorRawDemand = getRawDemand(tmpMirrorX, tmpMirrorY,
+                                          tmpMirrorZ, tmpMirrorDir);
+      auto mirrorRawSupply = getRawSupply(tmpMirrorX, tmpMirrorY,
+                                          tmpMirrorZ, tmpMirrorDir);
+      mirrorCost =
+          getCongCost(mirrorRawDemand,
+                      mirrorRawSupply * grWorker->getCongThresh()) *
+          edgeLength * 5;
+      if (getHistoryCost(tmpMirrorX, tmpMirrorY, tmpMirrorZ)) {
+        mirrorCost += 4 *
+                      getCongCost(mirrorRawDemand,
+                                  mirrorRawSupply * grWorker->getCongThresh()) *
+                      getHistoryCost(tmpMirrorX, tmpMirrorY, tmpMirrorZ) *
+                      edgeLength;
       }
+      if (hasBlock(tmpMirrorX, tmpMirrorY, tmpMirrorZ, tmpMirrorDir)) {
+        mirrorCost += BLOCKCOST * edgeLength * 100;
+      }
+      if (mirrorRawDemand >= mirrorRawSupply * grWorker->getCongThresh()) {
+        mirrorCost += 128 * edgeLength;
+      }
+      nextPathCost += mirrorCost;
     } else if (addMirrorCost && grWorker->isSelfSymmetryMirror()) {
-      nextPathCost += saturateSelfSymmetryCost(getInvalidMirrorPenalty(edgeLen));
+      nextPathCost += saturateSelfSymmetryCost(getInvalidMirrorPenalty(edgeLength));
     }
   }
   // discourage using layer below VIA_ACCESS_LAYERNUM

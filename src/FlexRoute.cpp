@@ -54,9 +54,15 @@ namespace {
   // Candidate naming is only the admission filter; a net becomes constrained
   // after initSelfSymmetryConstraints installs a validated axis on frNet.
   bool isSelfSymmetryCandidateNet(frNet *net) {
+    return net && isSelfSymmetryNetName(net->getName());
+  }
+
+  // Mirror candidates are paired by the _1/_2 naming convention below; each
+  // one still needs its own hardcoded axis entry to become constrained.
+  bool isMirrorCandidateNet(frNet *net) {
     if (!net) return false;
     const string &name = net->getName();
-    return name.compare(0, 7, "Symmtry") == 0;
+    return name.compare(0, 6, "Mirror") == 0;
   }
 
   struct HardcodedAxis {
@@ -98,16 +104,16 @@ namespace {
     {"Symmtry32", false, 45600},
     {"Symmtry33", false, 43070},
     {"Symmtry34", false, 45860},
-    {"Mirror1_1", true,  78660},
-    {"Mirror1_2", true,  78660},
+    {"Mirror1_1", true,  76950},
+    {"Mirror1_2", true,  76950},
     {"Mirror2_1", false, 28420},
     {"Mirror2_2", false, 28420},
     {"Mirror3_1", false, 37940},
     {"Mirror3_2", false, 37940},
     {"Mirror4_1", true,  88919},
     {"Mirror4_2", true,  88919},
-    {"Mirror5_1", true,  100996},
-    {"Mirror5_2", true,  100996},
+    {"Mirror5_1", true,  99180},
+    {"Mirror5_2", true,  99180},
     {"Mirror6_1", false, 41445},
     {"Mirror6_2", false, 41445},
     {"Mirror7_1", false, 42245},
@@ -144,17 +150,59 @@ namespace {
     {"Mirror22_2", true,  13680},
   };
 
+  // Validates a candidate hardcoded axis against the die box and snaps it to
+  // the nearest routing track, shared by the self-symmetry and mirror init
+  // paths so the two don't drift out of sync.
+  bool resolveHardcodedAxis(frDesign *design,
+                             const frBox &dieBox,
+                             bool isHorizontal,
+                             frCoord axis,
+                             const string &netName,
+                             frCoord &snappedAxisOut) {
+    auto axisName = isHorizontal ? "y" : "x";
+    bool axisInDie = isHorizontal ?
+                     axis >= dieBox.bottom() && axis <= dieBox.top() :
+                     axis >= dieBox.left() && axis <= dieBox.right();
+    if (!axisInDie) {
+      cout << "Error: " << netName << " axis "
+           << axisName << "=" << axis
+           << " is outside die box " << dieBox << "\n";
+      exit(1);
+    }
+
+    // Snap to a routing track; later mirror operations treat this snapped
+    // coordinate as authoritative.
+    snappedAxisOut = axis;
+    if (!findNearestSelfSymmetryRoutingTrack(design,
+                                             isHorizontal,
+                                             axis,
+                                             &dieBox,
+                                             snappedAxisOut)) {
+      cout << "Error: " << netName << " axis "
+           << axisName << "=" << axis
+           << " has no routing track inside die box " << dieBox << "\n";
+      exit(1);
+    }
+    return true;
+  }
+
+  // Look up each candidate net's hardcoded axis by name; shared by the
+  // self-symmetry and mirror init paths.
+  std::unordered_map<std::string, const HardcodedAxis*> buildHardcodedAxisMap() {
+    std::unordered_map<std::string, const HardcodedAxis*> axisMap;
+    for (auto &ha : hardcodedAxes) {
+      axisMap[ha.name] = &ha;
+    }
+    return axisMap;
+  }
+
   void initSelfSymmetryConstraints(frDesign *design) {
     auto block = design ? design->getTopBlock() : nullptr;
     if (block == nullptr) {
       return;
     }
 
-    // Look up each candidate net's hardcoded axis by name.
-    std::unordered_map<std::string, const HardcodedAxis*> axisMap;
-    for (auto &ha : hardcodedAxes) {
-      axisMap[ha.name] = &ha;
-    }
+    auto axisMap = buildHardcodedAxisMap();
 
     frBox dieBox;
     block->getBoundaryBBox(dieBox);
@@ -173,33 +221,9 @@ namespace {
       }
 
       bool isHorizontal = it->second->isHorizontal;
-      frCoord axis = it->second->axis;
-
-      // Axis must lie within the die box, or the request is unsatisfiable.
-      auto axisName = isHorizontal ? "y" : "x";
-      bool axisInDie = isHorizontal ?
-                       axis >= dieBox.bottom() && axis <= dieBox.top() :
-                       axis >= dieBox.left() && axis <= dieBox.right();
-      if (!axisInDie) {
-        cout << "Error: " << net->getName() << " self-symmetry axis "
-             << axisName << "=" << axis
-             << " is outside die box " << dieBox << "\n";
-        exit(1);
-      }
-
-      // Snap to a routing track; later mirror operations treat this snapped
-      // coordinate as authoritative.
-      auto snappedAxis = axis;
-      if (!findNearestSelfSymmetryRoutingTrack(design,
-                                               isHorizontal,
-                                               axis,
-                                               &dieBox,
-                                               snappedAxis)) {
-        cout << "Error: " << net->getName() << " self-symmetry axis "
-             << axisName << "=" << axis
-             << " has no routing track inside die box " << dieBox << "\n";
-        exit(1);
-      }
+      frCoord snappedAxis;
+      resolveHardcodedAxis(design, dieBox, isHorizontal, it->second->axis,
+                           net->getName(), snappedAxis);
 
       // Set the constraint only after validation succeeds, so a non-null
       // constraint always denotes a routable axis.
@@ -208,6 +232,89 @@ namespace {
       selfSymmetryConstraint.axis = snappedAxis;
       net->setSelfSymmetryConstraint(selfSymmetryConstraint);
       net->setConstraint(frNetRoutingConstraint::frcSelfSymmetry);
+    }
+  }
+
+  // Installs a validated axis on every Mirror-prefixed net with a hardcoded
+  // table entry, then links each net to its _1/_2 partner. A mirror
+  // constraint is only meaningful once both halves are linked, so nets that
+  // can't find a partner are unconstrained again with a warning.
+  void initMirrorConstraints(frDesign *design) {
+    auto block = design ? design->getTopBlock() : nullptr;
+    if (block == nullptr) {
+      return;
+    }
+
+    auto axisMap = buildHardcodedAxisMap();
+
+    frBox dieBox;
+    block->getBoundaryBBox(dieBox);
+
+    for (auto &uNet: block->getNets()) {
+      auto net = uNet.get();
+      if (!isMirrorCandidateNet(net)) {
+        continue;
+      }
+
+      auto it = axisMap.find(net->getName());
+      if (it == axisMap.end()) {
+        cout << "Warning: mirror candidate net " << net->getName()
+             << " has no hardcoded axis, skipped\n";
+        continue;
+      }
+
+      bool isHorizontal = it->second->isHorizontal;
+      frCoord snappedAxis;
+      resolveHardcodedAxis(design, dieBox, isHorizontal, it->second->axis,
+                           net->getName(), snappedAxis);
+
+      frMirrorConstraint mirrorConstraint;
+      mirrorConstraint.isAxisHorizontal = isHorizontal;
+      mirrorConstraint.axis = snappedAxis;
+      mirrorConstraint.partnerNet = nullptr;
+      mirrorConstraint.isLeader = false; // finalized once partners are linked below
+      net->setMirrorConstraint(mirrorConstraint);
+      net->setConstraint(frNetRoutingConstraint::frcMirror);
+    }
+
+    // ponytail: partner derived from the _1/_2 naming convention already used
+    // in the benchmark DEFs; switch to an explicit pair table if a future
+    // dataset breaks that convention.
+    for (auto &uNet: block->getNets()) {
+      auto net = uNet.get();
+      if (net->getConstraint() != frNetRoutingConstraint::frcMirror) {
+        continue;
+      }
+      if (net->getMirrorConstraint().partnerNet) {
+        continue; // already linked from the other side
+      }
+
+      const string &name = net->getName();
+      char suffix = name.empty() ? '\0' : name.back();
+      if (suffix != '1' && suffix != '2') {
+        continue;
+      }
+      string partnerName = name.substr(0, name.size() - 1) + (suffix == '1' ? '2' : '1');
+      frNet *partner = block->getNet(partnerName);
+      if (!partner || partner->getConstraint() != frNetRoutingConstraint::frcMirror) {
+        cout << "Warning: mirror candidate net " << name
+             << " has no matching partner, unlinking\n";
+        net->setConstraint(frNetRoutingConstraint::frcNone);
+        continue;
+      }
+
+      auto c = net->getMirrorConstraint();
+      c.partnerNet = partner;
+      c.isLeader = (suffix == '1'); // "_1" leads first; GR flips the
+                                    // effective role per-pass, see plan.
+      net->setMirrorConstraint(c);
+      auto pc = partner->getMirrorConstraint();
+      pc.partnerNet = net;
+      pc.isLeader = !c.isLeader;
+      partner->setMirrorConstraint(pc);
+
+      cout << "Mirror pair linked: " << name << " <-> " << partnerName
+           << " (axis " << (c.isAxisHorizontal ? "y" : "x") << "=" << c.axis << ")\n";
     }
   }
 
@@ -232,6 +339,7 @@ void FlexRoute::init() {
   // Constraints must exist before GR/TA/DR classify nets and build mirrored
   // caches, but after tracks and top-block geometry have been parsed.
   initSelfSymmetryConstraints(getDesign());
+  initMirrorConstraints(getDesign());
 }
 
 void FlexRoute::prep() {
@@ -278,10 +386,14 @@ int FlexRoute::main() {
   }
   prep();
   // Route constrained nets first and write their symmetric geometry back
-  // before ordinary routing.  Ordinary DR may still pull a constrained net
-  // into marker repair when that net owns a violation in its repair window.
+  // before ordinary routing; Mirror pairs get their own pass so ordinary
+  // DR no longer treats them as plain nets. Ordinary DR may still pull a
+  // self-symmetry net into marker repair when it owns a violation in its
+  // repair window (see isOrdinarySelfSymmetryRepairMode).
   ta(RouteNetMode::SelfSymmetryOnly);
   dr(RouteNetMode::SelfSymmetryOnly);
+  ta(RouteNetMode::MirrorOnly);
+  dr(RouteNetMode::MirrorOnly);
   ta(RouteNetMode::OrdinaryOnly);
   dr(RouteNetMode::OrdinaryOnly);
   endFR();
